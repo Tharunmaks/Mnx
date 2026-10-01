@@ -952,6 +952,9 @@
           chat.api.push({ role: "user", content: ev.content });
           saveChat();
           return;
+        case "phase":
+          this.startPhrases(ev.phrases);
+          return;
         case "notice":
           this.view.addPart({ type: "notice", level: ev.level, text: ev.text });
           return;
@@ -1378,7 +1381,12 @@
         fillModelSelects();
         applySettings();
       }
-      if (!cfg.hasKey) toast("Heads up: the server has no ANTHROPIC_API_KEY set yet.", 6000);
+      // With no API key but a local model on the server, default to the local model.
+      if (!cfg.hasKey && cfg.local && settings.model !== cfg.local) {
+        settings.model = cfg.local;
+        saveSettings();
+      }
+      if (!cfg.hasKey && !cfg.local) toast("Heads up: the server has no ANTHROPIC_API_KEY set yet.", 6000);
     })
     .catch(() => {});
   if (!settings.name) setTimeout(() => toast("Tip: tap your avatar to tell Mnx your name", 3500), 1200);

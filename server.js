@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import { TOOLS, runTool } from "./tools.js";
+import { LOCAL_ID, localModelPath, localModelLabel, handleLocalChat } from "./local.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -16,6 +17,9 @@ const MODELS = {
   "claude-sonnet-5-5": "Sonnet 5.5",
   "claude-fable-5-1": "Fable 5.1",
 };
+const LOCAL_FILE = localModelPath(here);
+const localAvailable = () => fs.existsSync(LOCAL_FILE);
+const allModels = () => (localAvailable() ? { ...MODELS, [LOCAL_ID]: localModelLabel(LOCAL_FILE) } : MODELS);
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
 const client = new Anthropic();
@@ -152,6 +156,7 @@ async function handleChat(req, res) {
     res.writeHead(400, { "content-type": "application/json" });
     return res.end(JSON.stringify({ error: "messages must end with a user turn" }));
   }
+  if (body.model === LOCAL_ID) return handleLocal(req, res, body, messages);
   const model = MODELS[body.model] ? body.model : "claude-opus-5-5";
   const effort = EFFORTS.has(body.effort) ? body.effort : "medium";
   const ctx = {
@@ -288,6 +293,36 @@ async function handleChat(req, res) {
   }
 }
 
+async function handleLocal(req, res, body, messages) {
+  res.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+  let closed = false;
+  const abort = new AbortController();
+  res.on("close", () => {
+    closed = true;
+    abort.abort();
+  });
+  try {
+    await handleLocalChat({
+      body,
+      messages,
+      file: LOCAL_FILE,
+      send: (p) => !closed && sse(res, p),
+      isClosed: () => closed,
+      signal: abort.signal,
+    });
+  } catch (err) {
+    console.error("[local]", err);
+    if (!closed) sse(res, { t: "error", text: `Local model error: ${err?.message || err}` });
+  } finally {
+    if (!closed) res.end();
+  }
+}
+
 function serveFile(res, file) {
   fs.readFile(file, (err, data) => {
     if (err) {
@@ -307,7 +342,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/chat") return handleChat(req, res);
   if (req.method === "GET" && url.pathname === "/api/config") {
     res.writeHead(200, { "content-type": "application/json" });
-    return res.end(JSON.stringify({ models: MODELS, hasKey: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) }));
+    return res.end(JSON.stringify({ models: allModels(), local: localAvailable() ? LOCAL_ID : null, hasKey: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) }));
   }
   if (req.method !== "GET" && req.method !== "HEAD") {
     res.writeHead(405);

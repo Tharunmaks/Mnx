@@ -35,6 +35,19 @@ npm start                              # → http://localhost:3000
 
 Set `PORT` to change the port. Node 18+ is required.
 
+## Use your own local model (Llama 3.2 1B GGUF)
+
+Mnx can also run a GGUF model on your own machine with llama.cpp (through `node-llama-cpp`). It's private, it works offline, and it needs no API key.
+
+1. Put the model file in `models/`. Either:
+   - download `llama-3.2-1b-instruct.Q4_K_M.gguf` from Google Drive in your browser and move it into `models/`, or
+   - share it as **Anyone with the link** and run `npm run get-model`. You can also pass another Drive link: `npm run get-model -- <drive-url> <name>.gguf`.
+2. Run `npm start`. **Mnx · Local · Llama 3.2 1B** appears in the model picker. If no `ANTHROPIC_API_KEY` is set, it becomes the default.
+
+To use a different file, set `MNX_LOCAL_MODEL=path/to/model.gguf`. The model reasons inside `<think>…</think>` first, and that text streams live into the thinking area.
+
+What the local model can't do: a 1B model can't browse the web, use the weather, maps or file tools, or see images and PDFs. For those, switch to an online model in the picker. Chats can mix both kinds of model.
+
 ## How it works
 
 ```
@@ -44,5 +57,6 @@ browser (public/)  ── POST /api/chat ──►  server.js  ── stream ─
 ```
 
 - `server.js` runs the agent loop. It streams Claude's events (thinking deltas, text deltas, tool-input deltas) to the browser, runs the tools, and loops until the answer is complete. Adaptive thinking is on with summarized display, so the reasoning can be shown live. Server-side refusal fallbacks are enabled.
+- `local.js` runs the local GGUF model and streams it with the same events.
 - `tools.js` defines the tools and calls the free public APIs.
 - `public/app.js` renders the live timeline, cards and history. `public/docs.js` builds the PPTX, PDF and DOCX files.
