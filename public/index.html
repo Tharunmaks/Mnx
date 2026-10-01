@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Mnx</title>
+  <meta name="description" content="Mnx — your AI assistant with live thinking, web search, maps, weather, files, slides and connectors." />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap" />
+  <link rel="stylesheet" href="/vendor/hljs-dark.css" id="hljsDark" />
+  <link rel="stylesheet" href="/vendor/hljs-light.css" id="hljsLight" disabled />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="mnxGrad" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#8b7cff" />
+        <stop offset=".55" stop-color="#5ec8ff" />
+        <stop offset="1" stop-color="#ff7ad9" />
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <div class="app" id="app">
+    <!-- Left rail (as in the sketch: Mnx · recent · MCP · new chat … profile · settings) -->
+    <aside class="rail" aria-label="Main navigation">
+      <button class="rail-brand" id="brandBtn" title="Mnx home" aria-label="Mnx home">
+        <span class="wordmark small">Mn<span class="x">x</span></span>
+      </button>
+      <nav class="rail-nav">
+        <button class="rail-btn" data-panel="history" title="Recent chats" aria-label="Recent chats">
+          <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg>
+        </button>
+        <button class="rail-btn rail-mcp" data-panel="mcp" title="Connectors (MCP)" aria-label="Connectors">MCP</button>
+        <button class="rail-btn" id="newChatBtn" title="New chat" aria-label="New chat">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+        </button>
+      </nav>
+      <div class="rail-bottom">
+        <button class="avatar" id="profileBtn" title="Your profile" aria-label="Your profile">?</button>
+        <button class="rail-btn" id="settingsBtn" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Slide-out drawer: recent chats or MCP connectors -->
+    <section class="drawer" id="drawer" aria-hidden="true">
+      <div class="drawer-panel" data-panel="history">
+        <header class="drawer-head">
+          <h2>Recent chats</h2>
+          <button class="icon-btn" data-close-drawer aria-label="Close">✕</button>
+        </header>
+        <input class="field" id="historySearch" type="search" placeholder="Search chats…" />
+        <ul class="history-list" id="historyList"></ul>
+      </div>
+      <div class="drawer-panel" data-panel="mcp">
+        <header class="drawer-head">
+          <h2>Connectors <span class="tag">MCP</span></h2>
+          <button class="icon-btn" data-close-drawer aria-label="Close">✕</button>
+        </header>
+        <p class="muted small">Plug any remote <b>MCP server</b> into Mnx. Each connector adds its tools to every chat — and a single aggregator server can bring thousands of apps (Gmail, Slack, Notion, GitHub, Sheets…) through one URL.</p>
+        <form class="mcp-form" id="mcpForm">
+          <input class="field" name="name" placeholder="Name (e.g. github)" required maxlength="40" />
+          <input class="field" name="url" type="url" placeholder="https://… server URL" required pattern="https://.*" />
+          <input class="field" name="token" type="password" placeholder="Auth token (optional)" autocomplete="off" />
+          <button class="btn primary" type="submit">Add connector</button>
+        </form>
+        <ul class="mcp-list" id="mcpList"></ul>
+        <p class="muted tiny">Connectors are saved in this browser. Tokens are sent to Anthropic only to call the server you added.</p>
+      </div>
+    </section>
+    <div class="scrim" id="scrim"></div>
+
+    <main class="main empty" id="main">
+      <header class="topbar">
+        <h1 class="chat-title" id="chatTitle">New chat</h1>
+        <div class="model-pick">
+          <select id="modelQuick" aria-label="Model"></select>
+        </div>
+      </header>
+
+      <div class="scroll" id="scroll">
+        <section class="welcome" id="welcome">
+          <div class="hero-logo" aria-hidden="true">
+            <svg class="orbit" viewBox="0 0 200 200">
+              <ellipse cx="100" cy="100" rx="92" ry="34" class="orbit-ring" />
+              <circle r="5" class="orbit-dot"><animateMotion dur="6s" repeatCount="indefinite" path="M8,100 a92,34 0 1,0 184,0 a92,34 0 1,0 -184,0" /></circle>
+            </svg>
+            <span class="wordmark big">Mn<span class="x">x</span></span>
+          </div>
+          <h2 class="greeting">Hi <span id="helloName">there</span>, Let's start?</h2>
+          <div class="suggestions" id="suggestions">
+            <button class="chip" data-prompt="What's today's weather here?">☀️ Today's weather</button>
+            <button class="chip" data-prompt="Find some good cafes near me">☕ Cafes near me</button>
+            <button class="chip" data-prompt="Make a 6-slide presentation on how black holes form">📊 Make a slide deck</button>
+            <button class="chip" data-prompt="Write a playable snake game as a single HTML file">🎮 Build a game</button>
+            <button class="chip" data-prompt="What are the biggest tech news stories this week?">📰 This week's news</button>
+          </div>
+        </section>
+        <div class="thread" id="thread" aria-live="polite"></div>
+      </div>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <div class="composer-label"><span class="wordmark tiny">Mn<span class="x">x</span></span> <span id="modelLabel">Opus 5.5</span></div>
+        <div class="attachments" id="attachments"></div>
+        <div class="box">
+          <button type="button" class="icon-btn" id="attachBtn" title="Attach files" aria-label="Attach files">
+            <svg viewBox="0 0 24 24"><path d="M21 11.5 12.6 20a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg>
+          </button>
+          <input type="file" id="fileInput" multiple hidden />
+          <textarea id="input" rows="1" placeholder="Type a message…" aria-label="Message"></textarea>
+          <button type="button" class="icon-btn" id="locBtn" title="Share location" aria-label="Share location" aria-pressed="false">
+            <svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+          </button>
+          <button type="submit" class="send" id="sendBtn" aria-label="Send">
+            <svg class="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            <svg class="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+          </button>
+        </div>
+        <p class="disclaimer">AI can make mistakes. Check important info.</p>
+      </form>
+      <div class="drop-hint" id="dropHint">Drop files to attach</div>
+    </main>
+  </div>
+
+  <!-- Settings -->
+  <dialog class="modal" id="settingsDialog">
+    <form method="dialog" class="modal-body" id="settingsForm">
+      <header class="drawer-head"><h2>Settings</h2><button class="icon-btn" value="cancel" aria-label="Close">✕</button></header>
+      <label class="row">Your name<input class="field" name="name" maxlength="40" placeholder="What should Mnx call you?" /></label>
+      <label class="row">Model<select class="field" name="model" id="modelSelect"></select></label>
+      <label class="row">Thinking effort
+        <select class="field" name="effort">
+          <option value="low">Low — fastest</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="xhigh">Extra high</option>
+          <option value="max">Max — deepest</option>
+        </select>
+      </label>
+      <label class="row">Theme
+        <select class="field" name="theme"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select>
+      </label>
+      <label class="row check"><input type="checkbox" name="location" /> Share my location with Mnx (for weather &amp; places)</label>
+      <footer class="modal-foot">
+        <button class="btn danger" type="button" id="clearAllBtn">Delete all chats</button>
+        <button class="btn primary" value="save">Save</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- HTML preview -->
+  <dialog class="modal wide" id="previewDialog">
+    <div class="modal-body">
+      <header class="drawer-head"><h2 id="previewTitle">Preview</h2><button class="icon-btn" data-close-dialog aria-label="Close">✕</button></header>
+      <iframe id="previewFrame" sandbox="allow-scripts allow-modals allow-forms" title="Preview"></iframe>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <script src="/vendor/marked.js"></script>
+  <script src="/vendor/purify.js"></script>
+  <script src="/vendor/highlight.js"></script>
+  <script src="/docs.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
