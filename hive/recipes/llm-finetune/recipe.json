@@ -1,0 +1,80 @@
+{
+  "id": "llm-finetune",
+  "title": "Chat model fine-tune (LoRA)",
+  "summary": "Teach a language model your own style and knowledge from example chats. Use your Mnx as the base model to keep training it. A GPU is strongly recommended.",
+  "kind": "llm",
+  "playground": "chat",
+  "gpu": "recommended",
+  "image": "python:3.12-slim",
+  "dataset": {
+    "required": true,
+    "accept": ".jsonl",
+    "hint": "JSONL, one example per line: {\"messages\": [{\"role\": \"user\", \"content\": \"…\"}, {\"role\": \"assistant\", \"content\": \"…\"}]}, or {\"prompt\": …, \"completion\": …}, or {\"text\": …}."
+  },
+  "sample": "sample.jsonl",
+  "params": [
+    {
+      "name": "base_model",
+      "label": "Base model (Hugging Face id or folder)",
+      "type": "text",
+      "default": "Qwen/Qwen2.5-0.5B-Instruct",
+      "help": "Put your own Mnx repo here to keep training it, e.g. your-name/mnx-3b."
+    },
+    {
+      "name": "epochs",
+      "label": "Epochs",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 50
+    },
+    {
+      "name": "learning_rate",
+      "label": "Learning rate",
+      "type": "float",
+      "default": 0.0002,
+      "min": 1e-06,
+      "max": 0.01
+    },
+    {
+      "name": "lora_r",
+      "label": "LoRA rank",
+      "type": "int",
+      "default": 16,
+      "min": 1,
+      "max": 256
+    },
+    {
+      "name": "max_length",
+      "label": "Max tokens per example",
+      "type": "int",
+      "default": 1024,
+      "min": 64,
+      "max": 8192
+    },
+    {
+      "name": "batch_size",
+      "label": "Batch size",
+      "type": "int",
+      "default": 2,
+      "min": 1,
+      "max": 64
+    },
+    {
+      "name": "grad_accum",
+      "label": "Gradient accumulation",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "max": 128
+    },
+    {
+      "name": "merge",
+      "label": "Merge LoRA into the model",
+      "type": "bool",
+      "default": true,
+      "help": "Gives one standalone model folder (bigger, simpler to run)."
+    }
+  ],
+  "order": 3
+}

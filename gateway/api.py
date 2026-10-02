@@ -10,6 +10,7 @@ import asyncio
 import json
 import re
 import shlex
+import shutil
 import uuid
 from collections import deque
 from contextlib import asynccontextmanager
@@ -17,8 +18,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+import httpx
 from pydantic import BaseModel, Field
 
 from gateway import auth
@@ -27,6 +30,8 @@ from hive.browser import BrowserError, stop_playwright
 from hive.cells import cells
 from hive.connectors import LANES, LAYERS, hub
 from hive.core import Task, now
+from hive.lab import lab
+from hive import system
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -38,6 +43,7 @@ DEFAULT_BEES = [
     {"id": "memory", "name": "Memory", "skill": "Saves facts and recalls them before answering", "tools": ["memory"], "approval": False, "builtin": True},
     {"id": "browser", "name": "Browser", "skill": "Uses any website like a person, in its own Chromium", "tools": ["browser"], "approval": True, "builtin": True},
     {"id": "phone", "name": "Phone", "skill": "Taps, types and opens apps on your paired phone", "tools": ["phone"], "approval": True, "builtin": True},
+    {"id": "cloud", "name": "Cloud", "skill": "Trains AI models, keeps them and runs them as APIs, here or on any GPU server", "tools": ["lab"], "approval": True, "builtin": True},
 ]
 
 
@@ -87,13 +93,48 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     cells.on_change = lambda cell: loop.create_task(broadcast({"type": "bees_changed", "bee": cell.id}))
     await cells.start(BEES)
+    lab.on_change = lambda kind: loop.create_task(broadcast({"type": "lab_changed"}))
+    await lab.start()
+    prepull = asyncio.create_task(_prepull_images())
     yield
     health.cancel()
+    prepull.cancel()
+    await lab.shutdown()
     await cells.shutdown()
     await stop_playwright()
 
 
+async def _prepull_images() -> None:
+    """Download container images in the background so the first Cell or training run starts fast."""
+    from hive.cells import IMAGE
+    images = {IMAGE} | {r.get("image", "python:3.12-slim") for r in lab.recipes.values()}
+    for image in sorted(images):
+        proc = await asyncio.create_subprocess_exec("docker", "image", "inspect", image,
+                                                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        if await proc.wait() != 0:
+            proc = await asyncio.create_subprocess_exec("docker", "pull", "-q", image,
+                                                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await proc.wait()
+
+
 app = FastAPI(title="Mnx Hive", lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.middleware("http")
+async def cache_headers(request: Request, call_next):
+    """Libraries and images are cached for a week; the app's own files are re-checked
+    (cheap 304s via ETag) so an update shows up on the next page load."""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    elif path.startswith(("/vendor/", "/img/")):
+        response.headers["Cache-Control"] = "public, max-age=604800"
+    else:
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
 api = APIRouter(prefix="/api", dependencies=[Depends(auth.require)])
 
 
@@ -107,6 +148,19 @@ def ping():
 def health():
     from hive import brain
     return {"ok": True, "brain": brain.is_connected(), "phones": len(phone.PHONES), "cells": cells.mode}
+
+
+@api.get("/system")
+async def system_stats():
+    data = await asyncio.to_thread(system.stats)
+    data["containers"] = {
+        "cells": sum(1 for c in cells.cells.values() if c.container_state == "running"),
+        "training": sum(1 for r in lab.runs.values() if r["status"] in ("preparing", "running")),
+        "models": sum(1 for d in lab.deployments.values() if d["status"] in ("starting", "running")),
+    }
+    data["cell_mode"] = cells.mode
+    data["gpu_docker"] = lab.gpu_local
+    return data
 
 
 # ---------- Bees ----------
@@ -297,8 +351,8 @@ async def browser_do(body: BrowserAction, bee: str = "browser"):
 @api.get("/cells/{bee_id}")
 async def cell_info(bee_id: str):
     cell = _cell(bee_id)
-    await cell.container_status()
-    return {"cell": cell.view(), "jobs": cell.job_views(), "disk": cell.disk_usage(), "bee": _bee(bee_id)}
+    # Container state comes from the manager's periodic refresh (one `docker ps` for all Cells).
+    return {"cell": cell.view(), "jobs": cell.job_views(), "disk": await cell.disk_usage_cached(), "bee": _bee(bee_id)}
 
 
 @api.post("/cells/{bee_id}/start")
@@ -497,6 +551,264 @@ async def phone_cmd(phone_id: str, body: PhoneCommand):
     if body.cmd not in ("screenshot", "ui_tree", "apps", "battery", "screen_size"):
         log("Phone", body.cmd, json.dumps(body.args)[:200] if body.args else "")
     return {"result": result}
+
+
+# ---------- Cloud Bee: Model Lab ----------
+UPLOADS = DATA / "lab" / "uploads"
+
+
+def _safe_name(name: str) -> str:
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).name).strip("._")[:120]
+    if not name:
+        raise HTTPException(400, "Bad file name")
+    return name
+
+
+def _upload_path(upload_id: str) -> Path:
+    if not re.match(r"^[a-f0-9]{16}$", upload_id or ""):
+        raise HTTPException(400, "Bad upload id")
+    folder = UPLOADS / upload_id
+    files = list(folder.iterdir()) if folder.is_dir() else []
+    if not files:
+        raise HTTPException(404, "Upload not found (it may have been used already)")
+    return files[0]
+
+
+@api.get("/lab")
+async def lab_overview():
+    runs = sorted(lab.runs.values(), key=lambda r: r["created"], reverse=True)
+    return {
+        "recipes": list(lab.recipes.values()), "targets": lab.target_views(),
+        "runs": [lab.run_view(r) for r in runs], "models": sorted(lab.models.values(), key=lambda m: m["created"], reverse=True),
+        "deployments": lab.deployments, "secrets": lab.secret_names(), "hive_key": await lab.hive_key(),
+        "gpu_local": lab.gpu_local,
+    }
+
+
+@api.put("/lab/uploads/{filename}")
+async def lab_upload(filename: str, request: Request):
+    """Stream one file to the server. Returns an id to use in a run or a model import."""
+    name = _safe_name(filename)
+    upload_id = uuid.uuid4().hex[:16]
+    folder = UPLOADS / upload_id
+    folder.mkdir(parents=True)
+    size = 0
+    try:
+        with open(folder / name, "wb") as f:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > 20 * 1024**3:
+                    raise HTTPException(413, "Files up to 20 GB")
+                f.write(chunk)
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    return {"id": upload_id, "name": name, "size": size}
+
+
+class NewRun(BaseModel):
+    recipe: str = Field(max_length=64)
+    name: str = Field(default="", max_length=80)
+    params: dict[str, Any] = Field(default_factory=dict)
+    target: str = Field(default="local", max_length=64)
+    uploads: list[str] = Field(default_factory=list, max_length=50)
+    use_sample: bool = False
+    gpu: bool = False
+    cpus: float | None = Field(default=None, ge=0.5, le=256)
+    memory_gb: float | None = Field(default=None, ge=0.5, le=2048)
+
+
+@api.post("/lab/runs")
+async def lab_new_run(body: NewRun):
+    files = [_upload_path(u) for u in body.uploads]
+    try:
+        run = lab.create_run(body.recipe, body.name, body.params, body.target, files,
+                             body.use_sample, body.gpu, body.cpus, body.memory_gb)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        for u in body.uploads:
+            shutil.rmtree(UPLOADS / u, ignore_errors=True)
+    log("Cloud", "training", f"{run['name']} ({run['recipe']}) on {run['target']}")
+    return lab.run_view(run)
+
+
+def _run_or_404(rid: str) -> dict:
+    run = lab.runs.get(rid)
+    if not run:
+        raise HTTPException(404, "No such run")
+    return run
+
+
+@api.get("/lab/runs/{rid}")
+def lab_run(rid: str):
+    return lab.run_view(_run_or_404(rid), full=True)
+
+
+@api.get("/lab/runs/{rid}/log")
+def lab_run_log(rid: str, since: int = 0):
+    _run_or_404(rid)
+    data, size = lab.log_tail(rid, since)
+    return Response(data, media_type="text/plain; charset=utf-8", headers={"X-Log-Size": str(size)})
+
+
+@api.post("/lab/runs/{rid}/stop")
+async def lab_stop_run(rid: str):
+    _run_or_404(rid)
+    await lab.stop_run(rid)
+    return {"ok": True}
+
+
+@api.delete("/lab/runs/{rid}")
+async def lab_delete_run(rid: str):
+    _run_or_404(rid)
+    try:
+        await lab.delete_run(rid)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True}
+
+
+def _model_or_404(mid: str) -> dict:
+    model = lab.models.get(mid)
+    if not model:
+        raise HTTPException(404, "No such model")
+    return model
+
+
+class ImportModel(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    upload: str
+
+
+@api.post("/lab/models/import")
+async def lab_import(body: ImportModel):
+    path = _upload_path(body.upload)
+    try:
+        model = await lab.import_model(body.name, "gguf", path, path.name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        shutil.rmtree(UPLOADS / body.upload, ignore_errors=True)
+    return model
+
+
+@api.delete("/lab/models/{mid}")
+async def lab_delete_model(mid: str):
+    _model_or_404(mid)
+    await lab.delete_model(mid)
+    return {"ok": True}
+
+
+@api.get("/lab/models/{mid}/download")
+async def lab_download_model(mid: str):
+    model = _model_or_404(mid)
+    from hive.lab import MODELS
+    proc = await asyncio.create_subprocess_exec("tar", "-C", str(MODELS / mid), "-czf", "-", ".",
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+
+    async def stream():
+        try:
+            while chunk := await proc.stdout.read(256 * 1024):
+                yield chunk
+        finally:
+            if proc.returncode is None:
+                proc.kill()
+
+    fname = re.sub(r"[^A-Za-z0-9._-]+", "-", model["name"]).strip("-") or mid
+    return StreamingResponse(stream(), media_type="application/gzip",
+                             headers={"Content-Disposition": f'attachment; filename="{fname}.tar.gz"'})
+
+
+class DeployBody(BaseModel):
+    gpu: bool = False
+
+
+@api.post("/lab/models/{mid}/deploy")
+async def lab_deploy(mid: str, body: DeployBody):
+    _model_or_404(mid)
+    try:
+        dep = await lab.deploy(mid, body.gpu)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    log("Cloud", "model_started", lab.models[mid]["name"])
+    return dep
+
+
+@api.post("/lab/models/{mid}/undeploy")
+async def lab_undeploy(mid: str):
+    _model_or_404(mid)
+    await lab.undeploy(mid)
+    return {"ok": True}
+
+
+@api.get("/lab/models/{mid}/logs", response_class=PlainTextResponse)
+async def lab_model_logs(mid: str):
+    _model_or_404(mid)
+    return await lab.deployment_logs(mid)
+
+
+@api.api_route("/lab/serve/{mid}/{path:path}", methods=["GET", "POST"])
+async def lab_serve(mid: str, path: str, request: Request):
+    """Your running model's own API, behind your access token (OpenAI-compatible for chat models)."""
+    _model_or_404(mid)
+    try:
+        r = await lab.proxy(mid, request.method, path, await request.body(), request.headers.get("content-type"))
+    except LookupError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, "The model isn't answering yet (still starting?)") from exc
+    return Response(r.content, status_code=r.status_code, media_type=r.headers.get("content-type", "application/json"))
+
+
+class NewTarget(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(default=22, ge=1, le=65535)
+    user: str = Field(min_length=1, max_length=64)
+    workdir: str = Field(default="mnx-runs", max_length=200)
+    private_key: str | None = Field(default=None, max_length=20000)
+
+
+@api.post("/lab/targets")
+async def lab_add_target(body: NewTarget):
+    try:
+        t = lab.add_target(body.name, body.host.strip(), body.port, body.user.strip(), body.workdir.strip() or "mnx-runs", body.private_key)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return await lab.test_target(t["id"])
+
+
+@api.post("/lab/targets/{tid}/test")
+async def lab_test_target(tid: str):
+    if tid not in lab.targets:
+        raise HTTPException(404, "No such server")
+    return await lab.test_target(tid)
+
+
+@api.delete("/lab/targets/{tid}")
+def lab_remove_target(tid: str):
+    if tid not in lab.targets:
+        raise HTTPException(404, "No such server")
+    try:
+        lab.remove_target(tid)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True}
+
+
+class SecretBody(BaseModel):
+    name: str = Field(max_length=64)
+    value: str = Field(default="", max_length=10000)
+
+
+@api.post("/lab/secrets")
+def lab_secret(body: SecretBody):
+    try:
+        lab.set_secret(body.name.strip(), body.value)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"secrets": lab.secret_names()}
 
 
 app.include_router(api)

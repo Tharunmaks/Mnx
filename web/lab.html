@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0f">
+  <title>Cloud Bee · Mnx Hive</title>
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/mnx.css">
+</head>
+<body>
+<div class="app">
+  <main class="main">
+    <header class="topbar">
+      <a class="icon-btn" href="index.html" aria-label="Back to chat"><span data-icon="back"></span></a>
+      <span id="beeHex"></span>
+      <h1>Cloud Bee · Model Lab</h1>
+      <a class="btn compact-btn" href="cell.html?bee=cloud">Terminal</a>
+      <span class="conn" id="conn"><i></i><span>Connecting</span></span>
+    </header>
+
+    <div class="scroll">
+      <div class="page wide">
+        <div class="sys-strip" id="sys"></div>
+
+        <div class="tabs lab-tabs" role="tablist">
+          <button class="tab active" data-tab="train" type="button">Train</button>
+          <button class="tab" data-tab="runs" type="button">Runs <span id="runCount"></span></button>
+          <button class="tab" data-tab="models" type="button">Models <span id="modelCount"></span></button>
+          <button class="tab" data-tab="servers" type="button">Servers</button>
+        </div>
+
+        <!-- Train -->
+        <section id="tab-train" class="lab-pane">
+          <p class="hint lab-intro">Pick what kind of AI to make, give it examples, and choose where it trains. Training keeps going on the server even if you close the app.</p>
+          <div class="recipe-grid" id="recipes"></div>
+          <form id="trainForm" class="card train-form hidden">
+            <div class="card-head"><span id="formTitle">Train</span><span class="badge wait hidden" id="gpuBadge">GPU recommended</span></div>
+            <p class="card-text" id="formSummary"></p>
+            <div class="fields">
+              <label class="field">Run name<input name="name" maxlength="80" placeholder="e.g. Reviews v1"></label>
+              <label class="field">Where to train<select name="target" id="targetPick"></select></label>
+            </div>
+            <div class="fields" id="paramFields"></div>
+            <div class="drop" id="drop">
+              <input type="file" id="files" multiple hidden>
+              <p><b>Dataset</b> · <span id="dataHint"></span></p>
+              <div class="row">
+                <label class="btn" for="files">Choose files</label>
+                <label class="check hidden" id="sampleWrap"><input type="checkbox" name="use_sample"> Use the sample data</label>
+              </div>
+              <div id="fileList" class="file-chips"></div>
+            </div>
+            <details class="advanced">
+              <summary>Resources</summary>
+              <div class="fields">
+                <label class="check"><input type="checkbox" name="gpu" id="gpuBox"> Use a GPU</label>
+                <label class="field">CPU cores (this server)<input name="cpus" type="number" min="0.5" step="0.5" placeholder="no limit"></label>
+                <label class="field">Memory GB (this server)<input name="memory_gb" type="number" min="0.5" step="0.5" placeholder="no limit"></label>
+              </div>
+            </details>
+            <p class="hint err" id="trainErr"></p>
+            <div class="card-actions">
+              <button class="btn primary" type="submit" id="trainBtn">Start training</button>
+              <button class="btn" type="button" id="trainCancel">Cancel</button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Runs -->
+        <section id="tab-runs" class="lab-pane hidden">
+          <div id="runs" class="conn-list"></div>
+        </section>
+
+        <!-- Models -->
+        <section id="tab-models" class="lab-pane hidden">
+          <div class="row lab-bar">
+            <p class="hint grow">Every finished run lands here. Run a model as an API on this server; it stays up 24/7.</p>
+            <label class="btn">Import .gguf<input type="file" id="ggufFile" accept=".gguf" hidden></label>
+          </div>
+          <div id="models" class="conn-list"></div>
+        </section>
+
+        <!-- Servers -->
+        <section id="tab-servers" class="lab-pane hidden">
+          <div id="targets" class="conn-list"></div>
+
+          <form id="targetForm" class="card">
+            <div class="card-head">Add a server (any cloud GPU, VPS or PC you can SSH into)</div>
+            <div class="fields">
+              <label class="field">Name<input name="name" required maxlength="60" placeholder="e.g. RunPod A100"></label>
+              <label class="field">Host<input name="host" required placeholder="203.0.113.7" autocomplete="off"></label>
+              <label class="field">Port<input name="port" type="number" value="22" min="1" max="65535"></label>
+              <label class="field">User<input name="user" required placeholder="ubuntu" autocomplete="off"></label>
+              <label class="field">Folder on the server<input name="workdir" value="mnx-runs"></label>
+            </div>
+            <div class="key-box">
+              <p class="hint">Easiest: add the Hive's key to the server once, by running this on the server:</p>
+              <pre class="result-box" id="hiveKeyCmd"></pre>
+              <div class="row"><button class="btn" type="button" id="copyKey">Copy</button></div>
+              <details>
+                <summary class="hint">Or paste a private key for this server instead</summary>
+                <textarea name="private_key" class="input mono" rows="4" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+              </details>
+            </div>
+            <p class="hint err" id="targetErr"></p>
+            <div class="card-actions"><button class="btn primary" type="submit" id="targetBtn">Add and test</button></div>
+          </form>
+
+          <form id="secretForm" class="card">
+            <div class="card-head">Secrets for training</div>
+            <p class="card-text">Passed to every run as environment variables, e.g. <code>HF_TOKEN</code> for private or gated Hugging Face models. Values are never shown again.</p>
+            <div id="secretList" class="file-chips"></div>
+            <div class="fields">
+              <label class="field">Name<input name="name" placeholder="HF_TOKEN" autocomplete="off"></label>
+              <label class="field">Value<input name="value" type="password" autocomplete="off"></label>
+            </div>
+            <div class="card-actions"><button class="btn" type="submit">Save secret</button></div>
+          </form>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+<script type="module" src="js/lab.js"></script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+{
+  "id": "tabular",
+  "title": "Spreadsheet predictor",
+  "summary": "Predict one column of a spreadsheet from the others: prices, sales, yes/no outcomes. Picks classification or regression by itself.",
+  "kind": "tabular",
+  "playground": "json",
+  "gpu": "no",
+  "image": "python:3.12-slim",
+  "dataset": {
+    "required": true,
+    "accept": ".csv",
+    "hint": "CSV with a header row. Choose which column to predict."
+  },
+  "sample": "sample.csv",
+  "params": [
+    {
+      "name": "target",
+      "label": "Column to predict",
+      "type": "text",
+      "default": "price"
+    },
+    {
+      "name": "iterations",
+      "label": "Boosting rounds",
+      "type": "int",
+      "default": 200,
+      "min": 10,
+      "max": 5000
+    },
+    {
+      "name": "learning_rate",
+      "label": "Learning rate",
+      "type": "float",
+      "default": 0.1,
+      "min": 0.001,
+      "max": 1
+    },
+    {
+      "name": "test_split",
+      "label": "Test share",
+      "type": "float",
+      "default": 0.2,
+      "min": 0.05,
+      "max": 0.5
+    }
+  ],
+  "order": 2
+}

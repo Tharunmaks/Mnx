@@ -1,0 +1,241 @@
+area,bedrooms,sqft,age_years,parking,price
+Fort Kochi,2,1258,20,yes,83.8
+Vyttila,1,1198,18,yes,75.7
+Edappally,1,626,13,no,34.7
+Kakkanad,4,571,26,yes,35.2
+Vyttila,1,1631,18,no,84.5
+Edappally,1,1590,27,yes,93.9
+Edappally,1,1619,9,yes,98.6
+Vyttila,2,1212,3,yes,80.3
+Vyttila,2,1466,21,no,88.9
+Aluva,4,1190,9,yes,62.4
+Edappally,1,1626,9,no,112.4
+Aluva,3,1697,2,yes,80.5
+Edappally,3,761,29,no,44.7
+Kakkanad,3,1146,22,no,59.4
+Vyttila,4,590,26,yes,41.3
+Aluva,1,574,23,no,17.7
+Aluva,3,1917,12,no,74.6
+Aluva,3,794,19,yes,35.9
+Edappally,3,714,23,yes,46.7
+Aluva,1,790,14,no,30.1
+Edappally,4,1576,8,no,119.9
+Aluva,2,759,2,yes,36.1
+Edappally,1,1443,26,yes,84.7
+Kakkanad,2,1308,17,no,67.7
+Fort Kochi,2,1864,27,yes,131.7
+Vyttila,4,1265,12,no,74.4
+Aluva,1,840,2,yes,39.2
+Kakkanad,3,1680,1,yes,87.7
+Edappally,1,1194,19,yes,69.0
+Edappally,4,754,20,no,55.7
+Vyttila,3,1421,3,yes,100.9
+Aluva,4,1440,9,yes,64.4
+Fort Kochi,3,1430,26,yes,104.5
+Edappally,3,750,22,yes,53.1
+Fort Kochi,1,1875,27,no,128.7
+Edappally,3,2030,7,no,140.4
+Vyttila,2,2100,7,no,133.9
+Edappally,2,1510,15,no,101.6
+Kakkanad,3,1417,8,yes,84.1
+Fort Kochi,4,2105,29,no,165.4
+Fort Kochi,1,901,3,yes,69.5
+Fort Kochi,2,1438,19,yes,104.7
+Fort Kochi,1,2159,21,yes,166.9
+Edappally,4,815,13,no,53.0
+Aluva,4,1272,23,yes,59.3
+Edappally,2,506,4,no,38.5
+Edappally,4,1796,29,no,107.2
+Vyttila,2,493,0,yes,37.7
+Edappally,4,848,26,yes,52.3
+Edappally,3,1476,7,no,95.8
+Aluva,2,574,29,no,18.7
+Vyttila,4,2143,29,yes,130.4
+Vyttila,1,1351,24,yes,78.4
+Edappally,2,739,15,yes,50.6
+Fort Kochi,4,2056,24,yes,164.8
+Kakkanad,2,841,8,yes,51.2
+Vyttila,4,1600,0,yes,107.4
+Vyttila,2,1868,8,no,113.7
+Aluva,2,1881,16,no,83.3
+Edappally,4,730,13,yes,54.1
+Fort Kochi,1,1824,7,no,121.2
+Fort Kochi,1,2041,4,no,138.8
+Edappally,4,899,23,yes,61.0
+Aluva,2,1817,26,yes,68.2
+Aluva,4,1144,13,yes,53.8
+Kakkanad,3,489,10,no,28.6
+Kakkanad,4,1128,16,no,62.4
+Kakkanad,1,2064,7,yes,100.9
+Fort Kochi,1,2045,5,no,157.0
+Aluva,3,1281,4,no,61.6
+Kakkanad,3,567,25,yes,29.5
+Kakkanad,3,484,20,yes,29.3
+Kakkanad,2,586,8,yes,34.9
+Fort Kochi,4,998,19,yes,70.9
+Edappally,1,780,8,yes,49.6
+Fort Kochi,3,1537,24,yes,108.1
+Vyttila,2,1004,11,yes,69.9
+Kakkanad,1,487,23,yes,21.7
+Edappally,4,667,21,no,46.4
+Vyttila,4,1487,9,yes,107.8
+Fort Kochi,2,2154,28,yes,150.7
+Fort Kochi,1,2164,4,yes,147.6
+Fort Kochi,4,784,1,yes,72.0
+Aluva,3,1676,7,no,67.7
+Edappally,2,1000,14,yes,64.2
+Fort Kochi,3,950,1,no,72.0
+Edappally,1,1136,12,yes,74.2
+Vyttila,2,958,16,yes,54.1
+Kakkanad,2,1268,18,yes,65.3
+Fort Kochi,3,1739,7,yes,136.6
+Vyttila,2,1796,28,no,106.6
+Aluva,2,1031,23,yes,37.9
+Vyttila,4,1952,22,yes,130.8
+Vyttila,1,2142,21,yes,114.8
+Kakkanad,2,1754,11,yes,92.5
+Aluva,1,1735,0,yes,77.5
+Kakkanad,4,2083,2,yes,124.4
+Kakkanad,4,966,25,yes,56.9
+Edappally,2,922,23,no,55.7
+Aluva,1,1431,29,no,53.1
+Vyttila,2,608,19,yes,35.5
+Fort Kochi,2,475,15,yes,36.5
+Kakkanad,2,1833,15,no,98.3
+Fort Kochi,4,1404,14,yes,120.4
+Vyttila,2,1088,2,no,62.6
+Aluva,1,2129,16,no,93.0
+Aluva,2,881,2,yes,40.7
+Vyttila,3,1186,4,no,82.8
+Fort Kochi,2,1469,28,no,98.6
+Edappally,1,1456,21,no,87.1
+Edappally,4,1154,12,no,74.1
+Fort Kochi,1,1114,24,no,79.0
+Kakkanad,2,1910,0,no,99.2
+Kakkanad,4,1249,27,yes,65.3
+Aluva,3,2199,1,no,90.7
+Fort Kochi,2,960,8,no,71.8
+Edappally,3,2057,30,no,139.1
+Aluva,2,1923,2,yes,94.8
+Aluva,4,1709,24,yes,76.6
+Fort Kochi,4,550,29,yes,38.7
+Aluva,3,1027,9,no,48.9
+Fort Kochi,4,1793,7,no,137.3
+Aluva,1,792,20,yes,27.9
+Vyttila,4,1577,7,no,109.8
+Aluva,4,735,17,yes,34.9
+Edappally,3,1588,2,no,104.2
+Fort Kochi,2,491,23,no,30.8
+Vyttila,2,1221,8,no,78.6
+Aluva,3,1626,30,no,58.4
+Vyttila,2,639,8,yes,42.0
+Aluva,4,1089,27,yes,44.0
+Aluva,4,1652,15,yes,69.3
+Vyttila,4,1369,7,yes,87.0
+Edappally,1,2140,23,no,121.4
+Kakkanad,1,2052,4,yes,112.1
+Kakkanad,3,712,20,no,36.7
+Aluva,1,653,2,no,29.0
+Vyttila,2,1244,8,yes,83.8
+Kakkanad,1,1550,9,no,76.0
+Fort Kochi,2,1423,16,yes,106.2
+Kakkanad,4,1893,20,no,91.5
+Edappally,4,1831,20,no,110.9
+Edappally,4,1208,7,no,77.7
+Fort Kochi,4,1192,21,no,83.0
+Fort Kochi,1,870,15,yes,60.5
+Edappally,2,1402,7,no,98.2
+Fort Kochi,1,1727,15,yes,135.2
+Aluva,4,1812,1,yes,95.4
+Kakkanad,2,498,19,yes,25.9
+Kakkanad,2,1255,14,no,67.7
+Kakkanad,2,1124,6,yes,66.0
+Vyttila,4,515,9,no,39.7
+Fort Kochi,4,796,3,yes,63.9
+Kakkanad,3,1310,30,yes,67.4
+Edappally,4,1180,24,no,82.1
+Aluva,1,550,22,no,15.6
+Vyttila,4,845,10,no,59.2
+Aluva,1,1743,13,yes,77.3
+Aluva,1,1219,1,no,48.2
+Kakkanad,3,849,23,yes,49.1
+Fort Kochi,3,1007,10,yes,76.0
+Fort Kochi,3,1059,0,yes,79.3
+Edappally,1,1423,22,no,94.0
+Aluva,3,1330,26,no,48.6
+Aluva,2,467,25,no,15.4
+Edappally,2,1121,27,no,66.5
+Vyttila,1,1498,6,no,94.2
+Edappally,4,582,20,yes,42.7
+Vyttila,3,779,13,yes,56.9
+Fort Kochi,1,876,3,no,65.1
+Aluva,2,929,4,no,41.7
+Edappally,1,2046,26,no,119.9
+Vyttila,3,1213,8,no,72.2
+Edappally,2,952,7,yes,64.1
+Vyttila,2,1118,2,no,67.5
+Edappally,2,1780,25,yes,117.2
+Kakkanad,1,459,15,yes,25.0
+Fort Kochi,1,1051,7,yes,72.1
+Vyttila,2,603,11,yes,39.3
+Fort Kochi,1,666,20,no,40.6
+Fort Kochi,3,739,1,yes,70.3
+Kakkanad,2,2118,0,no,113.0
+Fort Kochi,2,1721,9,yes,122.0
+Aluva,4,579,13,yes,33.8
+Vyttila,2,1759,17,yes,109.6
+Aluva,3,1289,9,no,56.6
+Kakkanad,3,1976,18,no,101.3
+Kakkanad,3,1769,6,no,101.5
+Edappally,1,1339,28,yes,80.1
+Kakkanad,4,1633,28,no,83.1
+Edappally,2,480,1,yes,39.9
+Aluva,1,1623,19,no,65.4
+Edappally,2,1162,9,yes,80.3
+Kakkanad,1,1235,15,yes,61.2
+Kakkanad,4,1094,1,no,61.0
+Vyttila,2,1761,25,yes,105.8
+Vyttila,2,2148,15,yes,132.2
+Kakkanad,4,1510,5,no,84.1
+Edappally,2,1934,26,yes,112.0
+Vyttila,1,1817,26,no,93.1
+Vyttila,4,1576,27,no,96.2
+Fort Kochi,2,1321,12,no,95.3
+Aluva,2,497,0,no,25.5
+Aluva,4,2163,5,no,96.0
+Kakkanad,2,1184,13,no,56.4
+Aluva,1,533,20,yes,18.0
+Fort Kochi,1,561,24,no,34.8
+Edappally,1,585,19,yes,33.7
+Aluva,3,2110,29,yes,89.9
+Edappally,1,2156,11,no,128.8
+Vyttila,3,2120,14,yes,125.2
+Aluva,2,1662,8,yes,71.3
+Kakkanad,2,822,12,yes,47.2
+Fort Kochi,3,1221,5,no,87.1
+Vyttila,1,1753,27,no,105.5
+Aluva,1,966,17,no,37.6
+Fort Kochi,3,1219,11,yes,92.2
+Kakkanad,4,921,5,yes,56.5
+Vyttila,3,1085,20,no,67.4
+Kakkanad,2,755,9,no,40.0
+Fort Kochi,1,720,15,yes,53.1
+Kakkanad,1,561,0,no,30.4
+Vyttila,3,1543,7,no,98.6
+Vyttila,2,868,11,no,48.9
+Kakkanad,2,1898,4,no,93.8
+Edappally,3,1273,25,no,87.7
+Kakkanad,3,1667,20,no,87.9
+Vyttila,4,958,5,yes,62.1
+Vyttila,1,1281,5,yes,74.6
+Kakkanad,1,1704,17,yes,81.1
+Edappally,4,2115,19,yes,143.1
+Kakkanad,3,1731,1,no,101.3
+Kakkanad,4,2179,13,no,108.2
+Aluva,2,912,3,no,39.5
+Kakkanad,1,1137,28,no,52.6
+Fort Kochi,4,1854,25,no,129.5
+Edappally,1,1489,0,yes,97.4
+Edappally,2,776,23,no,43.4
+Aluva,3,1681,7,no,80.7
+Vyttila,4,1416,26,yes,93.5

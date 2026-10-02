@@ -45,7 +45,9 @@ async function loadBees() {
     grid.append(h("div", { class: "bee-card" }, top, h("p", {}, b.skill || ""), tools, cellLine,
       h("div", { class: "card-actions" },
         h("a", { class: "btn primary", href: `cell.html?bee=${encodeURIComponent(b.id)}` }, "Open Cell"),
-        h("a", { class: "btn", href: `cell.html?bee=${encodeURIComponent(b.id)}#jobs` }, "Jobs"))));
+        b.id === "cloud"
+          ? h("a", { class: "btn", href: "lab.html" }, "Model Lab")
+          : h("a", { class: "btn", href: `cell.html?bee=${encodeURIComponent(b.id)}#jobs` }, "Jobs"))));
   }
   grid.append(h("button", { class: "bee-card add", onclick: openAdd, disabled: offline },
     h("span", { html: ICONS.plus, style: "width:26px;height:26px;display:block" }),

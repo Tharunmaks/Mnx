@@ -2,7 +2,7 @@
 
 import { Terminal } from "../vendor/xterm/xterm.mjs";
 import { FitAddon } from "../vendor/xterm/addon-fit.mjs";
-import { ICONS, api, beeHex, connLabel, fillIcons, gatewayBase, getSettings, h, installTokenPrompt, timeShort } from "./shared.js";
+import { ICONS, api, beeHex, connLabel, fillIcons, gatewayBase, getSettings, h, installTokenPrompt, timeShort, toast, fmtSize } from "./shared.js";
 
 const $ = (id) => document.getElementById(id);
 fillIcons();
@@ -10,6 +10,7 @@ fillIcons();
 const beeId = new URLSearchParams(location.search).get("bee") || "browser";
 const base = `/api/cells/${encodeURIComponent(beeId)}`;
 let info = null;
+let lastJobsKey = "";
 
 // ---------- header ----------
 async function load() {
@@ -36,22 +37,18 @@ async function load() {
       ? h("button", { class: "btn primary", type: "button", onclick: startCell }, "Start Cell") : null,
   ].filter(Boolean));
   $("jobCount").textContent = jobs.length ? `(${jobs.length})` : "";
-  renderJobs(jobs);
+  // Only rebuild the job list when something changed, so it doesn't flicker or lose scroll.
+  const key = JSON.stringify(jobs);
+  if (key !== lastJobsKey) { lastJobsKey = key; renderJobs(jobs); }
 }
 
 async function startCell(e) {
   e.target.disabled = true;
   e.target.textContent = "Starting…";
-  try { await api(`${base}/start`, { method: "POST" }); } catch (err) { alert(err.message); }
+  try { await api(`${base}/start`, { method: "POST" }); } catch (err) { toast(err.message, "error"); }
   load();
 }
 
-function fmtSize(n) {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 ** 2) return `${(n / 1024).toFixed(0)} KB`;
-  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
-  return `${(n / 1024 ** 3).toFixed(2)} GB`;
-}
 
 // ---------- tabs ----------
 const shown = new Set();
@@ -164,16 +161,15 @@ function renderJobs(jobs) {
       : j.last_exit != null && j.last_exit !== 0 ? h("span", { class: "status failed" }, `Exit ${j.last_exit}`)
       : h("span", { class: `status ${j.schedule === "@manual" ? "" : "scheduled"}` }, j.last_exit === 0 ? "OK" : "Waiting");
     const logBox = h("pre", { class: "result-box hidden", "data-job": j.id });
-    const toggleLog = async () => {
-      if (openLogs.has(j.id)) { openLogs.delete(j.id); logBox.classList.add("hidden"); return; }
-      openLogs.add(j.id);
-      logBox.classList.remove("hidden");
-      await fillLog(j.id, logBox);
+    const toggleLog = () => {
+      if (openLogs.has(j.id)) openLogs.delete(j.id);
+      else openLogs.add(j.id);
+      renderJobs(info.jobs); // redraw so the button label and log box match
     };
     if (openLogs.has(j.id)) { logBox.classList.remove("hidden"); fillLog(j.id, logBox); }
     const call = (path, opts) => async (e) => {
       e.target.disabled = true;
-      try { await api(`${base}/jobs/${j.id}${path}`, { method: "POST", ...opts }); } catch (err) { alert(err.message); }
+      try { await api(`${base}/jobs/${j.id}${path}`, { method: "POST", ...opts }); } catch (err) { toast(err.message, "error"); }
       setTimeout(load, 300);
     };
     box.append(h("div", { class: "card job-card" },
@@ -190,7 +186,7 @@ function renderJobs(jobs) {
         h("button", { class: "btn", type: "button", onclick: toggleLog }, openLogs.has(j.id) ? "Hide log" : "Log"),
         h("button", { class: "btn danger", type: "button", onclick: async () => {
           if (!confirm(`Delete job "${j.name}" and its log?`)) return;
-          try { await api(`${base}/jobs/${j.id}`, { method: "DELETE" }); } catch (err) { alert(err.message); }
+          try { await api(`${base}/jobs/${j.id}`, { method: "DELETE" }); } catch (err) { toast(err.message, "error"); }
           openLogs.delete(j.id);
           load();
         } }, "Delete")),
@@ -236,7 +232,7 @@ async function loadFiles(path) {
       h("span", { class: "hint" }, new Date(f.mtime * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" })),
       h("button", { class: "icon-btn", type: "button", "aria-label": `Delete ${f.name}`, html: ICONS.trash, onclick: async () => {
         if (!confirm(`Delete ${f.name}${f.dir ? " and everything in it" : ""}?`)) return;
-        try { await api(`${base}/file?path=${encodeURIComponent(f.path)}`, { method: "DELETE" }); } catch (e) { alert(e.message); }
+        try { await api(`${base}/file?path=${encodeURIComponent(f.path)}`, { method: "DELETE" }); } catch (e) { toast(e.message, "error"); }
         loadFiles(cwd);
       } })));
   }
@@ -248,7 +244,7 @@ $("upload").addEventListener("change", async (e) => {
     const res = await fetch(`${gatewayBase()}${base}/file?path=${encodeURIComponent(path)}`, {
       method: "PUT", body: file, headers: { Authorization: `Bearer ${getSettings().token}` },
     });
-    if (!res.ok) alert(`${file.name}: ${(await res.json().catch(() => ({}))).detail || res.statusText}`);
+    if (!res.ok) toast(`${file.name}: ${(await res.json().catch(() => ({}))).detail || res.statusText}`);
   }
   e.target.value = "";
   loadFiles(cwd);

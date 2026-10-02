@@ -3,10 +3,21 @@
 Web app for Mnx Hive: a Queen agent that plans and a swarm of Bees that do the work.
 **No AI is wired in yet.** When you send a message, the Queen says the Mnx brain isn't
 connected. Everything the Bees will use already works by hand: the Connector Hub,
-the Browser Bee, the Phone Drone, and a **Cell** for every Bee (its own always-on
-container with a terminal, browser storage, files and 24/7 jobs).
+the Browser Bee, the Phone Drone, a **Cell** for every Bee (its own always-on
+container with a terminal, browser storage, files and 24/7 jobs), and the **Cloud Bee**,
+which trains AI models, keeps them and runs them as APIs, here or on any GPU server.
 
 ## Run it
+
+On a fresh Ubuntu server (Oracle Cloud free ARM works), one command sets up everything,
+including Docker, Chromium and a 24/7 service:
+
+```bash
+git clone <this repo> Mnx && cd Mnx && bash scripts/install.sh
+bash scripts/update.sh          # later: pull the latest code and restart
+```
+
+Or by hand, for trying it out:
 
 ```bash
 pip install -r requirements.txt
@@ -26,6 +37,7 @@ For the Browser Bee, install Chromium once: `playwright install --with-deps chro
 | `/hive.html` | Hive: every Bee's state (busy / idle / scheduled / failed), add or remove Bees, activity log |
 | `/connectors.html` | Connector Hub: one search across all six layers, connect MCP servers, Go/Ask/You lane per tool, try tools |
 | `/cell.html?bee=<id>` | A Bee's Cell: terminal, browser (own saved logins), jobs (always-on / scheduled / manual) and files |
+| `/lab.html` | Cloud Bee · Model Lab: train models (here or on SSH servers), live charts, model registry, run models as APIs, try them |
 | `/browser.html` | Browser Bee: watch and drive the Hive's own Chromium (click on the picture, type, scroll, read the page) |
 | `/phone.html` | Phone Drone: live phone screen (tap, swipe, long-press, type), open apps, read the screen, device controls, notifications and SMS |
 | `/dev/gallery.html` | Every card and step type with placeholder data, to check the design without a model |
@@ -39,6 +51,10 @@ hive/queen.py     Plans and runs Bees — currently reports "brain not connected
 hive/brain.py     Where Mnx plugs in (MNX_BRAIN_URL + ask())
 hive/connectors.py  Connector Hub: MCP registry search, MCP client, lanes, hourly health check
 hive/cells.py     Cells: per-Bee container, terminal, jobs, cron scheduler
+hive/lab.py       Cloud Bee engine: training runs (local Docker or SSH), model registry, model APIs
+hive/recipes/     Training recipes: text classifier, spreadsheet predictor, chat model LoRA fine-tune, your own script
+hive/system.py    Server stats (CPU, memory, disk, GPU)
+scripts/          install.sh (fresh server) and update.sh
 hive/browser.py   Browser engine (Playwright), one saved profile per Bee; private/local addresses are blocked
 hive/phone.py     Gateway side of the Phone Drone link
 drone/drone.py    Termux agent for your phone (served at /drone.py)
@@ -77,6 +93,54 @@ For Docker mode the gateway's user needs Docker access (`sudo usermod -aG docker
 These are containers on your one server, not separate cloud machines, so all Cells share
 its CPU, memory and disk. Watch the Storage chip on each Cell; on the Oracle free ARM VM
 (24 GB RAM) a handful of busy Cells with browsers open is comfortable.
+
+## Cloud Bee: train, keep and run your own AI
+
+Open **Cloud Bee · Lab** in the left rail.
+
+1. **Train**: pick a recipe, give it examples (or tick "use the sample data"), choose where
+   it trains, press Start. Every recipe works on a CPU; big language models want a GPU.
+
+   | Recipe | Learns | Data | Runs as |
+   | --- | --- | --- | --- |
+   | Text classifier | Sort text into labels (mood, spam, intent) | CSV `text,label` | `POST /predict {"text": …}` |
+   | Spreadsheet predictor | Predict a column (price, yes/no) | CSV | `POST /predict {"row": {…}}` |
+   | Chat model fine-tune (LoRA) | Your style and knowledge, on any Hugging Face base, **including your own Mnx** | JSONL chats | OpenAI-compatible `/v1/chat/completions` |
+   | Your own script | Anything | your `train.py` (+ `requirements.txt`, `serve.py`) | your `serve.py` |
+
+2. **Where it trains** ("Servers" tab):
+   - **This server**: each run gets a fresh container (`--gpus all` when the NVIDIA toolkit is installed), with CPU and memory limits if you set them.
+   - **Any machine you can SSH into**: a rented GPU (RunPod, Lambda, Vast.ai, AWS, GCP…), another VPS, your PC.
+     Add it with host and user, and put the Hive's public key on it (the page shows the one-line command).
+     Files go over with tar, the run keeps going with `nohup` if the connection drops, and the trained
+     model comes back to this server. The server needs Python 3 with venv.
+3. **Watch**: live loss/accuracy charts and logs. Runs keep going when you close the app,
+   and they're picked up again after the Hive server restarts. Stop works on both kinds of server.
+4. **Models**: every finished run is saved. **Run as API** starts it in its own always-on
+   container on this server; then try it on the page (classify / JSON / chat) or call it
+   from any app at `http://<server>:8000/api/lab/serve/<model>/…` with your access token.
+   Chat models are OpenAI-compatible, so any OpenAI client works with base URL `…/serve/<model>/v1`.
+   **Import .gguf** runs a GGUF model (like your Mnx) with the llama.cpp server image.
+5. **Secrets**: e.g. `HF_TOKEN` for private Hugging Face models, passed to every run as an
+   environment variable and never shown again.
+
+Recipes are plain folders in `hive/recipes/`: `train.py` reads `params.json` and `data/`, writes
+`output/`, prints `MNX_METRIC {json}` lines for the charts and one `MNX_RESULT {json}` line.
+`serve.py` reads `$PORT` and `$MODEL_DIR` and answers `GET /health`. Add your own recipe folder
+and it appears on the Train tab.
+
+Settings: `MNX_DOCKER_ARGS` (extra `docker run` arguments for Cells, runs and models, e.g. a
+proxy or a network), `MNX_LLAMA_IMAGE` (default `ghcr.io/ggml-org/llama.cpp:server`).
+
+## Speed and smoothness
+
+- Pages and API answers are gzip-compressed (much faster on mobile data); libraries are
+  cached for a week, the app's own files are re-checked so updates show up at once.
+- Live screens update over the WebSocket and only redraw what changed; logs load in pieces.
+- Container images are downloaded in the background at start-up, so the first Cell or
+  training run doesn't wait; pip downloads are cached between runs.
+- Heavy work (disk usage, server stats) runs off the main loop and is cached.
+- Messages appear as short toasts instead of pop-ups that block the page.
 
 ## "1 million connectors": how the layers add up
 

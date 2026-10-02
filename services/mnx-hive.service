@@ -1,21 +1,26 @@
 # Runs the Mnx Hive gateway 24/7 and restarts it after a crash or reboot.
-# Install (edit User and paths first):
+# scripts/install.sh installs this for you. By hand (edit User and paths first):
 #   sudo cp services/mnx-hive.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now mnx-hive
 #   journalctl -u mnx-hive -f        # logs (the access token is printed here)
+# Keep one worker: the Hive keeps live state (sockets, runs, terminals) in one process.
 [Unit]
 Description=Mnx Hive gateway
 After=network-online.target docker.service
-Wants=network-online.target
+Wants=network-online.target docker.service
 
 [Service]
 User=ubuntu
-# Needed for Docker Cells: add the user to the docker group (sudo usermod -aG docker ubuntu)
+# Docker Cells and training need the user in the docker group (install.sh does this)
 WorkingDirectory=/home/ubuntu/Mnx
 Environment=MNX_CELL_MODE=auto
-ExecStart=/home/ubuntu/Mnx/.venv/bin/uvicorn gateway.api:app --host 0.0.0.0 --port 8000
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/Mnx/.venv/bin/uvicorn gateway.api:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --timeout-keep-alive 30
 Restart=always
 RestartSec=3
+LimitNOFILE=65536
+# Give runs and terminals a moment to save their state on restart
+TimeoutStopSec=20
 
 [Install]
 WantedBy=multi-user.target

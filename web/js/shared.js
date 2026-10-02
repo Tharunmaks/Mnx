@@ -250,3 +250,31 @@ export function installTokenPrompt(onSaved) {
 export function fillIcons(root = document) {
   root.querySelectorAll("[data-icon]").forEach((el) => { el.outerHTML = ICONS[el.dataset.icon]; });
 }
+
+// ---------- toasts: short, non-blocking messages ----------
+export function toast(message, kind = "info", ms = 3800) {
+  let box = document.getElementById("toasts");
+  if (!box) {
+    box = h("div", { id: "toasts", class: "toasts", role: "status", "aria-live": "polite" });
+    document.body.append(box);
+  }
+  const el = h("div", { class: `toast ${kind}` }, String(message));
+  box.append(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 300); }, ms);
+}
+
+// Human-friendly sizes and durations, shared by the Cell and Lab pages.
+export function fmtSize(n) {
+  if (n == null) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(0)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  return `${(n / 1024 ** 3).toFixed(2)} GB`;
+}
+export function fmtDuration(sec) {
+  if (sec == null || sec < 0) return "—";
+  if (sec < 60) return `${Math.round(sec)}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
+  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+}

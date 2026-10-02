@@ -1,6 +1,6 @@
 // Mnx Hive — Phone Drone: see and control your paired Android phone.
 
-import { HiveClient, api, connLabel, fillIcons, gatewayBase, getSettings, h, installTokenPrompt } from "./shared.js";
+import { HiveClient, api, connLabel, fillIcons, gatewayBase, getSettings, h, installTokenPrompt, toast } from "./shared.js";
 
 const $ = (id) => document.getElementById(id);
 fillIcons();
@@ -238,7 +238,7 @@ $("smsForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const number = $("smsNumber").value.trim(), text = $("smsText").value.trim();
   if (!number || !text) return;
-  try { if (await cmd("sms_send", { number, text })) { $("smsText").value = ""; alert("Sent."); } } catch { /* shown */ }
+  try { if (await cmd("sms_send", { number, text })) { $("smsText").value = ""; toast("Sent."); } } catch { /* shown */ }
 });
 $("callBtn").addEventListener("click", () => {
   const number = $("smsNumber").value.trim();

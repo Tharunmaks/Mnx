@@ -1,0 +1,63 @@
+{
+  "id": "text-classifier",
+  "title": "Text classifier",
+  "summary": "Teach a model to sort text into labels: spam or not, mood, topic, intent. Trains in seconds on a CPU.",
+  "kind": "classifier",
+  "playground": "classify",
+  "gpu": "no",
+  "image": "python:3.12-slim",
+  "dataset": {
+    "required": true,
+    "accept": ".csv,.jsonl",
+    "hint": "CSV with a text column and a label column (or JSONL with \"text\" and \"label\")."
+  },
+  "sample": "sample.csv",
+  "params": [
+    {
+      "name": "text_column",
+      "label": "Text column",
+      "type": "text",
+      "default": "text"
+    },
+    {
+      "name": "label_column",
+      "label": "Label column",
+      "type": "text",
+      "default": "label"
+    },
+    {
+      "name": "epochs",
+      "label": "Epochs",
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "max": 500
+    },
+    {
+      "name": "test_split",
+      "label": "Test share",
+      "type": "float",
+      "default": 0.2,
+      "min": 0.05,
+      "max": 0.5,
+      "help": "Part of the data kept aside to check accuracy."
+    },
+    {
+      "name": "max_features",
+      "label": "Vocabulary size",
+      "type": "int",
+      "default": 20000,
+      "min": 100,
+      "max": 500000
+    },
+    {
+      "name": "ngram_max",
+      "label": "Word groups up to",
+      "type": "int",
+      "default": 2,
+      "min": 1,
+      "max": 3
+    }
+  ],
+  "order": 1
+}

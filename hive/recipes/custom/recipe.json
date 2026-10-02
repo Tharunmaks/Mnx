@@ -1,0 +1,19 @@
+{
+  "id": "custom",
+  "title": "Your own script",
+  "summary": "Train anything: upload your own train.py (and requirements.txt, serve.py). It runs with the same live logs, metrics and model registry.",
+  "kind": "custom",
+  "playground": "json",
+  "gpu": "optional",
+  "image": "python:3.12-slim",
+  "dataset": {
+    "required": false,
+    "accept": "*",
+    "hint": "Upload train.py plus any data files. Optional: requirements.txt, serve.py (reads $PORT, answers GET /health and POST /predict)."
+  },
+  "needs_files": [
+    "train.py"
+  ],
+  "params": [],
+  "order": 4
+}

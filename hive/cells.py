@@ -201,6 +201,7 @@ class Cell:
         self.loops: dict[str, asyncio.Task] = {}
         self.container_state = "local" if mode == "local" else "missing"
         self.on_change = None  # set by the manager
+        self._disk = (0.0, 0)
 
     # ----- container -----
     async def ensure_up(self) -> None:
@@ -279,6 +280,12 @@ class Cell:
                         "path": str(e.relative_to(self.work))})
         return out
 
+    async def disk_usage_cached(self, max_age: float = 60) -> int:
+        """Walking a browser profile is slow; do it in a thread, at most once a minute."""
+        if time.monotonic() - self._disk[0] > max_age:
+            self._disk = (time.monotonic(), await asyncio.to_thread(self.disk_usage))
+        return self._disk[1]
+
     def disk_usage(self) -> int:
         total = 0
         for root, _, files in os.walk(self.dir):
@@ -316,13 +323,23 @@ class Cell:
     def log_path(self, job_id: str) -> Path:
         return self.logs / f"{job_id}.log"
 
-    def _log(self, job_id: str, text: str) -> None:
+    def _log(self, job_id: str, text: str, fh=None) -> None:
+        if fh is not None:
+            fh.write(text.encode())
+            return
         path = self.log_path(job_id)
         with open(path, "ab") as f:
             f.write(text.encode())
-        if path.stat().st_size > LOG_MAX:
-            data = path.read_bytes()[-LOG_MAX // 2:]
-            path.write_bytes(b"[older output trimmed]\n" + data)
+        self._trim(job_id)
+
+    def _trim(self, job_id: str) -> None:
+        path = self.log_path(job_id)
+        try:
+            if path.stat().st_size > LOG_MAX:
+                data = path.read_bytes()[-LOG_MAX // 2:]
+                path.write_bytes(b"[older output trimmed]\n" + data)
+        except FileNotFoundError:
+            pass
 
     async def run_job(self, job_id: str) -> int:
         job = self.jobs[job_id]
@@ -347,14 +364,23 @@ class Cell:
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
         self.running[job_id] = proc
         self._changed()
+        written = 0
+        fh = open(self.log_path(job_id), "ab", buffering=0)
         try:
             while True:
                 line = await proc.stdout.readline()
                 if not line:
                     break
-                self._log(job_id, line.decode(errors="replace"))
+                fh.write(line)
+                written += len(line)
+                if written > 256 * 1024:
+                    fh.close()
+                    self._trim(job_id)
+                    fh = open(self.log_path(job_id), "ab", buffering=0)
+                    written = 0
             code = await proc.wait()
         finally:
+            fh.close()
             self.running.pop(job_id, None)
         self._log(job_id, f"=== exit {code}\n")
         job["last_end"], job["last_exit"] = int(time.time()), code

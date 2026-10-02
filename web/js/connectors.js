@@ -1,6 +1,6 @@
 // Mnx Hive — Connector Hub: search every layer, connect MCP servers, set lanes, try tools.
 
-import { ICONS, api, connLabel, fillIcons, h, installTokenPrompt } from "./shared.js";
+import { ICONS, api, connLabel, fillIcons, h, installTokenPrompt, toast } from "./shared.js";
 
 const $ = (id) => document.getElementById(id);
 fillIcons();
@@ -61,7 +61,7 @@ function connCard(c) {
   for (const t of c.tools) {
     const lane = h("select", { class: "lane", "aria-label": `Lane for ${t.name}`, onchange: async (e) => {
       try { await api(`/api/connectors/${encodeURIComponent(c.id)}/lane`, { method: "POST", body: { tool: t.name, lane: e.target.value } }); }
-      catch (err) { alert(err.message); }
+      catch (err) { toast(err.message, "error"); }
     } }, ["go", "ask", "you"].map((v) => h("option", { value: v, selected: t.lane === v }, { go: "Go", ask: "Ask", you: "You" }[v])));
     tools.append(h("div", { class: "tool-row" },
       h("div", { class: "meta" },
@@ -86,12 +86,12 @@ function connCard(c) {
     h("div", { class: "card-actions" },
       h("button", { class: "btn", type: "button", onclick: async (e) => {
         e.target.disabled = true; e.target.textContent = "Testing…";
-        try { await api(`/api/connectors/${encodeURIComponent(c.id)}/test`, { method: "POST" }); } catch (err) { alert(err.message); }
+        try { await api(`/api/connectors/${encodeURIComponent(c.id)}/test`, { method: "POST" }); } catch (err) { toast(err.message, "error"); }
         load();
       } }, "Test"),
       h("button", { class: "btn danger", type: "button", onclick: async () => {
         if (!confirm(`Remove ${c.name}? Its saved login is deleted too.`)) return;
-        try { await api(`/api/connectors/${encodeURIComponent(c.id)}`, { method: "DELETE" }); } catch (err) { alert(err.message); }
+        try { await api(`/api/connectors/${encodeURIComponent(c.id)}`, { method: "DELETE" }); } catch (err) { toast(err.message, "error"); }
         load();
       } }, "Remove")));
 }
@@ -152,7 +152,7 @@ async function openOnPhone(app, btn) {
     await api(`/api/phones/${encodeURIComponent(app.phone)}/cmd`, { method: "POST", body: { cmd: "open_app", args: { package: app.package } } });
     btn.textContent = "Opened";
   } catch (e) {
-    alert(e.message);
+    toast(e.message, "error");
     btn.disabled = false;
   }
 }
@@ -211,7 +211,7 @@ $("addForm").addEventListener("submit", async (e) => {
       body: { name: f.name.value.trim(), url: f.url.value.trim(), transport: f.transport.value, layer: Number(f.layer.value), headers, source: f.dataset.source || null },
     });
     $("addDlg").close();
-    if (c.status !== "ok") alert(`Saved, but the server didn't answer: ${c.error}`);
+    if (c.status !== "ok") toast(`Saved, but the server didn't answer: ${c.error}`);
     load();
   } catch (err) {
     $("addErr").textContent = err.message;
