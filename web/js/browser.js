@@ -4,6 +4,12 @@ import { api, connLabel, fillIcons, h, installTokenPrompt } from "./shared.js";
 
 const $ = (id) => document.getElementById(id);
 fillIcons();
+
+// Which Bee's browser to drive (each Bee has its own profile); embed=1 when shown inside a Cell.
+const params = new URLSearchParams(location.search);
+const beeId = params.get("bee") || "browser";
+const B = `/api/browser?bee=${encodeURIComponent(beeId)}`;
+if (params.get("embed")) document.body.classList.add("embed");
 installTokenPrompt(() => refresh());
 
 let state = { running: false };
@@ -14,7 +20,7 @@ async function act(action, args = {}) {
   $("busy").classList.remove("hidden");
   $("err").textContent = "";
   try {
-    const s = await api("/api/browser", { method: "POST", body: { action, ...args } });
+    const s = await api(B, { method: "POST", body: { action, ...args } });
     connLabel($("conn"), "online");
     show(s);
     if (action !== "screenshot" && !$("tab-elements").classList.contains("hidden")) loadElements();
@@ -40,9 +46,9 @@ function show(s) {
 
 async function refresh() {
   try {
-    const s = await api("/api/browser");
+    const s = await api(B);
     connLabel($("conn"), "online");
-    if (s.running) show(await api("/api/browser", { method: "POST", body: { action: "screenshot" } }));
+    if (s.running) show(await api(B, { method: "POST", body: { action: "screenshot" } }));
     else show(s);
   } catch (e) {
     connLabel($("conn"), e.status === 401 ? "auth" : "offline");
@@ -97,7 +103,7 @@ document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () 
 async function loadElements() {
   if (!state.running) return;
   try {
-    const r = await api("/api/browser", { method: "POST", body: { action: "elements" } });
+    const r = await api(B, { method: "POST", body: { action: "elements" } });
     const box = $("tab-elements");
     box.replaceChildren();
     if (!r.elements.length) box.append(h("p", { class: "hint" }, "Nothing clickable in view."));
@@ -113,7 +119,7 @@ async function loadText() {
   if (!state.running) return;
   $("pageText").textContent = "Reading…";
   try {
-    const r = await api("/api/browser", { method: "POST", body: { action: "read" } });
+    const r = await api(B, { method: "POST", body: { action: "read" } });
     $("pageText").textContent = r.text || "(empty page)";
   } catch (e) {
     $("pageText").textContent = e.message;
@@ -123,10 +129,10 @@ async function loadText() {
 // ---------- live view ----------
 setInterval(() => {
   if ($("live").checked && state.running && !busy && document.visibilityState === "visible") {
-    api("/api/browser", { method: "POST", body: { action: "screenshot" } }).then(show).catch(() => {});
+    api(B, { method: "POST", body: { action: "screenshot" } }).then(show).catch(() => {});
   }
 }, 2500);
 
-const start = new URLSearchParams(location.search).get("url");
+const start = params.get("url");
 if (start) { $("url").value = start; act("goto", { url: start }); }
 else refresh();

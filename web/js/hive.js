@@ -26,7 +26,7 @@ async function loadBees() {
       h("span", { class: `status ${b.status}` }, b.status)));
     if (!b.builtin) {
       const del = h("button", { class: "icon-btn", "aria-label": `Remove ${b.name} Bee`, html: ICONS.trash, onclick: async () => {
-        if (!confirm(`Remove ${b.name} Bee?`)) return;
+        if (!confirm(`Remove ${b.name} Bee? Its Cell is deleted too: container, files, browser storage and jobs.`)) return;
         try { await api(`/api/bees/${encodeURIComponent(b.id)}`, { method: "DELETE" }); } catch { /* offline */ }
         loadBees();
       } });
@@ -36,7 +36,16 @@ async function loadBees() {
       (b.tools || []).map((t) => h("span", { class: "chip" }, t)),
       b.approval ? h("span", { class: "chip ask" }, "Ask lane") : null,
       b.schedule ? h("span", { class: "chip" }, `⏱ ${b.schedule}`) : null);
-    grid.append(h("div", { class: "bee-card" }, top, h("p", {}, b.skill || ""), tools));
+    const c = b.cell;
+    const cellLine = h("div", { class: "cell-line" },
+      h("span", { class: "chip" }, !c || c.container === "missing" ? "Cell starts on first use" : c.mode === "docker" ? `Container ${c.container}` : "Local Cell"),
+      c && c.jobs ? h("span", { class: "chip" }, `${c.jobs} job${c.jobs > 1 ? "s" : ""}${c.running ? ` · ${c.running} running` : ""}`) : null,
+      c && c.terminal ? h("span", { class: "chip" }, "Terminal open") : null,
+      c && c.browser ? h("span", { class: "chip" }, "Browser open") : null);
+    grid.append(h("div", { class: "bee-card" }, top, h("p", {}, b.skill || ""), tools, cellLine,
+      h("div", { class: "card-actions" },
+        h("a", { class: "btn primary", href: `cell.html?bee=${encodeURIComponent(b.id)}` }, "Open Cell"),
+        h("a", { class: "btn", href: `cell.html?bee=${encodeURIComponent(b.id)}#jobs` }, "Jobs"))));
   }
   grid.append(h("button", { class: "bee-card add", onclick: openAdd, disabled: offline },
     h("span", { html: ICONS.plus, style: "width:26px;height:26px;display:block" }),

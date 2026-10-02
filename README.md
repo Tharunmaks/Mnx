@@ -3,7 +3,8 @@
 Web app for Mnx Hive: a Queen agent that plans and a swarm of Bees that do the work.
 **No AI is wired in yet.** When you send a message, the Queen says the Mnx brain isn't
 connected. Everything the Bees will use already works by hand: the Connector Hub,
-the Browser Bee and the Phone Drone.
+the Browser Bee, the Phone Drone, and a **Cell** for every Bee (its own always-on
+container with a terminal, browser storage, files and 24/7 jobs).
 
 ## Run it
 
@@ -24,6 +25,7 @@ For the Browser Bee, install Chromium once: `playwright install --with-deps chro
 | `/` | Chat: left rail (new chat, history, MCP tools, Hive, settings, profile), wordmark + greeting, message box, live step tree, Bees panel |
 | `/hive.html` | Hive: every Bee's state (busy / idle / scheduled / failed), add or remove Bees, activity log |
 | `/connectors.html` | Connector Hub: one search across all six layers, connect MCP servers, Go/Ask/You lane per tool, try tools |
+| `/cell.html?bee=<id>` | A Bee's Cell: terminal, browser (own saved logins), jobs (always-on / scheduled / manual) and files |
 | `/browser.html` | Browser Bee: watch and drive the Hive's own Chromium (click on the picture, type, scroll, read the page) |
 | `/phone.html` | Phone Drone: live phone screen (tap, swipe, long-press, type), open apps, read the screen, device controls, notifications and SMS |
 | `/dev/gallery.html` | Every card and step type with placeholder data, to check the design without a model |
@@ -36,14 +38,45 @@ hive/core.py      Task: emit events, ask the user (connect / clarify / confirm) 
 hive/queen.py     Plans and runs Bees — currently reports "brain not connected"
 hive/brain.py     Where Mnx plugs in (MNX_BRAIN_URL + ask())
 hive/connectors.py  Connector Hub: MCP registry search, MCP client, lanes, hourly health check
-hive/browser.py   Browser Bee engine (Playwright); private/local addresses are blocked
+hive/cells.py     Cells: per-Bee container, terminal, jobs, cron scheduler
+hive/browser.py   Browser engine (Playwright), one saved profile per Bee; private/local addresses are blocked
 hive/phone.py     Gateway side of the Phone Drone link
 drone/drone.py    Termux agent for your phone (served at /drone.py)
+services/         systemd unit to run the gateway 24/7
 web/              index.html, hive.html, css/, js/ — plain HTML/CSS/JS, no build step
-data/             Created at runtime: token.txt, hive.json (Bees), connectors.json, vault.json (connector secrets, chmod 600)
+data/             Created at runtime: token.txt, hive.json (Bees), connectors.json, vault.json (connector secrets, chmod 600),
+                  cells/<bee>/ (work/ files, browser/ profile, jobs.json, logs/)
 ```
 
 Chat history is kept in the browser (localStorage) for now.
+
+## Cells: every Bee's own always-on workspace
+
+Every Bee, including ones you add, gets a Cell on your server:
+
+| Part | What it is |
+| --- | --- |
+| Container | Its own Docker container (`mnx-cell-<bee>`, default image `python:3.12-slim`, 1 GB RAM, 1 CPU) with a persistent `/work` folder. Restarts with Docker (`--restart unless-stopped`). |
+| Terminal | A real shell in the container. It keeps running when you close the app; reopen the Cell and the scrollback is there. |
+| Browser | Its own Chromium profile, so cookies, logins and site storage are kept across restarts. Idle browsers close after 15 min; their storage stays on disk. |
+| Jobs | Commands that run inside the Cell: **always on** (restarted if they stop), **every N minutes / daily / cron**, or **manual**. Output is logged per job. |
+| Files | Browse, upload, download and delete files in `/work`. |
+
+Cells belong to the gateway, not the web page, so closing the app or turning your phone
+off changes nothing. To survive server reboots, run the gateway as a service:
+`sudo cp services/mnx-hive.service /etc/systemd/system/ && sudo systemctl enable --now mnx-hive`
+(edit the user and paths in it first). After a restart, always-on jobs start again
+automatically, and any copy left running inside a container is stopped first so nothing
+runs twice. Deleting a Bee deletes its Cell: container, files, browser storage and jobs.
+
+Settings (environment variables): `MNX_CELL_MODE` = `auto` (default: Docker if available),
+`docker`, or `local` (no isolation: commands run as the gateway's own user, only for
+testing); `MNX_CELL_IMAGE`, `MNX_CELL_MEMORY`, `MNX_CELL_CPUS`, `MNX_BROWSER_IDLE` (seconds).
+For Docker mode the gateway's user needs Docker access (`sudo usermod -aG docker <user>`).
+
+These are containers on your one server, not separate cloud machines, so all Cells share
+its CPU, memory and disk. Watch the Storage chip on each Cell; on the Oracle free ARM VM
+(24 GB RAM) a handful of busy Cells with browsers open is comfortable.
 
 ## "1 million connectors": how the layers add up
 
@@ -124,11 +157,14 @@ Bees can also use the hub, browser and phone directly from Python:
 
 ```python
 from hive.connectors import hub
-from hive.browser import session as browser
+from hive.cells import cells
 from hive import phone
 
 await hub.call("notion", "search", {"query": "trip"})
-await browser.do("goto", url="https://irctc.co.in"); await browser.do("elements")
+cell = cells.get("watcher")                                   # a Bee's own Cell
+await cell.exec("pip install requests && python check.py")    # runs in its container
+await cell.browser.do("goto", url="https://irctc.co.in")      # its own browser profile
+cell.add_job("Price check", "python check.py", "*/30 * * * *")
 await phone.get().call("tap_text", {"text": "Book"})
 ```
 

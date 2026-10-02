@@ -12,6 +12,7 @@ import base64
 import ipaddress
 import os
 import socket
+import time
 from urllib.parse import urlparse
 
 VIEWPORT = {"width": 1280, "height": 800}
@@ -37,41 +38,47 @@ class BrowserError(RuntimeError):
 
 
 class BrowserSession:
-    def __init__(self) -> None:
-        self._pw = None
-        self._browser = None
+    def __init__(self, profile_dir: str | os.PathLike | None = None) -> None:
+        # With a profile dir the browser keeps its cookies, logins and site storage on disk,
+        # so a Bee stays signed in across restarts.
+        self.profile_dir = profile_dir
         self._context = None
         self.page = None
         self._lock = asyncio.Lock()
         self._host_cache: dict[str, bool] = {}
+        self.last_used = time.monotonic()
 
     @property
     def running(self) -> bool:
         return self.page is not None and not self.page.is_closed()
 
     async def _ensure(self) -> None:
+        self.last_used = time.monotonic()
         if self.running:
             return
+        if self._context:
+            await self._close()
+        pw = await _playwright()
+        kw = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage"],
+              "viewport": VIEWPORT, "locale": "en-IN"}
+        if os.getenv("MNX_CHROMIUM_PATH"):
+            kw["executable_path"] = os.environ["MNX_CHROMIUM_PATH"]
+        if os.getenv("MNX_BROWSER_PROXY"):
+            kw["proxy"] = {"server": os.environ["MNX_BROWSER_PROXY"]}
         try:
-            from playwright.async_api import async_playwright
-        except ImportError as exc:
-            raise BrowserError("Playwright isn't installed: pip install playwright && playwright install chromium") from exc
-        if not self._pw:
-            self._pw = await async_playwright().start()
-        if not self._browser or not self._browser.is_connected():
-            kw = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage"]}
-            if os.getenv("MNX_CHROMIUM_PATH"):
-                kw["executable_path"] = os.environ["MNX_CHROMIUM_PATH"]
-            if os.getenv("MNX_BROWSER_PROXY"):
-                kw["proxy"] = {"server": os.environ["MNX_BROWSER_PROXY"]}
-            try:
-                self._browser = await self._pw.chromium.launch(**kw)
-            except Exception as exc:
-                raise BrowserError(f"Couldn't start Chromium ({exc}). Run 'playwright install chromium' or set MNX_CHROMIUM_PATH.") from exc
-        self._context = await self._browser.new_context(viewport=VIEWPORT, locale="en-IN")
+            if self.profile_dir:
+                os.makedirs(self.profile_dir, exist_ok=True)
+                self._context = await pw.chromium.launch_persistent_context(str(self.profile_dir), **kw)
+            else:
+                viewport, locale = kw.pop("viewport"), kw.pop("locale")
+                browser = await pw.chromium.launch(**kw)
+                self._context = await browser.new_context(viewport=viewport, locale=locale)
+        except Exception as exc:
+            raise BrowserError(f"Couldn't start Chromium ({str(exc).splitlines()[0]}). Run 'playwright install chromium' or set MNX_CHROMIUM_PATH.") from exc
         await self._context.route("**/*", self._guard)
-        self.page = await self._context.new_page()
-        self.page.on("popup", self._adopt_popup)
+        pages = self._context.pages
+        self.page = pages[0] if pages else await self._context.new_page()
+        self._context.on("page", self._adopt_popup)
 
     async def _adopt_popup(self, popup) -> None:
         # Keep one visible tab: follow pages that open in a new window.
@@ -92,6 +99,7 @@ class BrowserSession:
 
     # ----- actions (each returns the current state + screenshot) -----
     async def do(self, action: str, **a) -> dict:
+        self.last_used = time.monotonic()
         async with self._lock:
             if action == "close":
                 await self._close()
@@ -171,18 +179,39 @@ class BrowserSession:
         }""")
 
     async def _close(self) -> None:
-        if self._context:
-            await self._context.close()
-        self._context = None
-        self.page = None
+        ctx, self._context, self.page = self._context, None, None
+        if ctx:
+            browser = ctx.browser
+            try:
+                await ctx.close()
+                if browser and not self.profile_dir:
+                    await browser.close()
+            except Exception:
+                pass
 
     async def shutdown(self) -> None:
-        await self._close()
-        if self._browser:
-            await self._browser.close()
-        if self._pw:
-            await self._pw.stop()
-        self._browser = self._pw = None
+        async with self._lock:
+            await self._close()
 
 
-session = BrowserSession()
+_pw = None
+_pw_lock = asyncio.Lock()
+
+
+async def _playwright():
+    global _pw
+    async with _pw_lock:
+        if _pw is None:
+            try:
+                from playwright.async_api import async_playwright
+            except ImportError as exc:
+                raise BrowserError("Playwright isn't installed: pip install playwright && playwright install chromium") from exc
+            _pw = await async_playwright().start()
+        return _pw
+
+
+async def stop_playwright() -> None:
+    global _pw
+    if _pw:
+        await _pw.stop()
+        _pw = None

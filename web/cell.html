@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0f">
+  <title>Cell · Mnx Hive</title>
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="vendor/xterm/xterm.css">
+  <link rel="stylesheet" href="css/mnx.css">
+</head>
+<body>
+<div class="app">
+  <main class="main">
+    <header class="topbar">
+      <a class="icon-btn" href="hive.html" aria-label="Back to Hive"><span data-icon="back"></span></a>
+      <span id="beeHex"></span>
+      <h1 id="title">Cell</h1>
+      <span class="conn" id="conn"><i></i><span>Connecting</span></span>
+    </header>
+
+    <div class="scroll">
+      <div class="page wide">
+        <div class="cell-head">
+          <div class="chips" id="chips"></div>
+          <p class="hint">This Bee's own workspace on your server. Its terminal, browser storage, files and jobs keep going 24/7, even when you close the app.</p>
+        </div>
+
+        <div class="tabs cell-tabs" role="tablist">
+          <button class="tab active" data-tab="terminal" type="button">Terminal</button>
+          <button class="tab" data-tab="browser" type="button">Browser</button>
+          <button class="tab" data-tab="jobs" type="button">Jobs <span id="jobCount"></span></button>
+          <button class="tab" data-tab="files" type="button">Files</button>
+        </div>
+
+        <section id="tab-terminal" class="cell-pane">
+          <div class="term-wrap"><div id="term"></div></div>
+          <p class="hint" id="termNote">The shell keeps running when you leave; come back and you'll see what happened.</p>
+        </section>
+
+        <section id="tab-browser" class="cell-pane hidden">
+          <iframe id="browserFrame" class="cell-browser" title="This Bee's browser"></iframe>
+          <p class="hint">Cookies, logins and site storage are saved in this Bee's own browser profile and survive restarts.</p>
+        </section>
+
+        <section id="tab-jobs" class="cell-pane hidden">
+          <form id="jobForm" class="card job-form">
+            <div class="card-head">New job</div>
+            <div class="fields">
+              <label class="field">Name<input name="name" required maxlength="60" placeholder="e.g. Price watcher"></label>
+              <label class="field">When
+                <select name="when">
+                  <option value="always">Always on (restart if it stops)</option>
+                  <option value="every">Every N minutes</option>
+                  <option value="daily">Every day at</option>
+                  <option value="cron">Custom cron</option>
+                  <option value="manual">Only when I press Run</option>
+                </select>
+              </label>
+              <label class="field when-every hidden">Minutes<input name="every" type="number" min="1" max="59" value="15"></label>
+              <label class="field when-daily hidden">Time<input name="time" type="time" value="08:00"></label>
+              <label class="field when-cron hidden">Cron (min hour day month weekday)<input name="cron" placeholder="0 8 * * 1-5"></label>
+            </div>
+            <label class="field">Command (runs in /work inside the Cell)
+              <textarea name="command" class="input mono" rows="3" required placeholder="python watch.py"></textarea>
+            </label>
+            <p class="hint err" id="jobErr"></p>
+            <div class="card-actions"><button class="btn primary" type="submit">Add job</button></div>
+          </form>
+          <div id="jobs" class="conn-list"></div>
+        </section>
+
+        <section id="tab-files" class="cell-pane hidden">
+          <div class="row files-bar">
+            <div class="crumbs" id="crumbs"></div>
+            <label class="btn">Upload<input type="file" id="upload" multiple hidden></label>
+            <button class="btn" type="button" id="refreshFiles">Refresh</button>
+          </div>
+          <div id="files" class="file-list"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+<script type="module" src="js/cell.js"></script>
+</body>
+</html>

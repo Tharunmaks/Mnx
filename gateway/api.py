@@ -9,20 +9,22 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shlex
 import uuid
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from gateway import auth
 from hive import phone, queen
-from hive.browser import BrowserError, session as browser
+from hive.browser import BrowserError, stop_playwright
+from hive.cells import cells
 from hive.connectors import LANES, LAYERS, hub
 from hive.core import Task, now
 
@@ -62,8 +64,9 @@ TASKS: dict[str, tuple[Task, asyncio.Task]] = {}
 
 
 def bee_view(b: dict) -> dict:
-    status = BEE_STATUS.get(b["id"]) or ("scheduled" if b.get("schedule") else "idle")
-    return {**b, "status": status}
+    status = BEE_STATUS.get(b["id"]) or cells.busy(b["id"]) or ("scheduled" if b.get("schedule") else "idle")
+    cell = cells.cells.get(b["id"])
+    return {**b, "status": status, "cell": cell.view() if cell else None}
 
 
 async def broadcast(event: dict) -> None:
@@ -81,9 +84,13 @@ def log(bee: str, type: str, text: str) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     health = asyncio.create_task(hub.health_loop())
+    loop = asyncio.get_running_loop()
+    cells.on_change = lambda cell: loop.create_task(broadcast({"type": "bees_changed", "bee": cell.id}))
+    await cells.start(BEES)
     yield
     health.cancel()
-    await browser.shutdown()
+    await cells.shutdown()
+    await stop_playwright()
 
 
 app = FastAPI(title="Mnx Hive", lifespan=lifespan)
@@ -99,7 +106,7 @@ def ping():
 @api.get("/health")
 def health():
     from hive import brain
-    return {"ok": True, "brain": brain.is_connected(), "phones": len(phone.PHONES), "browser": browser.running}
+    return {"ok": True, "brain": brain.is_connected(), "phones": len(phone.PHONES), "cells": cells.mode}
 
 
 # ---------- Bees ----------
@@ -124,8 +131,19 @@ async def add_bee(bee: NewBee):
     record = {"id": slug, **bee.model_dump(), "builtin": False}
     BEES.append(record)
     save_bees()
+    cell = cells.get(slug, bee.name)
+    asyncio.create_task(_boot_cell(cell))
+    log(bee.name, "cell_created", f"{cells.mode} Cell")
     await broadcast({"type": "bees_changed"})
     return bee_view(record)
+
+
+async def _boot_cell(cell) -> None:
+    try:
+        await cell.ensure_up()
+    except Exception as exc:
+        log(cell.name, "cell_error", str(exc))
+    await broadcast({"type": "bees_changed", "bee": cell.id})
 
 
 @api.delete("/bees/{bee_id}")
@@ -137,6 +155,8 @@ async def delete_bee(bee_id: str):
         raise HTTPException(400, "Built-in Bees can't be removed")
     BEES.remove(bee)
     save_bees()
+    await cells.remove(bee_id)
+    log(bee["name"], "cell_deleted", "container, files, browser storage and jobs removed")
     await broadcast({"type": "bees_changed"})
     return {"ok": True}
 
@@ -238,25 +258,212 @@ class BrowserAction(BaseModel):
     dy: float | None = None
 
 
+def _bee(bee_id: str) -> dict:
+    bee = next((b for b in BEES if b["id"] == bee_id), None)
+    if not bee:
+        raise HTTPException(404, "No such Bee")
+    return bee
+
+
+def _cell(bee_id: str):
+    bee = _bee(bee_id)
+    return cells.get(bee["id"], bee["name"])
+
+
 @api.get("/browser")
-async def browser_state():
-    return await browser.state()
+async def browser_state(bee: str = "browser"):
+    return await _cell(bee).browser.state()
 
 
 @api.post("/browser")
-async def browser_do(body: BrowserAction):
+async def browser_do(body: BrowserAction, bee: str = "browser"):
+    """Drive a Bee's own browser (default: the Browser Bee)."""
+    cell = _cell(bee)
     args = body.model_dump(exclude_none=True)
     action = args.pop("action")
-    BEE_STATUS["browser"] = "busy"
+    BEE_STATUS[cell.id] = "busy"
     try:
-        result = await browser.do(action, **args)
+        result = await cell.browser.do(action, **args)
         if action not in ("screenshot", "read", "elements"):
-            log("Browser", action, args.get("url") or args.get("text") or args.get("key") or "")
+            log(cell.name, action, args.get("url") or args.get("text") or args.get("key") or "")
         return result
     except BrowserError as exc:
         raise HTTPException(400, str(exc)) from exc
     finally:
-        BEE_STATUS.pop("browser", None)
+        BEE_STATUS.pop(cell.id, None)
+
+
+# ---------- Cells: each Bee's own always-on workspace ----------
+@api.get("/cells/{bee_id}")
+async def cell_info(bee_id: str):
+    cell = _cell(bee_id)
+    await cell.container_status()
+    return {"cell": cell.view(), "jobs": cell.job_views(), "disk": cell.disk_usage(), "bee": _bee(bee_id)}
+
+
+@api.post("/cells/{bee_id}/start")
+async def cell_start(bee_id: str):
+    cell = _cell(bee_id)
+    try:
+        await cell.ensure_up()
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    return cell.view()
+
+
+class ExecBody(BaseModel):
+    command: str = Field(min_length=1, max_length=4000)
+    timeout: float = Field(default=60, ge=1, le=600)
+
+
+@api.post("/cells/{bee_id}/exec")
+async def cell_exec(bee_id: str, body: ExecBody):
+    cell = _cell(bee_id)
+    code, out = await cell.exec(body.command, body.timeout)
+    log(cell.name, "exec", body.command[:120])
+    return {"exit": code, "output": out[-100_000:]}
+
+
+class NewJob(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    command: str = Field(min_length=1, max_length=4000)
+    schedule: str = Field(default="@manual", max_length=60)
+
+
+@api.post("/cells/{bee_id}/jobs")
+async def job_add(bee_id: str, body: NewJob):
+    cell = _cell(bee_id)
+    try:
+        job = cell.add_job(body.name, body.command, body.schedule.strip())
+    except ValueError as exc:
+        raise HTTPException(400, f"Bad schedule: {exc}") from exc
+    log(cell.name, "job_added", f"{body.name} ({body.schedule})")
+    await broadcast({"type": "bees_changed", "bee": cell.id})
+    return job
+
+
+def _job(cell, job_id: str) -> dict:
+    if job_id not in cell.jobs:
+        raise HTTPException(404, "No such job")
+    return cell.jobs[job_id]
+
+
+@api.post("/cells/{bee_id}/jobs/{job_id}/run")
+async def job_run(bee_id: str, job_id: str):
+    cell = _cell(bee_id)
+    job = _job(cell, job_id)
+    if job_id in cell.running:
+        raise HTTPException(409, "Already running")
+    if job["schedule"] == "@always":
+        await cell.set_enabled(job_id, True)
+    else:
+        asyncio.create_task(cell.run_job(job_id))
+    log(cell.name, "job_run", job["name"])
+    return {"ok": True}
+
+
+@api.post("/cells/{bee_id}/jobs/{job_id}/stop")
+async def job_stop(bee_id: str, job_id: str):
+    cell = _cell(bee_id)
+    job = _job(cell, job_id)
+    if job["schedule"] == "@always":
+        await cell.set_enabled(job_id, False)
+    else:
+        await cell.stop_job(job_id)
+    return {"ok": True}
+
+
+class Toggle(BaseModel):
+    enabled: bool
+
+
+@api.post("/cells/{bee_id}/jobs/{job_id}/enabled")
+async def job_enable(bee_id: str, job_id: str, body: Toggle):
+    cell = _cell(bee_id)
+    _job(cell, job_id)
+    await cell.set_enabled(job_id, body.enabled)
+    await broadcast({"type": "bees_changed", "bee": cell.id})
+    return {"ok": True}
+
+
+@api.delete("/cells/{bee_id}/jobs/{job_id}")
+async def job_delete(bee_id: str, job_id: str):
+    cell = _cell(bee_id)
+    _job(cell, job_id)
+    await cell.delete_job(job_id)
+    await broadcast({"type": "bees_changed", "bee": cell.id})
+    return {"ok": True}
+
+
+@api.get("/cells/{bee_id}/jobs/{job_id}/log", response_class=PlainTextResponse)
+def job_log(bee_id: str, job_id: str, tail: int = 64_000):
+    cell = _cell(bee_id)
+    _job(cell, job_id)
+    try:
+        data = cell.log_path(job_id).read_bytes()
+    except FileNotFoundError:
+        return ""
+    return data[-max(1, min(tail, 1_000_000)):].decode(errors="replace")
+
+
+def _path(cell, path: str):
+    try:
+        return cell.safe_path(path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@api.get("/cells/{bee_id}/files")
+def files_list(bee_id: str, path: str = ""):
+    cell = _cell(bee_id)
+    p = _path(cell, path)
+    if not p.is_dir():
+        raise HTTPException(404, "Not a folder")
+    return cell.list_files(path)
+
+
+@api.get("/cells/{bee_id}/file")
+def file_get(bee_id: str, path: str):
+    cell = _cell(bee_id)
+    p = _path(cell, path)
+    if not p.is_file():
+        raise HTTPException(404, "No such file")
+    return FileResponse(p, filename=p.name)
+
+
+@api.put("/cells/{bee_id}/file")
+async def file_put(bee_id: str, path: str, request: Request):
+    cell = _cell(bee_id)
+    p = _path(cell, path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    size = 0
+    try:
+        with open(p, "wb") as f:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > 200 * 1024 * 1024:
+                    raise HTTPException(413, "Files up to 200 MB")
+                f.write(chunk)
+    except PermissionError as exc:
+        raise HTTPException(403, "The Bee owns that file; change it from the terminal") from exc
+    except HTTPException:
+        p.unlink(missing_ok=True)
+        raise
+    return {"ok": True, "size": size}
+
+
+@api.delete("/cells/{bee_id}/file")
+async def file_delete(bee_id: str, path: str):
+    cell = _cell(bee_id)
+    p = _path(cell, path)
+    if p == cell.work.resolve():
+        raise HTTPException(400, "Can't delete the Cell's root folder")
+    rel = str(p.relative_to(cell.work.resolve()))
+    # The container may own the file, so delete through the Cell.
+    code, out = await cell.exec(f"rm -rf -- {shlex.quote(rel)}", 60)
+    if code != 0:
+        raise HTTPException(400, out.strip()[:300] or "Couldn't delete")
+    return {"ok": True}
 
 
 # ---------- Phone Drone ----------
@@ -296,6 +503,49 @@ app.include_router(api)
 
 
 # ---------- WebSockets ----------
+@app.websocket("/ws/term/{bee_id}")
+async def term_ws(ws: WebSocket, bee_id: str):
+    """A Bee's terminal. The shell keeps running after you disconnect."""
+    await ws.accept()
+    if not auth.valid(ws.query_params.get("token")):
+        await ws.close(code=4401)
+        return
+    bee = next((b for b in BEES if b["id"] == bee_id), None)
+    if not bee:
+        await ws.close(code=4404)
+        return
+    try:
+        term = await cells.get(bee_id, bee["name"]).terminal_session()
+    except Exception as exc:
+        await ws.send_text(json.dumps({"t": "error", "d": str(exc)}))
+        await ws.close()
+        return
+    queue: asyncio.Queue = asyncio.Queue()
+    term.listeners.add(queue)
+    await ws.send_bytes(bytes(term.buffer))
+
+    async def pump():
+        while True:
+            data = await queue.get()
+            while not queue.empty() and len(data) < 65536:
+                data += queue.get_nowait()
+            await ws.send_bytes(data)
+
+    sender = asyncio.create_task(pump())
+    try:
+        while True:
+            msg = json.loads(await ws.receive_text())
+            if msg.get("t") == "in":
+                term.write(str(msg.get("d", "")).encode())
+            elif msg.get("t") == "resize":
+                term.resize(int(msg.get("cols", 80)), int(msg.get("rows", 24)))
+    except (WebSocketDisconnect, json.JSONDecodeError, RuntimeError, ValueError):
+        pass
+    finally:
+        sender.cancel()
+        term.listeners.discard(queue)
+
+
 @app.websocket("/ws/drone")
 async def drone_ws(ws: WebSocket):
     await ws.accept()

@@ -503,3 +503,37 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 5px; font-
   .result-row { flex-wrap: wrap; }
   .result-row .btn { width: 100%; }
 }
+
+/* ---------- Cells ---------- */
+a.bee-row { color: inherit; }
+a.bee-row:hover { border-color: var(--line); }
+.cell-line { display: flex; flex-wrap: wrap; gap: 4px; }
+.bee-card .card-actions .btn { flex: 1; text-align: center; }
+.head-hex { width: 28px; height: 28px; }
+.cell-head { margin-bottom: 12px; }
+.cell-head .chips { align-items: center; }
+.cell-head .chips .btn { padding: 4px 12px; font-size: 13px; }
+.cell-tabs { max-width: 520px; margin-bottom: 14px; }
+.term-wrap { background: #0b0b0d; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; }
+#term { height: min(62vh, 640px); }
+.cell-browser { width: 100%; height: min(78vh, 900px); border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--bg); }
+.job-form { margin: 0 0 14px; }
+.job-card { margin: 0; }
+.job-card .result-box { max-height: 360px; }
+.files-bar { margin-bottom: 10px; }
+.crumbs { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; color: var(--text-3); font-size: 14px; }
+.crumb { border: 0; background: none; color: var(--honey-2); padding: 2px 4px; border-radius: 6px; }
+.crumb:hover { background: var(--surface-2); }
+.file-list { background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius); overflow: hidden; }
+.file-list .empty-note { padding: 14px; }
+.file-row { display: grid; grid-template-columns: 1fr 80px 140px 36px; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--line-soft); font-size: 14px; }
+.file-row:last-child { border-bottom: 0; }
+.file-name { border: 0; background: none; color: var(--text); text-align: left; padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; }
+a.file-name:hover, button.file-name:hover { color: var(--honey-2); }
+body.embed .topbar { display: none; }
+body.embed .page { padding-top: 10px; }
+@media (max-width: 600px) {
+  .file-row { grid-template-columns: 1fr 70px 36px; }
+  .file-row > .hint:nth-of-type(2) { display: none; }
+  #term { height: 55vh; }
+}

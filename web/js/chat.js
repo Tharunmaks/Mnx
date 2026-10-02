@@ -341,7 +341,7 @@ async function loadBees() {
   $("beeCount").textContent = bees.length || "";
   if (!bees.length) list.append(h("div", { class: "empty-note" }, "No Bees yet."));
   for (const b of bees) {
-    const row = h("div", { class: "bee-row" });
+    const row = h("a", { class: "bee-row", href: `cell.html?bee=${encodeURIComponent(b.id)}`, title: `Open ${b.name}'s Cell` });
     row.innerHTML = beeHex(b.name, b.color);
     row.append(
       h("div", { class: "meta" }, h("div", { class: "name" }, b.name), h("div", { class: "skill" }, b.skill || "")),
