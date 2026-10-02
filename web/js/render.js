@@ -2,13 +2,15 @@
 // Bee chips, an L-shaped step tree, interactive cards and the final answer.
 // The renderer is a pure function of the event list, so saved chats re-render exactly.
 
-import { ICONS, h, logoSVG } from "./shared.js";
+import { ICONS, h, logoSVG, toast, uploadFile } from "./shared.js";
+import { modelCard, runCard } from "./labcard.js";
 
 const STEP_TYPES = new Set([
   "step", "thinking", "planning", "searching", "reading", "web", "opening",
   "fetching", "writing", "running", "booking", "waiting", "memory", "done", "error",
 ]);
-const CARD_TYPES = new Set(["connect", "clarify", "confirm", "result"]);
+const CARD_TYPES = new Set(["connect", "clarify", "confirm", "result", "lab_run", "lab_model"]);
+const LIVE_CARDS = new Set(["result", "lab_run", "lab_model"]); // show information; nothing to answer
 
 // ---------- events → model ----------
 export function buildModel(events) {
@@ -104,7 +106,7 @@ export function renderRun(model, { onAction, cardCache }) {
 
 function hasWaitingCard(model) {
   const walk = (list) => list.some((it) =>
-    (it.kind === "card" && it.card.type !== "result" && !model.resolved.has(it.id)) || walk(it.children));
+    (it.kind === "card" && !LIVE_CARDS.has(it.card.type) && !model.resolved.has(it.id)) || walk(it.children));
   return walk(model.roots);
 }
 
@@ -164,6 +166,8 @@ function buildCard(c, act) {
     case "clarify": return clarifyCard(c, act);
     case "confirm": return confirmCard(c, act);
     case "result": return resultCard(c);
+    case "lab_run": return runCard(c.run);
+    case "lab_model": return modelCard(c.model);
   }
   return h("div");
 }
@@ -202,33 +206,69 @@ function connectCard(c, act) {
 }
 
 // "type the clarification [where i.e time, date and from where to where]"
+// Fields: text / number / date / time / textarea / select (options as strings or {value, label})
+// / file (uploaded when you press the first button; the answer carries the upload id).
+// A field with show_if: {other_field: value} only appears while that select has that value.
 function clarifyCard(c, act) {
   const inputs = [];
+  const labels = [];
   const fields = h("div", { class: "fields" });
   for (const f of c.fields || []) {
     let input;
     if (f.input === "select") {
-      input = h("select", { name: f.name }, (f.options || []).map((o) => h("option", { value: o }, o)));
+      input = h("select", { name: f.name }, (f.options || []).map((o) => {
+        const value = typeof o === "object" ? o.value : o;
+        return h("option", { value, selected: f.value != null && String(f.value) === String(value) }, typeof o === "object" ? o.label : o);
+      }));
     } else if (f.input === "textarea") {
-      input = h("textarea", { name: f.name, rows: 2, placeholder: f.placeholder || "" });
+      input = h("textarea", { name: f.name, rows: 2, placeholder: f.placeholder || "" }, f.value || "");
+    } else if (f.input === "file") {
+      input = h("input", { name: f.name, type: "file", accept: f.accept || null });
     } else {
-      input = h("input", { name: f.name, type: f.input || "text", placeholder: f.placeholder || "", value: f.value || "" });
+      input = h("input", { name: f.name, type: f.input || "text", placeholder: f.placeholder || "", value: f.value ?? "" });
     }
     if (f.required) input.required = true;
     inputs.push(input);
-    fields.append(h("label", { class: "field" }, f.label || f.name, input));
+    const long = f.input === "file" || String(f.value ?? "").length > 28
+      || (f.options || []).some((o) => String(typeof o === "object" ? o.label : o).length > 28);
+    const label = h("label", { class: `field${long ? " wide" : ""}` }, f.label || f.name, input);
+    labels.push([label, f.show_if]);
+    fields.append(label);
   }
-  const values = () => Object.fromEntries(inputs.map((i) => [i.name, i.value]));
+  const byName = Object.fromEntries(inputs.map((i) => [i.name, i]));
+  const visible = (cond) => !cond || Object.entries(cond).every(([k, v]) => byName[k] && byName[k].value === String(v));
+  const sync = () => labels.forEach(([label, cond]) => label.classList.toggle("hidden", !visible(cond)));
+  inputs.forEach((i) => i.addEventListener("change", sync));
+  sync();
+  const shown = () => inputs.filter((i) => !i.closest(".hidden"));
   const actions = c.actions?.length ? c.actions : [{ id: "submit", label: c.submit || "Send answers" }];
   const card = h("div", { class: "card attn" },
     head(c.title || "A few details needed", null, ["wait", "Waiting for you"]),
-    c.text ? h("p", { class: "card-text" }, c.text) : null,
+    c.text ? h("p", { class: "card-text pre" }, c.text) : null,
     fields,
-    actionButtons(actions, (id, v, label) => {
-      const missing = inputs.find((i) => i.required && !i.value.trim());
-      if (missing && id === actions[0].id) { missing.focus(); return; }
-      act(id, v, label);
-    }, values));
+    actionButtons(actions, async (id, _v, label) => {
+      const primary = id === actions[0].id;
+      const missing = shown().find((i) => i.required && (i.type === "file" ? !i.files.length : !i.value.trim()));
+      if (missing && primary) { missing.focus(); return; }
+      const values = {};
+      for (const i of shown()) {
+        if (i.type !== "file") { values[i.name] = i.value; continue; }
+        if (!primary || !i.files.length) continue;
+        const btns = card.querySelectorAll(".card-actions .btn");
+        btns.forEach((b) => { b.disabled = true; });
+        try {
+          const up = await uploadFile(i.files[0], (pct) => { btns[0].textContent = `Uploading ${pct}%`; });
+          values[i.name] = up.id;
+          btns[0].textContent = actions[0].label;
+        } catch (e) {
+          toast(e.message, "error");
+          btns.forEach((b) => { b.disabled = false; });
+          btns[0].textContent = actions[0].label;
+          return;
+        }
+      }
+      act(id, values, label);
+    }));
   return card;
 }
 

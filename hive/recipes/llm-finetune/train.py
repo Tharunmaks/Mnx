@@ -37,6 +37,9 @@ model.enable_input_require_grads()
 
 def encode(ex):
     """Return (input_ids, labels) with prompt tokens masked out (-100)."""
+    if "conversations" in ex and "messages" not in ex:  # ShareGPT: [{"from": "human", "value": …}]
+        roles = {"human": "user", "user": "user", "gpt": "assistant", "assistant": "assistant", "system": "system"}
+        ex = {"messages": [{"role": roles.get(t.get("from"), "user"), "content": t.get("value", "")} for t in ex["conversations"]]}
     if "messages" in ex:
         msgs = ex["messages"]
         if tok.chat_template:
@@ -45,9 +48,12 @@ def encode(ex):
         else:
             full = "".join(f"{m['role']}: {m['content']}\n" for m in msgs)
             prompt = "".join(f"{m['role']}: {m['content']}\n" for m in msgs[:-1]) + "assistant: "
-    elif "prompt" in ex or "instruction" in ex:
-        q = ex.get("prompt") or (ex["instruction"] + ("\n" + ex["input"] if ex.get("input") else ""))
-        a = ex.get("completion") or ex.get("output") or ex.get("response") or ""
+    elif ("instruction" in ex and ("output" in ex or "response" in ex)) or "prompt" in ex:
+        if "instruction" in ex:  # Alpaca style; its "prompt" column (if any) already contains the answer
+            q = ex["instruction"] + ("\n" + ex["input"] if ex.get("input") else "")
+            a = ex.get("output") or ex.get("response") or ""
+        else:
+            q, a = ex["prompt"], ex.get("completion") or ex.get("response") or ex.get("output") or ""
         msgs = [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
         return encode({"messages": msgs})
     elif "text" in ex:
@@ -70,9 +76,23 @@ for f in sorted(glob.glob("data/*.jsonl")):
                 examples.append(encode(json.loads(line)))
             except Exception as exc:
                 sys.exit(f"{os.path.basename(f)} line {i}: {exc}")
+if not examples and P.get("hf_dataset"):
+    from datasets import load_dataset
+    name = P["hf_dataset"].strip()
+    print(f"Downloading dataset {name} …", flush=True)
+    ds = load_dataset(name, split=P.get("hf_split") or "train", token=os.getenv("HF_TOKEN") or None)
+    total = len(ds)
+    n = min(total, int(P.get("max_examples", 2000)))
+    ds = ds.shuffle(seed=42).select(range(n))
+    print(f"Using {n} of {total} examples; columns: {', '.join(ds.column_names)}", flush=True)
+    for i, row in enumerate(ds):
+        try:
+            examples.append(encode(dict(row)))
+        except Exception as exc:
+            sys.exit(f"Dataset row {i}: {exc} (columns: {', '.join(ds.column_names)})")
 examples = [e for e in examples if any(l != -100 for l in e[1])]
 if not examples:
-    sys.exit("No usable examples in the dataset (.jsonl)")
+    sys.exit("No usable examples: upload a .jsonl file or set a Hugging Face dataset")
 print(f"{len(examples)} examples, longest {max(len(e[0]) for e in examples)} tokens", flush=True)
 
 model = get_peft_model(model, LoraConfig(

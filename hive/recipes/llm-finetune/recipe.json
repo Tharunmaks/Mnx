@@ -7,9 +7,9 @@
   "gpu": "recommended",
   "image": "python:3.12-slim",
   "dataset": {
-    "required": true,
+    "required": false,
     "accept": ".jsonl",
-    "hint": "JSONL, one example per line: {\"messages\": [{\"role\": \"user\", \"content\": \"…\"}, {\"role\": \"assistant\", \"content\": \"…\"}]}, or {\"prompt\": …, \"completion\": …}, or {\"text\": …}."
+    "hint": "Upload JSONL ({\"messages\": [...]}, {\"prompt\", \"completion\"}, {\"instruction\", \"input\", \"output\"}, ShareGPT {\"conversations\"} or {\"text\"}), or name a Hugging Face dataset below."
   },
   "sample": "sample.jsonl",
   "params": [
@@ -19,6 +19,27 @@
       "type": "text",
       "default": "Qwen/Qwen2.5-0.5B-Instruct",
       "help": "Put your own Mnx repo here to keep training it, e.g. your-name/mnx-3b."
+    },
+    {
+      "name": "hf_dataset",
+      "label": "Hugging Face dataset (optional)",
+      "type": "text",
+      "default": "",
+      "help": "e.g. iamtarun/python_code_instructions_18k_alpaca — used when you don't upload a file."
+    },
+    {
+      "name": "hf_split",
+      "label": "Dataset split",
+      "type": "text",
+      "default": "train"
+    },
+    {
+      "name": "max_examples",
+      "label": "Use up to N examples",
+      "type": "int",
+      "default": 2000,
+      "min": 10,
+      "max": 1000000
     },
     {
       "name": "epochs",

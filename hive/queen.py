@@ -6,13 +6,17 @@ reports that honestly instead of inventing an answer.
 
 from __future__ import annotations
 
-from . import brain
+from . import brain, cloud_chat
 from .core import Task
 
 
 async def handle(task: Task) -> None:
     received = await task.step("planning", "Reading your message", bee="Queen")
     await task.finish_step(received)
+
+    # Requests a Bee understands on its own (no AI needed), e.g. "train Qwen 2.5 Coder".
+    if await cloud_chat.handle(task):
+        return
 
     if not brain.is_connected():
         await task.step(
@@ -23,7 +27,8 @@ async def handle(task: Task) -> None:
         )
         await task.answer(
             "I got your message, but my brain (the Mnx model) isn't connected to the Hive yet, "
-            "so I can't plan or answer. Everything else — chat history, Bees, tools — is ready for it."
+            "so I can't plan or answer that yet. What already works without it: training and running models, "
+            "e.g. “train Qwen 2.5 Coder”, “how is my training going?”, “stop training”, “run my model”."
         )
         return
 

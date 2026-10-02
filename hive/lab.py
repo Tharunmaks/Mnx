@@ -34,6 +34,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RECIPES = Path(__file__).resolve().parent / "recipes"
 LAB = ROOT / "data" / "lab"
 RUNS, MODELS, KEYS = LAB / "runs", LAB / "models", LAB / "keys"
+UPLOADS = LAB / "uploads"
 DOCKER_ARGS = shlex.split(os.getenv("MNX_DOCKER_ARGS", ""))
 PIP_CACHE = "mnx-pip-cache"
 LLAMA_IMAGE = os.getenv("MNX_LLAMA_IMAGE", "ghcr.io/ggml-org/llama.cpp:server")
@@ -57,7 +58,13 @@ if [ "$MNX_VENV" = "1" ]; then
 fi
 if [ -f requirements.txt ]; then
   echo "MNX_STAGE installing"
-  $PY -m pip install --disable-pip-version-check -q -r requirements.txt || exit 1
+  # No GPU on an x86 machine: the CPU build of PyTorch is ~200 MB instead of ~3 GB.
+  if grep -qi '^torch' requirements.txt && ! command -v nvidia-smi >/dev/null 2>&1 && [ "$(uname -m)" = "x86_64" ]; then
+    echo "No GPU here, so installing the small CPU build of PyTorch"
+    $PY -m pip install --disable-pip-version-check --progress-bar off torch --index-url https://download.pytorch.org/whl/cpu \
+      || echo "(The CPU build wasn't reachable; using the standard one)"
+  fi
+  $PY -m pip install --disable-pip-version-check --progress-bar off -r requirements.txt || exit 1
 fi
 mkdir -p output
 echo "MNX_STAGE training"
@@ -210,6 +217,21 @@ class Lab:
     async def _detect_local_gpu(self) -> bool:
         code, out = await _run(["docker", "info", "--format", "{{json .Runtimes}}"], 20)
         return code == 0 and b"nvidia" in out
+
+    # ---------- uploads ----------
+    def take_upload(self, upload_id: str) -> Path:
+        """The file behind an upload id (from PUT /api/lab/uploads/<name>)."""
+        if not re.fullmatch(r"[a-f0-9]{16}", upload_id or ""):
+            raise ValueError("Bad upload id")
+        folder = UPLOADS / upload_id
+        files = list(folder.iterdir()) if folder.is_dir() else []
+        if not files:
+            raise ValueError("That upload is gone; please choose the file again")
+        return files[0]
+
+    def drop_upload(self, upload_id: str) -> None:
+        if re.fullmatch(r"[a-f0-9]{16}", upload_id or ""):
+            shutil.rmtree(UPLOADS / upload_id, ignore_errors=True)
 
     # ---------- secrets (env vars for every run, e.g. HF_TOKEN) ----------
     def secret_names(self) -> list[str]:
@@ -405,7 +427,9 @@ class Lab:
                 run["result"] = json.loads(s[11:])
             except json.JSONDecodeError:
                 pass
-        elif s.startswith("MNX_STAGE "):
+        elif s and not s.startswith("MNX_") and not s.startswith("==="):
+            run["last_line"] = s[:200]
+        if s.startswith("MNX_STAGE "):
             run["stage"] = s[10:].strip()
             if run["status"] == "preparing" and run["stage"] == "training":
                 run["status"] = "running"
@@ -596,7 +620,9 @@ class Lab:
             run["status"] = "succeeded"
         else:
             run["status"] = "failed"
-            run["error"] = error or (f"Exited with code {exit_code}" if exit_code else "Finished but wrote nothing to output/")
+            last = run.get("last_line") or ""
+            run["error"] = error or ((last if last else f"Exited with code {exit_code}") if exit_code
+                                     else "Finished but wrote nothing to output/")
         if error:
             self._line(run, f"[{error}]")
         self._line(run, f"=== {run['status']} (exit {exit_code})")
@@ -690,7 +716,11 @@ class Lab:
         else:
             args += ["-v", f"{PIP_CACHE}:/root/.cache/pip", "-w", "/model"] + DOCKER_ARGS + [
                 model.get("image", "python:3.12-slim"), "sh", "-c",
-                "if [ -f requirements.txt ]; then pip install --disable-pip-version-check -q -r requirements.txt || exit 1; fi; "
+                "if [ -f requirements.txt ]; then "
+                "if grep -qi '^torch' requirements.txt && ! command -v nvidia-smi >/dev/null 2>&1 && [ \"$(uname -m)\" = x86_64 ]; then "
+                "pip install --disable-pip-version-check --progress-bar off torch --index-url https://download.pytorch.org/whl/cpu "
+                "|| echo 'CPU build not reachable; using the standard one'; fi; "
+                "pip install --disable-pip-version-check --progress-bar off -r requirements.txt || exit 1; fi; "
                 "exec python -u serve.py"]
         code, out = await _run(args, 900)
         if code != 0:

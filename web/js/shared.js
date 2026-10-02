@@ -278,3 +278,16 @@ export function fmtDuration(sec) {
   if (sec < 3600) return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
 }
+
+// Stream a file to the server (with progress); returns {id, name, size} for runs, imports and chat cards.
+export function uploadFile(file, onProgress = () => {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", `${gatewayBase()}/api/lab/uploads/${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${getSettings().token}`);
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(Math.round((e.loaded / e.total) * 100));
+    xhr.onload = () => (xhr.status < 300 ? resolve(JSON.parse(xhr.responseText)) : reject(new Error(JSON.parse(xhr.responseText || "{}").detail || xhr.statusText)));
+    xhr.onerror = () => reject(new Error("Upload failed (connection)"));
+    xhr.send(file);
+  });
+}

@@ -611,3 +611,14 @@ body.embed .page { padding-top: 10px; }
   .score { grid-template-columns: 80px 1fr 48px; }
 }
 .lab-pane > .card, .cell-pane > .card { margin: 12px 0 0; }
+
+/* ---------- Cloud Bee cards in chat ---------- */
+.card-text.pre { white-space: pre-wrap; word-break: break-word; }
+.field.wide { grid-column: 1 / -1; }
+.field input[type=file] { padding: 6px; }
+.lab-card .card-head .svc { color: var(--busy); }
+.charts.compact { grid-template-columns: minmax(0, 360px); }
+.charts.compact .chart-svg svg { height: 54px; }
+.model-section { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line-soft); padding-top: 10px; }
+.lab-card > .model-section:first-child { border-top: 0; padding-top: 0; }
+.lab-card .play-wrap { border-top: 0; padding-top: 0; }

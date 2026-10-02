@@ -51,6 +51,8 @@ hive/queen.py     Plans and runs Bees — currently reports "brain not connected
 hive/brain.py     Where Mnx plugs in (MNX_BRAIN_URL + ask())
 hive/connectors.py  Connector Hub: MCP registry search, MCP client, lanes, hourly health check
 hive/cells.py     Cells: per-Bee container, terminal, jobs, cron scheduler
+hive/cloud_chat.py  Cloud Bee in chat: understands "train …", runs the flow with cards
+hive/hf.py        Finds models on Hugging Face (with an offline list), sizes and memory estimates
 hive/lab.py       Cloud Bee engine: training runs (local Docker or SSH), model registry, model APIs
 hive/recipes/     Training recipes: text classifier, spreadsheet predictor, chat model LoRA fine-tune, your own script
 hive/system.py    Server stats (CPU, memory, disk, GPU)
@@ -93,6 +95,31 @@ For Docker mode the gateway's user needs Docker access (`sudo usermod -aG docker
 These are containers on your one server, not separate cloud machines, so all Cells share
 its CPU, memory and disk. Watch the Storage chip on each Cell; on the Oracle free ARM VM
 (24 GB RAM) a handful of busy Cells with browsers open is comfortable.
+
+## Train and run models from the chat
+
+Type it in the chat, for example **“train Qwen 2.5 Coder”**, and the Cloud Bee does the rest
+inside the conversation:
+
+1. Finds the model on Hugging Face (or in a built-in list of popular open models when the Hub
+   can't be reached) and lists the sizes.
+2. Checks every place it could train: this server's GPU, connected GPU servers, or CPU. It picks
+   a size that fits, or you can **connect a GPU server right in the chat** (any machine you can SSH into).
+3. Asks for the data: a Hugging Face dataset (it suggests one, e.g. Python code instructions for
+   a coder model), your own `.jsonl` file uploaded in the card, or tiny demo data.
+4. Shows the plan with memory needed and warnings (CPU too slow, model too big, gated licence),
+   and waits for **Start training**.
+5. Posts a live training card (stage, steps, loss chart) that keeps updating, even after a reload.
+   Training continues on the server if you close the app.
+6. When it's done: **Run it**, then chat with your new model inside the same card.
+
+Other things you can say: “how is my training going?”, “stop training”, “run my model”,
+“chat with my qwen model”, or name an exact model and dataset:
+“fine-tune Qwen/Qwen2.5-Coder-1.5B-Instruct on iamtarun/python_code_instructions_18k_alpaca”.
+
+Until the Mnx brain is connected these requests are recognised with fixed patterns
+(`hive/cloud_chat.py`), not a language model; anything else still gets the
+“brain not connected” reply.
 
 ## Cloud Bee: train, keep and run your own AI
 

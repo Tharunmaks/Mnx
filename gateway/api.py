@@ -70,7 +70,8 @@ TASKS: dict[str, tuple[Task, asyncio.Task]] = {}
 
 
 def bee_view(b: dict) -> dict:
-    status = BEE_STATUS.get(b["id"]) or cells.busy(b["id"]) or ("scheduled" if b.get("schedule") else "idle")
+    training = b["id"] == "cloud" and any(r["status"] in ("queued", "preparing", "running") for r in lab.runs.values())
+    status = BEE_STATUS.get(b["id"]) or ("busy" if training else None) or cells.busy(b["id"]) or ("scheduled" if b.get("schedule") else "idle")
     cell = cells.cells.get(b["id"])
     return {**b, "status": status, "cell": cell.view() if cell else None}
 
@@ -691,6 +692,11 @@ async def lab_import(body: ImportModel):
     finally:
         shutil.rmtree(UPLOADS / body.upload, ignore_errors=True)
     return model
+
+
+@api.get("/lab/models/{mid}")
+def lab_model(mid: str):
+    return {"model": _model_or_404(mid), "deployment": lab.deployments.get(mid), "gpu_local": lab.gpu_local}
 
 
 @api.delete("/lab/models/{mid}")
