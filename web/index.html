@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0f">
+  <title>Mnx Hive</title>
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/mnx.css">
+</head>
+<body>
+<div class="app" id="app">
+  <!-- Left rail: logo, new chat, chat history, MCP tools, Hive, settings, profile -->
+  <aside class="rail" id="rail" aria-label="Sidebar">
+    <div class="brand"><span id="brandLogo"></span><span>Mnx <b>Hive</b></span></div>
+
+    <button class="rail-btn primary" id="newChat"><span data-icon="plus"></span>New chat</button>
+
+    <div class="rail-section grow">
+      <div class="rail-label">Chats</div>
+      <nav class="history" id="history" aria-label="Chat history"></nav>
+    </div>
+
+    <div class="rail-section">
+      <div class="rail-label">MCP tools <span id="toolCount"></span></div>
+      <div id="toolList" class="history"></div>
+      <button class="rail-btn" id="manageTools"><span data-icon="tool"></span>Manage tools</button>
+    </div>
+
+    <div class="rail-foot">
+      <a class="rail-btn" href="hive.html"><span data-icon="hive"></span>Hive <span class="count" id="beeCount"></span></a>
+      <button class="rail-btn" id="openSettings"><span data-icon="gear"></span>Settings</button>
+      <button class="rail-btn" id="openProfile"><span class="avatar" id="avatar">?</span><span id="profileName">Profile</span></button>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menuBtn" aria-label="Open menu"><span data-icon="menu"></span></button>
+      <h1 id="chatTitle">New chat</h1>
+      <span class="conn" id="conn" title="Gateway connection"><i></i><span>Connecting</span></span>
+      <button class="icon-btn" id="hiveToggle" aria-label="Show Bees"><span data-icon="hive"></span></button>
+    </header>
+
+    <!-- Empty state: wordmark + greeting + centred message box -->
+    <section class="welcome" id="welcome">
+      <div id="welcomeLogo"></div>
+      <h2 class="wordmark">Mnx Hive</h2>
+      <p class="greeting" id="greeting">Hi there, let's start?</p>
+      <div class="welcome-composer" id="welcomeSlot"></div>
+    </section>
+
+    <div class="scroll hidden" id="scroll">
+      <div class="thread" id="thread"></div>
+    </div>
+
+    <div class="composer-wrap hidden" id="bottomSlot"></div>
+
+    <!-- The composer is moved between the welcome slot and the bottom slot -->
+    <div id="composerHome" class="hidden">
+      <form class="composer" id="composer">
+        <label for="input" class="sr-only">Message Mnx</label>
+        <textarea id="input" rows="1" placeholder="Ask the Hive anything…" autocomplete="off"></textarea>
+        <div class="composer-row">
+          <button type="button" class="icon-btn" id="attach" aria-label="Attach file" title="Attachments come later"><span data-icon="clip"></span></button>
+          <button type="button" class="model-pill" id="modelPill" title="Model"><span id="pillLogo"></span><span id="modelName">Mnx 3B</span></button>
+          <button type="submit" class="send" id="send" aria-label="Send" disabled><span data-icon="send"></span></button>
+        </div>
+      </form>
+      <p class="disclaimer">Mnx can make mistakes. Check important info.</p>
+    </div>
+  </main>
+
+  <!-- Right: which Bees are busy, idle or scheduled -->
+  <aside class="hive-panel" id="hivePanel" aria-label="Bees">
+    <header>Bees <a href="hive.html" class="hint">Open Hive →</a></header>
+    <div class="list" id="beeList"></div>
+  </aside>
+</div>
+
+<dialog id="settingsDlg">
+  <form method="dialog" id="settingsForm">
+    <div class="dlg-head"><h2>Settings</h2><button class="icon-btn" value="cancel" aria-label="Close"><span data-icon="close"></span></button></div>
+    <div class="dlg-body">
+      <label class="field">Your name
+        <input name="name" id="setName" placeholder="What should Mnx call you?" maxlength="40">
+      </label>
+      <label class="field">Model label
+        <input name="model" placeholder="Mnx 3B" maxlength="30">
+      </label>
+      <label class="field">Gateway URL
+        <input name="gateway" placeholder="Same server as this page" inputmode="url">
+      </label>
+      <p class="hint">Leave empty when the page is served by the Mnx Hive gateway. Otherwise use e.g. http://your-vm-ip:8000</p>
+      <label class="check"><input type="checkbox" name="enterToSend"> Enter sends, Shift+Enter adds a line</label>
+      <button type="button" class="btn danger" id="clearChats">Delete all chats on this device</button>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn" value="cancel">Cancel</button>
+      <button class="btn primary" value="save" id="saveSettings">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="toolsDlg">
+  <form method="dialog">
+    <div class="dlg-head"><h2>MCP tools</h2><button class="icon-btn" value="cancel" aria-label="Close"><span data-icon="close"></span></button></div>
+    <div class="dlg-body">
+      <p class="hint">Tools the Bees may use. Connecting a tool here only records your choice; real sign-in happens through each app's own login.</p>
+      <div id="toolsManage" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+    <div class="dlg-foot"><button class="btn" value="cancel">Done</button></div>
+  </form>
+</dialog>
+
+<script type="module" src="js/chat.js"></script>
+</body>
+</html>

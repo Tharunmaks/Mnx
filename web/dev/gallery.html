@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Component gallery · Mnx Hive</title>
+  <link rel="icon" href="../img/logo.svg" type="image/svg+xml">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/mnx.css">
+</head>
+<body>
+<div class="app">
+  <main class="main">
+    <header class="topbar"><a class="btn" href="../index.html">← Chat</a><h1>Component gallery (dev only)</h1></header>
+    <div class="scroll">
+      <div class="thread" id="thread">
+        <p class="hint">Every event type the chat can render, filled with placeholder data. Use it to check the design while the Mnx model isn't connected. Nothing here talks to the gateway.</p>
+      </div>
+    </div>
+  </main>
+</div>
+<script type="module">
+  import { h } from "../js/shared.js";
+  import { buildModel, renderRun } from "../js/render.js";
+
+  const T = "t_gallery";
+  const events = [
+    { type: "planning", id: "p", bee: "Queen", text: "Reading your message", status: "done" },
+    { type: "bee_created", id: "b1", bee: "Sample", text: "created" },
+    { type: "fetching", id: "s1", parent: "b1", text: "Checking account", status: "done" },
+    { type: "connect", id: "c1", parent: "b1", service: "Sample App",
+      text: "Your account isn't connected. Sign in and allow Mnx Hive access to continue." },
+    { type: "_action", ref: "c1", label: "Sign in" },
+    { type: "clarify", id: "c2", parent: "b1", title: "A few details needed", text: "Placeholder fields.",
+      fields: [{ name: "date", label: "Date", input: "date" }, { name: "time", label: "Time", input: "time" },
+               { name: "from", label: "From" }, { name: "to", label: "To" }] },
+    { type: "searching", id: "s2", parent: "b1", text: "Searching", detail: "placeholder query", status: "done" },
+    { type: "web", id: "s3", parent: "b1", text: "Used the web for reviews", status: "done" },
+    { type: "confirm", id: "c3", parent: "b1", service: "Sample App", text: "Placeholder confirmation.",
+      details: [["Item", "—"], ["Price", "—"]] },
+    { type: "booking", id: "s4", parent: "b1", text: "Working…", status: "running" },
+    { type: "result", id: "r1", parent: "b1", service: "Sample App", title: "Done",
+      details: [["Detail", "—"], ["Price", "—"]] },
+    { type: "error", id: "s5", text: "A step that failed", detail: "placeholder reason" },
+    { type: "answer", text: "The final answer text appears here." },
+  ];
+
+  const thread = document.getElementById("thread");
+  thread.append(h("div", { class: "msg-user" }, h("div", { class: "bubble" }, "Your message appears here")));
+  const slot = h("div");
+  thread.append(slot);
+  const cardCache = new Map();
+  const draw = () => slot.replaceChildren(renderRun(buildModel(events), {
+    cardCache,
+    onAction: (ref, action, values, label) => { events.push({ type: "_action", ref, label }); draw(); },
+  }));
+  draw();
+</script>
+</body>
+</html>

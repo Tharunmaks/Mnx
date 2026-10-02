@@ -1,0 +1,111 @@
+// Mnx Hive — Hive control screen: every Bee's state, add/remove Bees, activity log.
+
+import { ICONS, HiveClient, api, beeHex, h, timeShort } from "./shared.js";
+
+const $ = (id) => document.getElementById(id);
+document.querySelectorAll("[data-icon]").forEach((el) => { el.outerHTML = ICONS[el.dataset.icon]; });
+
+const STATUSES = ["busy", "idle", "scheduled", "failed"];
+
+async function loadBees() {
+  let bees = [];
+  let offline = false;
+  try { bees = await api("/api/bees"); } catch { offline = true; }
+
+  for (const s of STATUSES) {
+    $("n" + s[0].toUpperCase() + s.slice(1)).textContent = bees.filter((b) => b.status === s).length;
+  }
+
+  const grid = $("beeGrid");
+  grid.replaceChildren();
+  for (const b of bees) {
+    const top = h("div", { class: "top" });
+    top.innerHTML = beeHex(b.name, b.color);
+    top.append(h("div", { style: "flex:1;min-width:0" },
+      h("div", { class: "name" }, `${b.name} Bee`),
+      h("span", { class: `status ${b.status}` }, b.status)));
+    if (!b.builtin) {
+      const del = h("button", { class: "icon-btn", "aria-label": `Remove ${b.name} Bee`, html: ICONS.trash, onclick: async () => {
+        if (!confirm(`Remove ${b.name} Bee?`)) return;
+        try { await api(`/api/bees/${encodeURIComponent(b.id)}`, { method: "DELETE" }); } catch { /* offline */ }
+        loadBees();
+      } });
+      top.append(del);
+    }
+    const tools = h("div", { class: "tools" },
+      (b.tools || []).map((t) => h("span", { class: "chip" }, t)),
+      b.approval ? h("span", { class: "chip ask" }, "Ask lane") : null,
+      b.schedule ? h("span", { class: "chip" }, `⏱ ${b.schedule}`) : null);
+    grid.append(h("div", { class: "bee-card" }, top, h("p", {}, b.skill || ""), tools));
+  }
+  grid.append(h("button", { class: "bee-card add", onclick: openAdd, disabled: offline },
+    h("span", { html: ICONS.plus, style: "width:26px;height:26px;display:block" }),
+    offline ? "Gateway offline" : "Add Bee"));
+}
+
+async function loadLog() {
+  let events = [];
+  try { events = await api("/api/events?limit=60"); } catch { /* offline */ }
+  const log = $("log");
+  log.replaceChildren();
+  if (!events.length) {
+    log.append(h("div", { class: "log-row" }, h("span", { class: "x", style: "grid-column:1/-1" }, "Nothing has happened yet.")));
+    return;
+  }
+  for (const e of events.slice().reverse()) {
+    log.append(h("div", { class: "log-row" },
+      h("span", { class: "t" }, timeShort(e.at)),
+      h("span", { class: "b" }, e.bee || "Queen"),
+      h("span", { class: "x" }, `${e.type}${e.status ? " " + e.status : ""}${e.text ? " · " + e.text : ""}`)));
+  }
+}
+
+function openAdd() {
+  $("beeForm").reset();
+  $("beeErr").textContent = "";
+  $("beeDlg").showModal();
+}
+$("addBeeTop").addEventListener("click", openAdd);
+$("refreshLog").addEventListener("click", loadLog);
+
+$("beeForm").addEventListener("submit", async (e) => {
+  if (e.submitter?.value !== "save") return;
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await api("/api/bees", {
+      method: "POST",
+      body: {
+        name: f.name.value.trim(),
+        skill: f.skill.value.trim(),
+        tools: f.tools.value.split(",").map((s) => s.trim()).filter(Boolean),
+        schedule: f.schedule.value.trim() || null,
+        approval: f.approval.checked,
+      },
+    });
+    $("beeDlg").close();
+    loadBees();
+  } catch (err) {
+    $("beeErr").textContent = `Couldn't add the Bee (${err.message}).`;
+  }
+});
+
+// Live updates
+const client = new HiveClient();
+client.addEventListener("state", (e) => {
+  const s = e.detail;
+  $("conn").className = `conn ${s}`;
+  $("conn").querySelector("span").textContent = s === "online" ? "Online" : s === "offline" ? "Offline" : "Connecting";
+  if (s === "online") { loadBees(); loadLog(); }
+});
+let logTimer = null;
+client.addEventListener("event", (e) => {
+  const t = e.detail.type;
+  if (t === "bee_status" || t === "bees_changed" || t === "bee_created") loadBees();
+  clearTimeout(logTimer);
+  logTimer = setTimeout(loadLog, 400);
+});
+client.connect();
+
+loadBees();
+loadLog();
