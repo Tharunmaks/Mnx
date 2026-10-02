@@ -1,6 +1,6 @@
 // Mnx Hive — Hive control screen: every Bee's state, add/remove Bees, activity log.
 
-import { ICONS, HiveClient, api, beeHex, h, timeShort } from "./shared.js";
+import { ICONS, HiveClient, api, beeHex, connLabel, h, installTokenPrompt, timeShort } from "./shared.js";
 
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll("[data-icon]").forEach((el) => { el.outerHTML = ICONS[el.dataset.icon]; });
@@ -93,11 +93,10 @@ $("beeForm").addEventListener("submit", async (e) => {
 // Live updates
 const client = new HiveClient();
 client.addEventListener("state", (e) => {
-  const s = e.detail;
-  $("conn").className = `conn ${s}`;
-  $("conn").querySelector("span").textContent = s === "online" ? "Online" : s === "offline" ? "Offline" : "Connecting";
-  if (s === "online") { loadBees(); loadLog(); }
+  connLabel($("conn"), e.detail);
+  if (e.detail === "online") { loadBees(); loadLog(); }
 });
+installTokenPrompt(() => client.reconnectNow());
 let logTimer = null;
 client.addEventListener("event", (e) => {
   const t = e.detail.type;

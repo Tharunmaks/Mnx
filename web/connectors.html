@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0f">
+  <title>Connector Hub · Mnx Hive</title>
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/mnx.css">
+</head>
+<body>
+<div class="app">
+  <main class="main">
+    <header class="topbar">
+      <a class="icon-btn" href="index.html" aria-label="Back to chat"><span data-icon="back"></span></a>
+      <h1>Connector Hub</h1>
+      <span class="conn" id="conn"><i></i><span>Connecting</span></span>
+    </header>
+
+    <div class="scroll">
+      <div class="page">
+        <section class="hub-hero">
+          <h2>Connect an app</h2>
+          <p class="hint">One search across every layer: official MCP servers, any website through the Browser Bee, and any app on your phone through the Phone Drone.</p>
+          <form id="searchForm" class="hub-search">
+            <span data-icon="searching"></span>
+            <input id="q" class="input" placeholder="Search apps, e.g. notion, github, swiggy…" autocomplete="off" enterkeyhint="search">
+          </form>
+        </section>
+
+        <div class="layers" id="layers"></div>
+
+        <div id="results"></div>
+
+        <div class="section-title"><h2>Connected <span class="hint" id="connCount"></span></h2><button class="btn primary" id="addUrl">Add by URL</button></div>
+        <div id="connected" class="conn-list"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<dialog id="addDlg">
+  <form method="dialog" id="addForm">
+    <div class="dlg-head"><h2 id="addTitle">Add an MCP server</h2><button class="icon-btn" value="cancel" aria-label="Close" formnovalidate><span data-icon="close"></span></button></div>
+    <div class="dlg-body">
+      <p class="hint" id="addHint">Any remote MCP server works here, including your Zapier MCP or Pipedream MCP URL.</p>
+      <label class="field">Name<input name="name" required maxlength="60"></label>
+      <label class="field">Server URL<input name="url" required type="url" placeholder="https://…/mcp"></label>
+      <label class="field">Transport
+        <select name="transport"><option value="streamable-http">Streamable HTTP</option><option value="sse">SSE</option></select>
+      </label>
+      <label class="field">Layer
+        <select name="layer">
+          <option value="2">2 · MCP registry / any MCP server</option>
+          <option value="3">3 · Zapier MCP</option>
+          <option value="4">4 · Pipedream</option>
+        </select>
+      </label>
+      <div id="headerFields" style="display:flex;flex-direction:column;gap:10px"></div>
+      <label class="field">Extra headers (one per line, Name: value)
+        <textarea name="headers" rows="2" placeholder="Authorization: Bearer …"></textarea>
+      </label>
+      <p class="hint">Secrets are kept on your server only (data/vault.json) and never shown again or sent to the chat.</p>
+      <p class="hint err" id="addErr"></p>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn primary" value="save" id="addSave">Connect</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="tryDlg">
+  <form method="dialog" id="tryForm">
+    <div class="dlg-head"><h2 id="tryTitle">Try a tool</h2><button class="icon-btn" value="cancel" aria-label="Close" formnovalidate><span data-icon="close"></span></button></div>
+    <div class="dlg-body">
+      <p class="hint" id="tryDesc"></p>
+      <label class="field">Arguments (JSON)<textarea name="args" rows="6" class="mono"></textarea></label>
+      <pre class="result-box hidden" id="tryOut"></pre>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn" value="cancel" formnovalidate>Close</button>
+      <button class="btn primary" value="run" id="tryRun">Run</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="js/connectors.js"></script>
+</body>
+</html>

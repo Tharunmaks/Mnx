@@ -1,4 +1,5 @@
-"""Mnx Hive gateway: serves the web app and streams Hive events over WebSocket.
+"""Mnx Hive gateway: serves the web app, streams Hive events over WebSocket,
+and exposes the Connector Hub, the Browser Bee and the Phone Drone.
 
 Run:  uvicorn gateway.api:app --host 0.0.0.0 --port 8000
 """
@@ -10,14 +11,19 @@ import json
 import re
 import uuid
 from collections import deque
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from hive import queen
+from gateway import auth
+from hive import phone, queen
+from hive.browser import BrowserError, session as browser
+from hive.connectors import LANES, LAYERS, hub
 from hive.core import Task, now
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,37 +34,27 @@ STATE_FILE = DATA / "hive.json"
 DEFAULT_BEES = [
     {"id": "chat", "name": "Chat", "skill": "Talks with you and answers questions", "tools": [], "approval": False, "builtin": True},
     {"id": "memory", "name": "Memory", "skill": "Saves facts and recalls them before answering", "tools": ["memory"], "approval": False, "builtin": True},
-]
-DEFAULT_TOOLS = [
-    {"id": "web_search", "name": "Web search", "description": "Search the web and read pages"},
-    {"id": "google_drive", "name": "Google Drive", "description": "Read and save your files"},
-    {"id": "gmail", "name": "Gmail", "description": "Read and draft email"},
-    {"id": "google_calendar", "name": "Google Calendar", "description": "See and add events"},
-    {"id": "telegram", "name": "Telegram", "description": "Chat with the Hive from Telegram"},
-    {"id": "phone_drone", "name": "Phone Drone", "description": "Termux agent on your phone"},
+    {"id": "browser", "name": "Browser", "skill": "Uses any website like a person, in its own Chromium", "tools": ["browser"], "approval": True, "builtin": True},
+    {"id": "phone", "name": "Phone", "skill": "Taps, types and opens apps on your paired phone", "tools": ["phone"], "approval": True, "builtin": True},
 ]
 
 
-# ---------- state (bees + tools persisted to data/hive.json) ----------
-def load_state() -> dict:
+# ---------- state (bees persisted to data/hive.json) ----------
+def load_bees() -> list[dict]:
     try:
-        state = json.loads(STATE_FILE.read_text())
+        bees = json.loads(STATE_FILE.read_text()).get("bees") or []
     except (FileNotFoundError, json.JSONDecodeError):
-        state = {}
-    bees = state.get("bees") or [dict(b) for b in DEFAULT_BEES]
-    connected = set(state.get("connected_tools", []))
-    return {"bees": bees, "connected_tools": connected}
+        bees = []
+    have = {b["id"] for b in bees}
+    return [dict(b) for b in DEFAULT_BEES if b["id"] not in have] + bees
 
 
-def save_state() -> None:
+def save_bees() -> None:
     DATA.mkdir(exist_ok=True)
-    STATE_FILE.write_text(json.dumps({
-        "bees": STATE["bees"],
-        "connected_tools": sorted(STATE["connected_tools"]),
-    }, indent=2))
+    STATE_FILE.write_text(json.dumps({"bees": BEES}, indent=2))
 
 
-STATE = load_state()
+BEES = load_bees()
 BEE_STATUS: dict[str, str] = {}  # bee id → busy | failed (default idle / scheduled)
 EVENT_LOG: deque[dict] = deque(maxlen=500)
 CLIENTS: set[WebSocket] = set()
@@ -78,19 +74,38 @@ async def broadcast(event: dict) -> None:
             CLIENTS.discard(ws)
 
 
-# ---------- HTTP API ----------
-app = FastAPI(title="Mnx Hive")
+def log(bee: str, type: str, text: str) -> None:
+    EVENT_LOG.append({"bee": bee, "type": type, "text": text[:300], "at": now()})
 
 
-@app.get("/api/health")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    health = asyncio.create_task(hub.health_loop())
+    yield
+    health.cancel()
+    await browser.shutdown()
+
+
+app = FastAPI(title="Mnx Hive", lifespan=lifespan)
+api = APIRouter(prefix="/api", dependencies=[Depends(auth.require)])
+
+
+@app.get("/api/ping")
+def ping():
+    """Unauthenticated: lets the web app tell 'server down' from 'wrong token'."""
+    return {"ok": True}
+
+
+@api.get("/health")
 def health():
     from hive import brain
-    return {"ok": True, "brain": brain.is_connected()}
+    return {"ok": True, "brain": brain.is_connected(), "phones": len(phone.PHONES), "browser": browser.running}
 
 
-@app.get("/api/bees")
+# ---------- Bees ----------
+@api.get("/bees")
 def list_bees():
-    return [bee_view(b) for b in STATE["bees"]]
+    return [bee_view(b) for b in BEES]
 
 
 class NewBee(BaseModel):
@@ -101,60 +116,235 @@ class NewBee(BaseModel):
     approval: bool = True
 
 
-@app.post("/api/bees")
+@api.post("/bees")
 async def add_bee(bee: NewBee):
     slug = re.sub(r"[^a-z0-9]+", "_", bee.name.lower()).strip("_") or "bee"
-    if any(b["id"] == slug for b in STATE["bees"]):
+    if any(b["id"] == slug for b in BEES):
         raise HTTPException(409, "A Bee with that name already exists")
     record = {"id": slug, **bee.model_dump(), "builtin": False}
-    STATE["bees"].append(record)
-    save_state()
+    BEES.append(record)
+    save_bees()
     await broadcast({"type": "bees_changed"})
     return bee_view(record)
 
 
-@app.delete("/api/bees/{bee_id}")
+@api.delete("/bees/{bee_id}")
 async def delete_bee(bee_id: str):
-    bee = next((b for b in STATE["bees"] if b["id"] == bee_id), None)
+    bee = next((b for b in BEES if b["id"] == bee_id), None)
     if not bee:
         raise HTTPException(404, "No such Bee")
     if bee.get("builtin"):
         raise HTTPException(400, "Built-in Bees can't be removed")
-    STATE["bees"].remove(bee)
-    save_state()
+    BEES.remove(bee)
+    save_bees()
     await broadcast({"type": "bees_changed"})
     return {"ok": True}
 
 
-@app.get("/api/tools")
-def list_tools():
-    return [{**t, "connected": t["id"] in STATE["connected_tools"]} for t in DEFAULT_TOOLS]
-
-
-class ToolToggle(BaseModel):
-    connected: bool
-
-
-@app.post("/api/tools/{tool_id}")
-async def toggle_tool(tool_id: str, body: ToolToggle):
-    if not any(t["id"] == tool_id for t in DEFAULT_TOOLS):
-        raise HTTPException(404, "No such tool")
-    (STATE["connected_tools"].add if body.connected else STATE["connected_tools"].discard)(tool_id)
-    save_state()
-    await broadcast({"type": "tools_changed"})
-    return {"ok": True}
-
-
-@app.get("/api/events")
+@api.get("/events")
 def recent_events(limit: int = 50):
     limit = max(1, min(limit, 500))
     return list(EVENT_LOG)[-limit:]
 
 
-# ---------- WebSocket ----------
+# ---------- Connector Hub ----------
+@api.get("/connectors")
+def list_connectors():
+    return {"layers": LAYERS, "connected": hub.list(), "phones": len(phone.PHONES)}
+
+
+@api.get("/connectors/search")
+async def search_connectors(q: str = ""):
+    return await hub.search(q[:100], phone.all_apps())
+
+
+class NewConnector(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    url: str = Field(pattern=r"^https?://", max_length=500)
+    transport: str = Field(default="streamable-http", pattern=r"^(streamable-http|sse)$")
+    headers: dict[str, str] = Field(default_factory=dict)
+    layer: int = Field(default=2, ge=1, le=6)
+    source: str | None = Field(default=None, max_length=200)
+
+
+@api.post("/connectors")
+async def add_connector(c: NewConnector):
+    view = await hub.add(c.name, c.url, c.transport, c.headers, c.layer, c.source)
+    log("Hub", "connector_added", f"{c.name}: {view['status']}")
+    await broadcast({"type": "tools_changed"})
+    return view
+
+
+def _conn_or_404(cid: str) -> None:
+    if cid not in hub.conns:
+        raise HTTPException(404, "No such connector")
+
+
+@api.post("/connectors/{cid}/test")
+async def test_connector(cid: str):
+    _conn_or_404(cid)
+    view = await hub.test(cid)
+    await broadcast({"type": "tools_changed"})
+    return view
+
+
+@api.delete("/connectors/{cid}")
+async def remove_connector(cid: str):
+    _conn_or_404(cid)
+    hub.remove(cid)
+    await broadcast({"type": "tools_changed"})
+    return {"ok": True}
+
+
+class LaneChange(BaseModel):
+    tool: str
+    lane: str
+
+
+@api.post("/connectors/{cid}/lane")
+def set_lane(cid: str, body: LaneChange):
+    _conn_or_404(cid)
+    if body.lane not in LANES:
+        raise HTTPException(400, "lane must be go, ask or you")
+    hub.set_lane(cid, body.tool, body.lane)
+    return {"ok": True}
+
+
+class ToolCall(BaseModel):
+    tool: str
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+@api.post("/connectors/{cid}/call")
+async def call_connector(cid: str, body: ToolCall):
+    _conn_or_404(cid)
+    try:
+        result = await hub.call(cid, body.tool, body.args)
+    except Exception as exc:
+        raise HTTPException(502, f"Tool call failed: {exc}") from exc
+    log("Hub", "tool_call", f"{cid}.{body.tool}")
+    return result
+
+
+# ---------- Browser Bee ----------
+class BrowserAction(BaseModel):
+    action: str = Field(pattern=r"^(goto|click|type|press|scroll|back|forward|reload|read|elements|screenshot|close)$")
+    url: str | None = None
+    x: float | None = None
+    y: float | None = None
+    text: str | None = Field(default=None, max_length=5000)
+    selector: str | None = Field(default=None, max_length=300)
+    key: str | None = Field(default=None, max_length=40)
+    dy: float | None = None
+
+
+@api.get("/browser")
+async def browser_state():
+    return await browser.state()
+
+
+@api.post("/browser")
+async def browser_do(body: BrowserAction):
+    args = body.model_dump(exclude_none=True)
+    action = args.pop("action")
+    BEE_STATUS["browser"] = "busy"
+    try:
+        result = await browser.do(action, **args)
+        if action not in ("screenshot", "read", "elements"):
+            log("Browser", action, args.get("url") or args.get("text") or args.get("key") or "")
+        return result
+    except BrowserError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        BEE_STATUS.pop("browser", None)
+
+
+# ---------- Phone Drone ----------
+@api.get("/phones")
+def list_phones():
+    return [p.view() for p in phone.PHONES.values()]
+
+
+class PhoneCommand(BaseModel):
+    cmd: str = Field(max_length=40)
+    args: dict[str, Any] = Field(default_factory=dict)
+    confirmed: bool = False
+
+
+@api.post("/phones/{phone_id}/cmd")
+async def phone_cmd(phone_id: str, body: PhoneCommand):
+    try:
+        p = phone.get(phone_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if body.cmd in phone.RISKY and not body.confirmed:
+        raise HTTPException(428, f"'{body.cmd}' needs your confirmation")
+    try:
+        result = await p.call(body.cmd, body.args, timeout=60 if body.cmd in ("location", "ui_tree", "tap_text") else 25)
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(504, "The phone didn't answer in time") from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if body.cmd == "apps" and isinstance(result, list):
+        p.apps = [{**a, "phone": p.id} for a in result]
+    if body.cmd not in ("screenshot", "ui_tree", "apps", "battery", "screen_size"):
+        log("Phone", body.cmd, json.dumps(body.args)[:200] if body.args else "")
+    return {"result": result}
+
+
+app.include_router(api)
+
+
+# ---------- WebSockets ----------
+@app.websocket("/ws/drone")
+async def drone_ws(ws: WebSocket):
+    await ws.accept()
+    if not auth.valid(ws.query_params.get("token")):
+        await ws.close(code=4401)
+        return
+    p = None
+    try:
+        hello = await asyncio.wait_for(ws.receive_json(), 15)
+        if hello.get("type") != "hello":
+            await ws.close(code=4400)
+            return
+        p = phone.Phone(ws, hello)
+        old = phone.PHONES.get(p.id)
+        if old:
+            old.fail_all()
+        phone.PHONES[p.id] = p
+        log("Phone", "connected", f"{p.info.get('name')} ({p.info.get('backend')})")
+        await broadcast({"type": "phones_changed"})
+        if "apps" in p.capabilities:
+            asyncio.create_task(_prefetch_apps(p))
+        while True:
+            msg = await ws.receive_json()
+            if msg.get("type") == "reply":
+                p.on_reply(msg)
+    except (WebSocketDisconnect, asyncio.TimeoutError, json.JSONDecodeError, RuntimeError):
+        pass
+    finally:
+        if p and phone.PHONES.get(p.id) is p:
+            p.fail_all()
+            del phone.PHONES[p.id]
+            log("Phone", "disconnected", str(p.info.get("name")))
+            await broadcast({"type": "phones_changed"})
+
+
+async def _prefetch_apps(p: phone.Phone) -> None:
+    try:
+        apps = await p.call("apps", timeout=40)
+        p.apps = [{**a, "phone": p.id} for a in apps]
+    except Exception:
+        pass
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
+    if not auth.valid(ws.query_params.get("token")):
+        await ws.close(code=4401)
+        return
     CLIENTS.add(ws)
 
     async def emit(event: dict) -> None:
@@ -206,6 +396,12 @@ async def run_task(task: Task) -> None:
 
 
 # ---------- web app ----------
+@app.get("/drone.py")
+def drone_script():
+    """The Termux agent, so the phone can download it with curl."""
+    return FileResponse(ROOT / "drone" / "drone.py", media_type="text/x-python")
+
+
 @app.get("/")
 def index():
     return FileResponse(WEB / "index.html")

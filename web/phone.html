@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0f">
+  <title>Phone · Mnx Hive</title>
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/mnx.css">
+</head>
+<body>
+<div class="app">
+  <main class="main">
+    <header class="topbar">
+      <a class="icon-btn" href="index.html" aria-label="Back to chat"><span data-icon="back"></span></a>
+      <h1>Phone Drone</h1>
+      <select id="phonePick" class="input compact hidden" aria-label="Phone"></select>
+      <label class="check live-toggle"><input type="checkbox" id="live" checked> Live</label>
+      <span class="conn" id="conn"><i></i><span>Connecting</span></span>
+    </header>
+
+    <div class="scroll">
+      <div class="page wide">
+
+        <!-- No phone yet: setup steps -->
+        <section id="setup" class="hidden">
+          <div class="card attn setup">
+            <div class="card-head"><span class="svc" data-icon="phone"></span><span>Pair your phone</span><span class="badge wait">No phone connected</span></div>
+            <p class="card-text">The Phone Drone runs in Termux on your Android phone and dials out to this Hive. It works over mobile data; nothing needs to reach into your phone.</p>
+            <ol class="steps-list">
+              <li>Install <b>Termux</b> and <b>Termux:API</b> from F-Droid, then in Termux:
+                <pre class="result-box">pkg install python android-tools termux-api python-pillow
+pip install websockets
+curl -O <span id="droneUrl"></span></pre></li>
+              <li>For screen control (tap, type, open apps): Settings → Developer options → <b>Wireless debugging</b> → Pair device with pairing code, then:
+                <pre class="result-box">adb pair localhost:&lt;pair port&gt; &lt;code&gt;
+adb connect localhost:&lt;port&gt;</pre>
+                Or use <b>Shizuku</b> and add <code>--backend shizuku</code>.</li>
+              <li>Start the drone:
+                <pre class="result-box" id="runCmd"></pre>
+                <button class="btn" type="button" id="copyRun">Copy with my token</button></li>
+            </ol>
+            <p class="hint">Only people with your access token can control the phone. Add <code>--deny sms_send,call</code> to block those on the phone itself.</p>
+          </div>
+        </section>
+
+        <!-- Phone connected -->
+        <section id="control" class="hidden">
+          <div class="chips" id="info"></div>
+          <div class="phone-grid">
+            <div class="phone-col">
+              <div class="phone-frame" id="frame">
+                <img id="shot" alt="Live view of your phone screen" draggable="false" class="hidden">
+                <div class="screen-empty" id="noScreen"><p>Screen control needs ADB wireless debugging or Shizuku on the phone.</p></div>
+                <div class="screen-busy hidden" id="busy"><span class="pulse"><span data-icon="hex"></span><span data-icon="hex"></span><span data-icon="hex"></span></span></div>
+              </div>
+              <div class="navkeys" id="navkeys">
+                <button class="btn" data-key="back" type="button">Back</button>
+                <button class="btn" data-key="home" type="button">Home</button>
+                <button class="btn" data-key="recents" type="button">Recents</button>
+                <button class="btn" data-key="notifications" type="button">Alerts</button>
+              </div>
+              <form class="typebar" id="typeForm">
+                <input id="typeText" class="input" placeholder="Type on the phone…" autocomplete="off">
+                <button class="btn" type="submit">Type</button>
+                <button class="btn" type="button" data-key="enter">Enter</button>
+                <button class="btn" type="button" data-key="delete">⌫</button>
+              </form>
+              <p class="hint">Tap the picture to tap the phone, drag to swipe, hold to long-press.</p>
+              <p class="hint err" id="err"></p>
+            </div>
+
+            <aside class="side-panel">
+              <div class="tabs" role="tablist">
+                <button class="tab active" data-tab="apps" type="button">Apps</button>
+                <button class="tab" data-tab="screen" type="button">On screen</button>
+                <button class="tab" data-tab="device" type="button">Device</button>
+                <button class="tab" data-tab="messages" type="button">Messages</button>
+              </div>
+
+              <div id="tab-apps" class="tab-body">
+                <input id="appFilter" class="input" placeholder="Search apps…" autocomplete="off">
+                <div id="apps" class="app-list"></div>
+              </div>
+
+              <div id="tab-screen" class="tab-body hidden">
+                <div class="row">
+                  <button class="btn" id="loadTree" type="button">Read screen</button>
+                  <form id="tapTextForm" class="row grow"><input class="input" id="tapText" placeholder="Tap the button that says…"><button class="btn" type="submit">Tap</button></form>
+                </div>
+                <div id="tree"></div>
+              </div>
+
+              <div id="tab-device" class="tab-body hidden">
+                <div class="tiles">
+                  <button class="tile" data-cmd="battery" type="button">Battery</button>
+                  <button class="tile" data-cmd="torch" data-args='{"on":true}' type="button">Torch on</button>
+                  <button class="tile" data-cmd="torch" data-args='{"on":false}' type="button">Torch off</button>
+                  <button class="tile" data-cmd="vibrate" data-args='{"ms":400}' type="button">Vibrate</button>
+                  <button class="tile" data-cmd="volume" type="button">Volume</button>
+                  <button class="tile" data-cmd="wifi" type="button">Wi-Fi info</button>
+                  <button class="tile" data-cmd="location" type="button">Location</button>
+                  <button class="tile" data-cmd="clipboard_get" type="button">Clipboard</button>
+                </div>
+                <form class="row" id="sayForm"><input class="input" id="sayText" placeholder="Say out loud on the phone…"><button class="btn" type="submit">Speak</button></form>
+                <form class="row" id="toastForm"><input class="input" id="toastText" placeholder="Show a toast message…"><button class="btn" type="submit">Toast</button></form>
+                <form class="row" id="volForm">
+                  <select class="input" id="volStream"><option>music</option><option>ring</option><option>notification</option><option>alarm</option><option>call</option><option>system</option></select>
+                  <input class="input" id="volLevel" type="number" min="0" max="30" value="7" style="max-width:80px">
+                  <button class="btn" type="submit">Set volume</button>
+                </form>
+                <pre class="result-box" id="devOut">Results show here.</pre>
+              </div>
+
+              <div id="tab-messages" class="tab-body hidden">
+                <div class="row">
+                  <button class="btn" data-cmd="notifications" data-out="msgOut" type="button">Notifications</button>
+                  <button class="btn" data-cmd="sms_list" data-args='{"limit":20}' data-out="msgOut" type="button">SMS inbox</button>
+                </div>
+                <form id="smsForm" class="stack">
+                  <input class="input" id="smsNumber" placeholder="Phone number" inputmode="tel" autocomplete="off">
+                  <textarea class="input" id="smsText" rows="2" placeholder="Message"></textarea>
+                  <div class="row"><button class="btn primary" type="submit">Send SMS</button><button class="btn" type="button" id="callBtn">Call</button></div>
+                </form>
+                <div id="msgOut" class="msg-list"></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+<script type="module" src="js/phone.js"></script>
+</body>
+</html>

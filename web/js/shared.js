@@ -15,6 +15,11 @@ export const ICONS = {
   clip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>',
+  plug: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7V3M15 7V3M6 7h12v4a6 6 0 0 1-12 0zM12 17v4"/></svg>',
+  globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>',
+  phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>',
+  fwd: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
   // step icons, keyed by event "type"
   thinking: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M9 10h.01M15 10h.01M9 15c1.5 1 4.5 1 6 0"/></svg>',
   planning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>',
@@ -88,6 +93,7 @@ const DEFAULTS = {
   name: "",
   model: "Mnx 3B",
   gateway: "", // empty = same origin as the page
+  token: "", // access token printed by the gateway (data/token.txt)
   enterToSend: true,
 };
 
@@ -115,13 +121,22 @@ export function gatewayBase() {
   return g || location.origin;
 }
 
+export class ApiError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
 export async function api(path, opts = {}) {
   const res = await fetch(gatewayBase() + path, {
-    headers: { "Content-Type": "application/json" },
     ...opts,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getSettings().token}` },
     body: opts.body && typeof opts.body !== "string" ? JSON.stringify(opts.body) : opts.body,
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`;
+    try { const j = await res.json(); if (j.detail) msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail); } catch { /* not json */ }
+    if (res.status === 401) window.dispatchEvent(new CustomEvent("mnx-auth"));
+    throw new ApiError(res.status, msg);
+  }
   return res.json();
 }
 
@@ -142,6 +157,7 @@ export class HiveClient extends EventTarget {
     const base = new URL(gatewayBase());
     base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
     base.pathname = "/ws";
+    base.search = "?token=" + encodeURIComponent(getSettings().token);
     return base.toString();
   }
 
@@ -164,8 +180,13 @@ export class HiveClient extends EventTarget {
       try { ev = JSON.parse(e.data); } catch { return; }
       this.dispatchEvent(new CustomEvent("event", { detail: ev }));
     };
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       this.ws = null;
+      if (e.code === 4401) {
+        this.setState("auth");
+        window.dispatchEvent(new CustomEvent("mnx-auth"));
+        return; // wait for a new token from Settings
+      }
       if (!this.closed) this.scheduleReconnect();
     };
     ws.onerror = () => ws.close();
@@ -200,4 +221,32 @@ export class HiveClient extends EventTarget {
 export function timeShort(iso) {
   const d = iso ? new Date(iso) : new Date();
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+// ---------- shared page chrome ----------
+export function connLabel(el, state) {
+  el.className = `conn ${state === "auth" ? "offline" : state}`;
+  el.querySelector("span").textContent =
+    state === "online" ? "Online" : state === "offline" ? "Offline" : state === "auth" ? "Needs token" : "Connecting";
+}
+
+// Asks for the access token once when the gateway says 401.
+let asking = false;
+export function installTokenPrompt(onSaved) {
+  window.addEventListener("mnx-auth", () => {
+    if (asking) return;
+    asking = true;
+    setTimeout(() => {
+      const t = prompt("Enter your Mnx Hive access token (printed by the server, also in data/token.txt):", "");
+      asking = false;
+      if (t && t.trim()) {
+        saveSettings({ token: t.trim() });
+        onSaved?.();
+      }
+    }, 50);
+  });
+}
+
+export function fillIcons(root = document) {
+  root.querySelectorAll("[data-icon]").forEach((el) => { el.outerHTML = ICONS[el.dataset.icon]; });
 }

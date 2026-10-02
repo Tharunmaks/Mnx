@@ -3,7 +3,7 @@
 // No model runs in the browser; when the Mnx brain is not wired up, the gateway says so.
 
 import {
-  ICONS, HiveClient, api, beeHex, getSettings, h, logoSVG, saveSettings, store, uid,
+  ICONS, HiveClient, api, beeHex, connLabel, getSettings, h, installTokenPrompt, logoSVG, saveSettings, store, uid,
 } from "./shared.js";
 import { buildModel, renderRun } from "./render.js";
 
@@ -63,17 +63,15 @@ function isRunning(turn) {
 const client = new HiveClient();
 
 client.addEventListener("state", (e) => {
-  const s = e.detail;
-  const conn = $("conn");
-  conn.className = `conn ${s}`;
-  conn.querySelector("span").textContent = s === "online" ? "Online" : s === "offline" ? "Offline" : "Connecting";
-  if (s === "online") { loadTools(); loadBees(); }
+  connLabel($("conn"), e.detail);
+  if (e.detail === "online") { loadTools(); loadBees(); }
 });
+installTokenPrompt(() => client.reconnectNow());
 
 client.addEventListener("event", (e) => {
   const ev = e.detail;
   if (ev.type === "bee_status" || ev.type === "bees_changed") { loadBees(); return; }
-  if (ev.type === "tools_changed") { loadTools(); return; }
+  if (ev.type === "tools_changed" || ev.type === "phones_changed") { loadTools(); return; }
   if (!ev.task) return;
   const found = findTurn(ev.task);
   if (!found) return;
@@ -282,6 +280,7 @@ function openSettings(focusName) {
   f.name.value = s.name;
   f.model.value = s.model;
   f.gateway.value = s.gateway;
+  f.token.value = s.token;
   f.enterToSend.checked = s.enterToSend;
   $("settingsDlg").showModal();
   if (focusName) f.name.focus();
@@ -292,15 +291,21 @@ $("modelPill").addEventListener("click", () => openSettings(false));
 $("settingsDlg").addEventListener("close", () => {
   if ($("settingsDlg").returnValue !== "save") return;
   const f = $("settingsForm");
-  const prevGateway = getSettings().gateway;
+  const prev = getSettings();
   saveSettings({
+    token: f.token.value.trim(),
     name: f.name.value.trim(),
     model: f.model.value.trim() || "Mnx 3B",
     gateway: f.gateway.value.trim(),
     enterToSend: f.enterToSend.checked,
   });
   applyProfile();
-  if (prevGateway !== getSettings().gateway) client.reconnectNow();
+  const now = getSettings();
+  if (prev.gateway !== now.gateway || prev.token !== now.token || client.state !== "online") {
+    client.reconnectNow();
+    loadTools();
+    loadBees();
+  }
 });
 $("clearChats").addEventListener("click", () => {
   if (!confirm("Delete every chat saved on this device?")) return;
@@ -311,35 +316,21 @@ $("clearChats").addEventListener("click", () => {
   renderAll();
 });
 
-// ---------- MCP tools ----------
-let tools = [];
+// ---------- connected MCP tools (rail) ----------
 async function loadTools() {
-  try { tools = await api("/api/tools"); } catch { tools = []; }
+  let data = null;
+  try { data = await api("/api/connectors"); } catch { /* offline */ }
   const list = $("toolList");
   list.replaceChildren();
-  const on = tools.filter((t) => t.connected);
-  $("toolCount").textContent = tools.length ? `${on.length}/${tools.length}` : "";
-  if (!on.length) list.append(h("div", { class: "empty-note" }, tools.length ? "None connected" : "Gateway offline"));
-  for (const t of on) {
-    list.append(h("div", { class: "rail-btn" }, h("span", { class: "tool-dot on" }), h("span", {}, t.name)));
-  }
-  renderToolsManage();
-}
-function renderToolsManage() {
-  const box = $("toolsManage");
-  box.replaceChildren();
-  if (!tools.length) box.append(h("div", { class: "empty-note" }, "Connect to the gateway to manage tools."));
-  for (const t of tools) {
-    box.append(h("div", { class: "bee-row" },
-      h("span", { class: `tool-dot${t.connected ? " on" : ""}` }),
-      h("div", { class: "meta" }, h("div", { class: "name" }, t.name), h("div", { class: "skill" }, t.description || "")),
-      h("button", { class: `btn${t.connected ? "" : " primary"}`, type: "button", onclick: async () => {
-        try { await api(`/api/tools/${encodeURIComponent(t.id)}`, { method: "POST", body: { connected: !t.connected } }); } catch { /* offline */ }
-        loadTools();
-      } }, t.connected ? "Disconnect" : "Connect")));
+  const conns = data ? data.connected : [];
+  $("toolCount").textContent = conns.length ? String(conns.length) : "";
+  $("phoneCount").textContent = data && data.phones ? String(data.phones) : "";
+  if (!conns.length) list.append(h("div", { class: "empty-note" }, data ? "None connected yet" : "Gateway offline"));
+  for (const c of conns.slice(0, 6)) {
+    list.append(h("a", { class: "rail-btn", href: "connectors.html" },
+      h("span", { class: `tool-dot${c.status === "ok" ? " on" : ""}` }), h("span", {}, c.name)));
   }
 }
-$("manageTools").addEventListener("click", () => { renderToolsManage(); $("toolsDlg").showModal(); });
 
 // ---------- Bees side panel ----------
 async function loadBees() {
