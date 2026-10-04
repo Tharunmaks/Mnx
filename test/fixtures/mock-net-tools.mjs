@@ -7,10 +7,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as real from "../../tools.js?real";
+import { extraDisplay } from "../../tools-extra.js";
 
 export const { TOOLS, CODE_RUNNER, htmlToText, parseDuckDuckGo } = real;
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const NET = new Set(["get_weather", "search_web", "read_webpage", "find_places", "get_directions", "get_user_location"]);
+const NET = new Set(["get_weather", "search_web", "read_webpage", "find_places", "get_directions", "get_user_location", "convert_currency", "get_time", "wikipedia", "define_word", "translate"]);
 const key = (name, args) => `${name}:${JSON.stringify(args, Object.keys(args || {}).sort())}`;
 // The same call (e.g. weather in Lisbon) appears in several cases with
 // different results, so results are stored per conversation as well.
@@ -40,6 +41,7 @@ function display(name, r) {
   if (name === "get_directions") return { kind: "directions", ...r };
   if (name === "search_web") return { kind: "sources", query: r.query, results: r.results };
   if (name === "read_webpage") return { kind: "sources", query: null, results: [{ title: r.title, url: r.url }] };
+  if (extraDisplay(name, r)) return extraDisplay(name, r);
   if (name === "get_user_location") return r.available === false ? { kind: "location", available: false } : { kind: "location", available: true, ...r };
   return undefined;
 }

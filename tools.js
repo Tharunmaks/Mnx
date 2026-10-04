@@ -11,6 +11,8 @@ import path from "node:path";
 const UA = "Mnx-Assistant/1.0 (+https://github.com/Tharunmaks/Mnx)";
 // The code runner only ever runs after the user approves each program in the
 // chat. Turn it off completely with MNX_CODE_RUNNER=off.
+import { EXTRA_TOOLS, extraHandlers } from "./tools-extra.js";
+
 export const CODE_RUNNER = !/^(0|off|false|no)$/i.test(process.env.MNX_CODE_RUNNER || "on");
 
 export const TOOLS = [
@@ -675,6 +677,9 @@ async function wikipediaSearch(query) {
     snippet: stripTags(r.snippet).slice(0, 300),
   }));
 }
+
+TOOLS.push(...EXTRA_TOOLS);
+Object.assign(handlers, extraHandlers);
 
 export async function runTool(name, input, ctx) {
   const handler = handlers[name];

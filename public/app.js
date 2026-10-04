@@ -65,6 +65,13 @@
     code: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>',
     image: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>',
     tool: '<svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>',
+    calc: '<svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h2M12 11h0M14 11h2M8 15h2M14 15h2M8 18h2M14 18h2"/></svg>',
+    scale: '<svg viewBox="0 0 24 24"><path d="M3 7h18M7 7l-3 7a3 3 0 0 0 6 0zM17 7l-3 7a3 3 0 0 0 6 0zM12 3v18M8 21h8"/></svg>',
+    money: '<svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M6 9v.01M18 15v.01"/></svg>',
+    clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    book: '<svg viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M8 7h7M8 11h7"/></svg>',
+    lang: '<svg viewBox="0 0 24 24"><path d="M4 5h9M8.5 3v2M6 5c0 4 3 7 6 8M11 5c0 4-3 7-7 8"/><path d="m13 21 4-9 4 9M14.5 18h5"/></svg>',
+    qr: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 14v.01M14 21h3M21 18v3h-3"/></svg>',
   };
   const CHEV = '<svg class="step-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>';
   const COPY_IC = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
@@ -256,6 +263,14 @@
     read_webpage: "fetch",
     create_image: "image",
     run_code: "code",
+    calculate: "calc",
+    convert_units: "scale",
+    convert_currency: "money",
+    get_time: "clock",
+    wikipedia: "book",
+    define_word: "book",
+    translate: "lang",
+    create_qr_code: "qr",
   };
   function toolLabel(name, input, phase, display) {
     const i = input || {};
@@ -292,6 +307,22 @@
       }
       case "create_image":
         return done ? "Created an image" : `Painting${i.prompt ? ` “${i.prompt.length > 48 ? `${i.prompt.slice(0, 48)}…` : i.prompt}”` : " an image"}`;
+      case "calculate":
+        return done ? `Calculated${display?.title ? ` · ${display.title}` : ""}` : `Calculating${i.expression ? ` ${clip(i.expression, 40)}` : ""}`;
+      case "convert_units":
+        return done ? `Converted ${i.value ?? ""} ${i.from || ""} to ${i.to || ""}` : `Converting ${i.value ?? ""} ${i.from || ""} to ${i.to || ""}`;
+      case "convert_currency":
+        return done ? `Converted ${i.from || ""} to ${i.to || ""} at today's rate` : `Getting the ${i.from || ""} → ${i.to || ""} exchange rate`;
+      case "get_time":
+        return done ? `Checked the time${i.location ? ` in ${i.location}` : ""}` : `Checking the time${i.location ? ` in ${i.location}` : ""}`;
+      case "wikipedia":
+        return done ? `Read Wikipedia${display?.title ? ` · ${display.title}` : ""}` : `Looking up${i.topic ? ` “${clip(i.topic, 40)}”` : ""} on Wikipedia`;
+      case "define_word":
+        return done ? `Looked up “${i.word || "the word"}”` : `Looking up “${i.word || "the word"}” in the dictionary`;
+      case "translate":
+        return done ? `Translated to ${i.to || "another language"}` : `Translating to ${i.to || "another language"}`;
+      case "create_qr_code":
+        return done ? "Created a QR code" : "Making a QR code";
       case "web_search":
         return done ? `Searched${i.query ? ` “${i.query}”` : " the web"}` : `Searching the web${i.query ? ` · “${i.query}”` : ""}`;
       case "web_fetch":
@@ -300,6 +331,7 @@
         return done ? `Used ${name}` : `Using ${name}`;
     }
   }
+  const clip = (t, n) => (String(t).length > n ? `${String(t).slice(0, n)}…` : String(t));
   function thinkingHeading(text) {
     const heads = [...String(text).matchAll(/(?:^|\n)\s*\*\*([^*\n]{3,90})\*\*/g)];
     return heads.length ? heads[heads.length - 1][1].trim() : null;
@@ -452,6 +484,21 @@
     c.innerHTML = d.available
       ? `<div class="loc-card"><span class="loc-pulse"></span><span>You're near <b>${esc(d.name)}</b></span></div>`
       : `<div class="loc-card"><span>📍 Location isn't shared. Turn it on with the pin button next to the message box.</span></div>`;
+    return c;
+  }
+
+  // Results of the smaller tools: a big answer, a subtitle, optional rows, text, image and link.
+  function cardInfo(d) {
+    const c = el("div", "card info-card");
+    c.innerHTML = `
+      <div class="card-head"><div class="step-ic" style="position:static">${ICONS[d.icon] || ICONS.tool}</div>
+        <div style="min-width:0"><div class="info-title">${esc(d.title ?? "")}</div>${d.subtitle ? `<div class="card-sub">${esc(d.subtitle)}</div>` : ""}</div>
+        ${d.image ? `<img class="info-img" src="${esc(d.image)}" alt="" loading="lazy">` : ""}</div>
+      ${d.body ? `<p class="info-body">${esc(d.body)}</p>` : ""}
+      ${d.rows?.length ? `<dl class="info-rows">${d.rows.map(([k, v]) => `<dt>${esc(k ?? "")}</dt><dd>${esc(v ?? "")}</dd>`).join("")}</dl>` : ""}
+      ${d.link ? `<div class="card-actions"><a class="btn" href="${esc(d.link)}" target="_blank" rel="noopener">${esc(d.linkText || "Open")}</a></div>` : ""}`;
+    const img = $(".info-img", c);
+    if (img) img.onerror = () => img.remove();
     return c;
   }
 
@@ -648,6 +695,7 @@
       case "location": return cardLocation(d);
       case "file": return cardFile(d);
       case "document": return cardDocument(d);
+      case "info": return cardInfo(d);
       default: return null;
     }
   }

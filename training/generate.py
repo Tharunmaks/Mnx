@@ -33,6 +33,7 @@ import content_docs as D  # noqa: E402
 import content_more as M  # noqa: E402
 import content_more2 as M2  # noqa: E402
 import content_qa as Q  # noqa: E402
+from content_tools import ToolsMixin  # noqa: E402
 
 
 def art(w):
@@ -55,7 +56,7 @@ def nth(n):
     return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
 
-class Gen:
+class Gen(ToolsMixin):
     def __init__(self, seed, held_out):
         self.r = random.Random(seed)
         self.held_out = held_out
@@ -985,7 +986,9 @@ class Gen:
 MIX = [("weather", 0.08), ("search", 0.11), ("location", 0.02), ("places", 0.07), ("directions", 0.04), ("image", 0.08),
        ("document", 0.08), ("notes_slides", 0.02), ("code_file", 0.09), ("run_code", 0.10), ("chart", 0.03), ("multi", 0.03),
        ("direct", 0.05), ("simple_math", 0.03), ("clarify", 0.02), ("unsupported", 0.02), ("followup", 0.05), ("tool_error", 0.02),
-       ("quick_facts", 0.03), ("multi2", 0.02), ("tool_error2", 0.01)]
+       ("quick_facts", 0.03), ("multi2", 0.02), ("tool_error2", 0.01),
+       # Everyday tools (content_tools.py)
+       ("calc", 0.025), ("units", 0.02), ("currency", 0.015), ("world_time", 0.015), ("wiki", 0.015), ("dictionary", 0.01), ("translation", 0.012), ("qr", 0.008)]
 
 
 def generate(n, seed, held_out):

@@ -354,3 +354,18 @@ describe("local model (fake llama-server)", () => {
     assert.match(events[0].text, /No local model found/);
   });
 });
+
+test("local: a model that repeats itself is stopped, with a note", async () => {
+  const t0 = Date.now();
+  const { events } = await chat({ messages: [{ role: "user", content: "please repeat yourself" }], model: "local" });
+  assert.ok(events.some((e) => e.t === "notice" && /repeating itself/.test(e.text)), JSON.stringify(events.filter((e) => e.t !== "text").slice(-5)));
+  assert.ok(events.some((e) => e.t === "done"));
+  const text = events.filter((e) => e.t === "text").map((e) => e.text).join("");
+  assert.ok(text.length < 4000, `stopped early (${text.length} chars)`);
+  assert.ok(Date.now() - t0 < 20000);
+});
+
+test("local: an answer cut off at the length limit says so", async () => {
+  const { events } = await chat({ messages: [{ role: "user", content: "this will be cut off" }], model: "local" });
+  assert.ok(events.some((e) => e.t === "notice" && /length limit/.test(e.text)));
+});

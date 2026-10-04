@@ -186,7 +186,7 @@ async function ensureLlamaServer(file) {
         return `http://127.0.0.1:${port}`;
       }
     }
-    const args = ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || (ON_ANDROID ? 4096 : 8192)), "-np", "1"];
+    const args = ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || 8192), "-np", "1"];
     if (process.env.MNX_THREADS) args.push("-t", process.env.MNX_THREADS);
     else if (ON_ANDROID) args.push("-t", String(fastCores()));
     if (process.env.MNX_GPU_LAYERS) args.push("-ngl", process.env.MNX_GPU_LAYERS); // e.g. 99 on a GPU machine
@@ -271,7 +271,7 @@ export function fitHistory(history, prompt, ctx, tokensPerChar = 1 / 3) {
   return [system, ...(roomy.length ? roomy : trimTo(budget))];
 }
 
-let serverCtx = Number(process.env.MNX_CTX) || (ON_ANDROID ? 4096 : 8192);
+let serverCtx = Number(process.env.MNX_CTX) || 8192;
 async function generateViaServerOnce(file, history, prompt, onChunk, signal) {
   const url = await ensureLlamaServer(file);
   let res;
@@ -305,6 +305,7 @@ async function generateViaServerOnce(file, history, prompt, onChunk, signal) {
   if (localStatus.state !== "ready") setStatus("ready", 100);
   const dec = new TextDecoder();
   let buf = "";
+  let finish = null;
   try {
     for await (const chunk of res.body) {
       buf += dec.decode(chunk, { stream: true });
@@ -314,7 +315,7 @@ async function generateViaServerOnce(file, history, prompt, onChunk, signal) {
         buf = buf.slice(nl + 1);
         if (!line.startsWith("data:")) continue;
         const data = line.slice(5).trim();
-        if (data === "[DONE]") return;
+        if (data === "[DONE]") return finish;
         let json;
         try {
           json = JSON.parse(data);
@@ -330,6 +331,7 @@ async function generateViaServerOnce(file, history, prompt, onChunk, signal) {
           const t = json.timings;
           console.log(`[local] reply: read ${t.prompt_n} new tokens in ${(t.prompt_ms / 1000).toFixed(1)}s (${t.prompt_per_second?.toFixed(1)}/s), wrote ${t.predicted_n} tokens at ${t.predicted_per_second?.toFixed(1)}/s`);
         }
+        if (json.choices?.[0]?.finish_reason) finish = json.choices[0].finish_reason;
         const delta = json.choices?.[0]?.delta || {};
         // Reasoning models served with --reasoning-format put thoughts here.
         if (delta.reasoning_content) onChunk(delta.reasoning_content, "reasoning");
@@ -337,9 +339,10 @@ async function generateViaServerOnce(file, history, prompt, onChunk, signal) {
       }
     }
   } catch (err) {
-    if (signal?.aborted) return;
+    if (signal?.aborted) return "aborted";
     throw err;
   }
+  return finish;
 }
 
 let useServer = ON_ANDROID || !!process.env.MNX_LLAMA_SERVER || process.env.MNX_LOCAL_BACKEND === "server";
@@ -406,6 +409,14 @@ export const LOCAL_TOOLS = [
     ["format", "title"],
   ),
   fn("create_file", "Give the user a code or text file.", { filename: str, content: str }, ["filename", "content"]),
+  fn("calculate", "Exact math: + - * / ^ mod n! %, sqrt, sin (degrees), log, pi.", { expression: str }, ["expression"]),
+  fn("convert_units", "Convert length, weight, temperature, volume, speed, area, data, time units.", { value: { type: "number" }, from: str, to: str }, ["value", "from", "to"]),
+  fn("convert_currency", "Convert money at today's rate. 3-letter codes like USD, INR.", { amount: { type: "number" }, from: str, to: str }, ["from", "to"]),
+  fn("get_time", "Current local time and date in a place (omit for the user's location).", { location: str }),
+  fn("wikipedia", "Encyclopedia summary of a person, place, thing or event.", { topic: str }, ["topic"]),
+  fn("define_word", "Dictionary meanings and examples of an English word.", { word: str }, ["word"]),
+  fn("translate", "Translate text. to/from are language names; from defaults to English.", { text: str, to: str, from: str }, ["text", "to"]),
+  fn("create_qr_code", "Make a QR code image for a link or text.", { text: str }, ["text"]),
   ...(CODE_RUNNER
     ? [fn("run_code", "Run Python or JavaScript on the user's device (they approve first). Print results; save charts as .png.", { language: { enum: ["python", "javascript"] }, code: str }, ["language", "code"])]
     : []),
@@ -562,6 +573,14 @@ const TOOL_ALIASES = {
   directions: "get_directions", route: "get_directions", generate_image: "create_image", image: "create_image", draw: "create_image",
   create_presentation: "create_document", make_slides: "create_document", create_pdf: "create_document", write_file: "create_file",
   save_file: "create_file", python: "run_code", execute_code: "run_code", run_python: "run_code", code_interpreter: "run_code",
+  calculator: "calculate", calc: "calculate", math: "calculate", compute: "calculate", evaluate: "calculate",
+  unit_converter: "convert_units", convert_unit: "convert_units", unit_conversion: "convert_units",
+  currency: "convert_currency", exchange_rate: "convert_currency", currency_converter: "convert_currency", convert_money: "convert_currency",
+  time: "get_time", get_current_time: "get_time", current_time: "get_time", world_clock: "get_time", timezone: "get_time",
+  wiki: "wikipedia", wikipedia_search: "wikipedia", search_wikipedia: "wikipedia", encyclopedia: "wikipedia",
+  dictionary: "define_word", define: "define_word", definition: "define_word", meaning: "define_word",
+  translate_text: "translate", translator: "translate", translation: "translate",
+  qr_code: "create_qr_code", qr: "create_qr_code", generate_qr_code: "create_qr_code", make_qr_code: "create_qr_code",
 };
 const ARG_ALIASES = {
   search_web: { query: ["q", "search", "keywords", "text", "search_query"] },
@@ -573,6 +592,14 @@ const ARG_ALIASES = {
   create_document: { format: ["type", "file_type", "kind"], slides: ["pages"], sections: ["content", "body", "chapters"] },
   create_file: { filename: ["file_name", "name", "path", "file", "filepath"], content: ["code", "text", "contents", "body", "source", "data"] },
   run_code: { language: ["lang", "runtime"], code: ["content", "source", "script", "program"] },
+  calculate: { expression: ["expr", "query", "input", "math", "equation", "formula", "calculation"] },
+  convert_units: { value: ["amount", "quantity", "number"], from: ["from_unit", "source_unit", "unit"], to: ["to_unit", "target_unit"] },
+  convert_currency: { amount: ["value", "quantity"], from: ["from_currency", "source", "base"], to: ["to_currency", "target"] },
+  get_time: { location: ["city", "place", "timezone", "country", "where"] },
+  wikipedia: { topic: ["query", "title", "subject", "search", "term"] },
+  define_word: { word: ["term", "query", "text"] },
+  translate: { text: ["q", "query", "input", "sentence"], to: ["target", "target_language", "language", "to_language", "lang"], from: ["source", "source_language", "from_language"] },
+  create_qr_code: { text: ["data", "url", "content", "link", "value"] },
 };
 const stripFences = (text) => {
   const m = typeof text === "string" && text.trim().match(/^```[\w+#.-]*\n([\s\S]*?)\n?```$/);
@@ -706,6 +733,20 @@ export async function warmUpLocal(file) {
   });
 }
 
+// Small models sometimes repeat themselves forever. True when the last 120
+// characters already appeared 6+ times in the last 3000 (a loop up to ~500
+// characters long); normal answers practically never do that.
+export function isLooping(text) {
+  if (text.length < 800) return false;
+  // Never inside code: files and programs legitimately repeat lines.
+  if (text.lastIndexOf("<tool_call>") > text.lastIndexOf("</tool_call>")) return false;
+  if ((text.match(/```/g) || []).length % 2) return false;
+  const tail = text.slice(-3000);
+  const unit = tail.slice(-120);
+  if (unit.replace(/[\s|\-=*#_.]/g, "").length < 40) return false; // table rules, spacing
+  return tail.split(unit).length - 1 >= 6;
+}
+
 const MAX_STEPS = 5;
 const TOOL_RESULT_CHARS = Number(process.env.MNX_TOOL_RESULT_CHARS) || (ON_ANDROID ? 1800 : 3500);
 
@@ -819,27 +860,46 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
         (t) => scanner.push(t),
       );
 
-      await generate(
+      // Stop this step early if the model starts repeating itself.
+      const step = new AbortController();
+      const relay = () => step.abort();
+      signal?.addEventListener("abort", relay);
+      let produced = "";
+      let checkedAt = 0;
+      let looped = false;
+      const finish = await generate(
         file,
         chat.slice(0, -1),
         chat[chat.length - 1].content,
         (chunk, kind) => {
-          if (isClosed()) return;
+          if (isClosed() || looped) return;
           if (kind === "progress") {
             if (chunk < 100) send({ t: "phase", phrases: [`Reading your message · ${chunk}%`] });
             return;
+          }
+          produced += chunk;
+          if (produced.length - checkedAt > 150) {
+            checkedAt = produced.length;
+            if (isLooping(produced)) {
+              looped = true;
+              step.abort();
+              return;
+            }
           }
           if (kind === "reasoning") {
             openThinking();
             send({ t: "thinking", it, i: index, text: chunk });
           } else splitter.push(chunk);
         },
-        signal,
+        step.signal,
       );
+      signal?.removeEventListener("abort", relay);
       splitter.end();
       scanner.end();
       if (isClosed()) return;
       closeOpen();
+      if (looped) send({ t: "notice", level: "warn", text: "Mnx started repeating itself, so it stopped there. Ask again or rephrase for a fresh answer." });
+      else if (finish === "length") send({ t: "notice", level: "warn", text: "The answer reached the length limit. Say “continue” for the rest." });
       if (answer.trim()) shown.push(answer.trim());
 
       if (!calls.length) break;

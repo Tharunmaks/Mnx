@@ -58,6 +58,9 @@ function reply(messages) {
   if (/unclosed/i.test(prompt)) return "<think>**Hmm**\nI never close this think tag";
   if (/slides/i.test(prompt))
     return call("create_document", { format: "pptx", title: "Test Deck", slides: [{ title: "One", bullets: ["a", "b"] }] });
+  if (/repeat yourself/i.test(prompt))
+    return `<think>**Answering**\nSimple.</think>\n${"The sky is blue because air scatters blue light more than other colors of sunlight. ".repeat(400)}`;
+  if (/cut off/i.test(prompt)) return `<think>**Answering**\nLong one.</think>\nHere is a very long answer that stops`;
   if (/slow/i.test(prompt)) return `<think>**Slow**\n${"thinking ".repeat(400)}</think>\nSlow answer`;
   return `<think>**Understanding the question**\nSimple greeting.</think>\nHello! I'm **Mnx**.`;
 }
@@ -95,6 +98,7 @@ http
       res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: c } }] })}\n\n`);
       await new Promise((r) => setTimeout(r, delay));
     }
+    if (/cut off/i.test(JSON.stringify(json.messages.at(-1)))) res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "length" }] })}\n\n`);
     res.write("data: [DONE]\n\n");
     res.end();
   })

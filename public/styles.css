@@ -877,3 +877,12 @@ a.place-name:hover { color: var(--accent-2); }
 /* Local model getting ready */
 .ready-note { margin: 4px auto 14px; max-width: 420px; padding: 9px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); color: var(--fg-2); font-size: 13.5px; text-align: center; }
 .ready-note.err { color: var(--err); border-color: rgba(248, 113, 113, .45); }
+
+/* Info cards (calculator, currency, time, Wikipedia, dictionary, translation) */
+.info-card .card-head { align-items: center; }
+.info-title { font-size: 22px; font-weight: 700; line-height: 1.25; word-break: break-word; }
+.info-img { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; margin-left: auto; flex: none; }
+.info-body { margin: 0 16px 12px; color: var(--fg-2); font-size: 14px; line-height: 1.55; }
+.info-rows { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 16px 14px; font-size: 13.5px; }
+.info-rows dt { color: var(--fg-3, var(--fg-2)); font-style: italic; }
+.info-rows dd { margin: 0; word-break: break-word; }

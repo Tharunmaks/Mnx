@@ -85,12 +85,20 @@ Your model can use tools on the phone. It writes a `<tool_call>` in Qwen2.5's na
 | `create_file` | Code and text files |
 | `get_weather`, `find_places`, `get_directions`, `get_user_location` | Weather, places and routes |
 | `run_code` | Runs Python or JavaScript on your phone, **only after you tap Run**. Shows the output, errors and any charts the code saves |
+| `calculate` | Exact math: percentages, powers, roots, factorials, trig (degrees), logs. Works offline |
+| `convert_units` | Length, weight, temperature, volume, speed, area, data size, time, energy, pressure. Works offline |
+| `convert_currency` | Today's exchange rates (open.er-api.com, no key) |
+| `get_time` | The local time and date anywhere in the world |
+| `wikipedia` | A short, reliable summary of a person, place, thing or event |
+| `define_word` | Dictionary meanings, pronunciation, examples and synonyms (dictionaryapi.dev) |
+| `translate` | Translations into ~40 languages (MyMemory, no key) |
+| `create_qr_code` | QR codes for links, Wi-Fi details, contacts or any text |
 
 **Code runner safety.** Every program appears in an approval card, and nothing runs until you tap **Run**. **Don't run** (or no answer within 10 minutes) skips it. Programs run in a temporary folder with a 30-second limit, and they don't get Mnx's API keys. They can still reach your files and the internet, so read the code before you approve it. To turn the runner off, set `MNX_CODE_RUNNER=off`. Charts need `pip install matplotlib`. Mnx only accepts connections from the device it runs on. To use it from another device, set `HOST=0.0.0.0`, but only on a network you trust.
 
 **Answer quality.** The local model is told to start with the direct answer, use clear markdown (headings, lists, tables, code blocks), match the answer's length to the question, and cite its sources. It uses Qwen2.5's recommended sampling: temperature 0.7, top_p 0.8, top_k 20, repeat penalty 1.05. You can change these with `MNX_TEMPERATURE`, `MNX_TOP_P`, `MNX_TOP_K` and `MNX_REPEAT_PENALTY`.
 
-A 3B model sometimes misses a tool or formats a call badly. Mnx repairs common JSON mistakes (raw line breaks in code, trailing commas, code fences) and allows up to 5 tool steps per reply. The local model still can't see images or PDFs you attach.
+Online models (Opus, Sonnet, Fable) get the same everyday tools. A 3B model sometimes misses a tool or formats a call badly. Mnx repairs common JSON mistakes (raw line breaks in code, trailing commas, code fences) and allows up to 5 tool steps per reply. If the model starts repeating itself, Mnx stops it and says so; if an answer hits the length limit, Mnx tells you to say “continue”. The local model still can't see images or PDFs you attach.
 
 ## Training your model
 
@@ -99,6 +107,7 @@ A 3B model sometimes misses a tool or formats a call badly. Mnx repairs common J
 1. **Data.** `npm run train:data` writes `training/data/train.jsonl` with **100,000 distinct conversations** (~600 MB, under a minute) in exactly the format Mnx uses at runtime (`<think>`, `<tool_call>`, `<tool_response>`):
    - Web search (prices, sports, launches, events, software versions, news, films; reading pages; retrying after errors)
    - Weather, location, places and directions in about 150 cities
+   - Everyday tools: calculator, unit and currency conversion, world time, Wikipedia, dictionary, translation and QR codes (`training/content_tools.py`)
    - Images: combinations of subjects, settings, times of day and 25 styles
    - Slides, PDF and Word on 26 topics, including turning your notes into slides
    - **Code files: 772 checked programs.**
