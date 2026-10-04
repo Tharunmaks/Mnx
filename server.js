@@ -30,6 +30,7 @@ const allModels = () => (localAvailable() ? { ...MODELS, [LOCAL_ID]: localModelL
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
 const client = new Anthropic();
+const hasKey = () => !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
 
 // Browser bundles served from node_modules so the app works without a CDN.
 const VENDOR = {
@@ -211,6 +212,14 @@ async function handleChat(req, res) {
     return res.end(JSON.stringify({ error: "messages must end with a user turn" }));
   }
   if (body.model === LOCAL_ID) return handleLocal(req, res, body, messages);
+  // Online models need an API key. Without one, answer with the local model
+  // (or say why not) instead of failing inside the request loop.
+  if (!hasKey()) {
+    if (localAvailable()) return handleLocal(req, res, body, messages);
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" });
+    sse(res, { t: "error", text: "The online models need an ANTHROPIC_API_KEY, and no local model was found. Put your .gguf file in the models/ folder (or run npm run get-model) and restart Mnx." });
+    return res.end();
+  }
   const model = MODELS[body.model] ? body.model : "claude-opus-5-5";
   const effort = EFFORTS.has(body.effort) ? body.effort : "medium";
   const ctx = {
@@ -284,7 +293,8 @@ async function handleChat(req, res) {
       } catch (err) {
         // With eager input streaming, an unparseable tool input rejects the
         // stream. Re-issue the turn a couple of times; rethrow API errors.
-        if (err instanceof Anthropic.APIError || closed || it >= MAX_ITERATIONS - 1) throw err;
+        const garbled = err instanceof SyntaxError || /JSON|parse/i.test(String(err?.message));
+        if (!garbled || err instanceof Anthropic.APIError || closed || it >= MAX_ITERATIONS - 1) throw err;
         sse(res, { t: "notice", text: "Retrying a garbled tool call…" });
         continue;
       }
@@ -407,7 +417,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/approve") return handleApprove(req, res);
   if (req.method === "GET" && url.pathname === "/api/config") {
     res.writeHead(200, { "content-type": "application/json" });
-    return res.end(JSON.stringify({ models: allModels(), local: localAvailable() ? LOCAL_ID : null, hasKey: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) }));
+    return res.end(JSON.stringify({ models: allModels(), local: localAvailable() ? LOCAL_ID : null, hasKey: hasKey() }));
   }
   if (req.method !== "GET" && req.method !== "HEAD") {
     res.writeHead(405);

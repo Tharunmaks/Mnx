@@ -1572,6 +1572,7 @@
       if (!cfg.hasKey && cfg.local && settings.model !== cfg.local) {
         settings.model = cfg.local;
         saveSettings();
+        applySettings();
       }
       if (!cfg.hasKey && !cfg.local) toast("Heads up: the server has no ANTHROPIC_API_KEY set yet.", 6000);
     })
