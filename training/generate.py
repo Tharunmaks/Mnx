@@ -575,7 +575,10 @@ class Gen:
             steps.append(("Computing it", "This needs an exact calculation, so I'll run a short Python program.", "run_code", {"language": "python", "code": code},
                           {"ran": True, "exit_code": 0, "timed_out": False, "stdout": stdout, "stderr": "", "images_shown_to_user": []}))
         first = self._key_line(stdout)
-        answer = f"{self._lead(first)}\n\n```text\n{stdout.strip()}\n```"
+        lines = [l for l in stdout.strip().splitlines() if l.strip()]
+        # Several short "label: value" results (GCD and LCM…) are all stated up front.
+        lead = ", ".join(self._lead(l) for l in lines) if 1 < len(lines) <= 4 and all(":" in l and len(l) < 60 for l in lines) else self._lead(first)
+        answer = f"{lead}\n\n```text\n{stdout.strip()}\n```"
         key = re.escape(re.sub(r"^[^:]*:\s*|^.* is ", "", first)[:40])
         return self.conv("run_code", user, steps, ("Reading the output", "The program ran successfully. I'll state the result first."), answer,
                          {"tool": "run_code", "args_eq": {"language": "python"}, "answer": [key]})
