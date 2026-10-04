@@ -96,3 +96,31 @@ test("recovers when llama-server is killed between messages (e.g. Android freein
   assert.equal(events.filter((e) => e.t === "error").length, 0, JSON.stringify(events.find((e) => e.t === "error")));
   assert.ok(events.some((e) => e.t === "done"));
 });
+
+test("long chats are trimmed to fit the model's context instead of failing", async () => {
+  const port = 34800 + Math.floor(Math.random() * 100);
+  process.env.MNX_LLAMA_PORT = String(port);
+  process.env.MNX_CTX = "4096"; // a phone-sized context
+  process.env.FAKE_LLAMA_CHARS_PER_TOKEN = "2.5"; // denser than Mnx's estimate, so the server rejects the first try
+  process.env.FAKE_LLAMA_LOG = path.join(tmp, "ctx.log");
+  try {
+    const mod = await import(`../local.js?ctx=${port}`);
+    const messages = [];
+    for (let i = 0; i < 30; i++) messages.push({ role: "user", content: `question ${i} ${"words ".repeat(120)}` }, { role: "assistant", content: [{ type: "text", text: `answer ${i} ${"more ".repeat(120)}` }] });
+    messages.push({ role: "user", content: "hello" });
+    const events = [];
+    await mod.handleLocalChat({ body: {}, messages, file: modelA, send: (e) => events.push(e), isClosed: () => false, requestApproval: async () => false });
+    assert.equal(events.filter((e) => e.t === "error").length, 0, JSON.stringify(events.find((e) => e.t === "error")));
+    assert.ok(events.some((e) => e.t === "done"));
+    const sent = fs.readFileSync(process.env.FAKE_LLAMA_LOG, "utf8").trim().split("\n").map((l) => JSON.parse(l)).at(-1).messages;
+    assert.equal(sent[0].role, "system", "the system prompt is kept");
+    assert.equal(sent[1].role, "user", "trimming starts at a user turn");
+    assert.equal(sent.at(-1).content, "hello", "the newest message is kept");
+    assert.ok(sent.some((m) => /question 29/.test(m.content)), "recent turns are kept");
+    assert.ok(!sent.some((m) => /question 0 /.test(m.content)), "the oldest turns are dropped");
+  } finally {
+    delete process.env.MNX_CTX;
+    delete process.env.FAKE_LLAMA_CHARS_PER_TOKEN;
+    delete process.env.FAKE_LLAMA_LOG;
+  }
+});

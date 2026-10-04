@@ -76,6 +76,16 @@ http
     for await (const c of req) body += c;
     const json = JSON.parse(body);
     if (process.env.FAKE_LLAMA_LOG) fs.appendFileSync(process.env.FAKE_LLAMA_LOG, JSON.stringify(json) + "\n");
+    // FAKE_LLAMA_CHARS_PER_TOKEN: reject prompts longer than -c, like the real server.
+    const cpt = Number(process.env.FAKE_LLAMA_CHARS_PER_TOKEN);
+    if (cpt) {
+      const nCtx = Number(args[args.indexOf("-c") + 1]) || 8192;
+      const tokens = Math.ceil(json.messages.reduce((n, m) => n + String(m.content).length, 0) / cpt);
+      if (tokens > nCtx) {
+        res.writeHead(400, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ error: { code: 400, message: `request (${tokens} tokens) exceeds the available context size (${nCtx} tokens), try increasing it`, type: "exceed_context_size_error", n_prompt_tokens: tokens, n_ctx: nCtx } }));
+      }
+    }
     res.writeHead(200, { "content-type": "text/event-stream" });
     let closed = false;
     res.on("close", () => (closed = true));

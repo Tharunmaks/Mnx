@@ -207,20 +207,57 @@ async function generateViaServer(file, history, prompt, onChunk, signal) {
   }
 }
 
+// Long chats outgrow the model's context window (8192 tokens by default,
+// less on phones with MNX_CTX=2048). Drop the oldest turns, keeping the
+// system prompt and whole exchanges, so the newest message always fits.
+const REPLY_ROOM = 1536;
+export function fitHistory(history, prompt, ctx, tokensPerChar = 1 / 3) {
+  const cost = (m) => Math.ceil(String(m.content).length * tokensPerChar) + 8;
+  const budget = ctx - REPLY_ROOM;
+  const total = (h) => h.reduce((n, m) => n + cost(m), cost({ content: prompt }));
+  if (total(history) <= budget) return history;
+  // Trim well below the limit so it happens rarely (each trim costs the prompt cache).
+  const [system, ...rest] = history;
+  const isTurnStart = (m) => m.role === "user" && !String(m.content).startsWith("<tool_response>");
+  const trimTo = (limit) => {
+    const kept = [...rest];
+    while (kept.length && (total([system, ...kept]) > limit || !isTurnStart(kept[0]))) kept.shift();
+    return kept;
+  };
+  const roomy = trimTo(budget * 0.7);
+  return [system, ...(roomy.length ? roomy : trimTo(budget))];
+}
+
+let serverCtx = Number(process.env.MNX_CTX) || 8192;
 async function generateViaServerOnce(file, history, prompt, onChunk, signal) {
   const url = await ensureLlamaServer(file);
-  const res = await fetch(`${url}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    signal,
-    body: JSON.stringify({
-      messages: [...history, { role: "user", content: prompt }],
-      stream: true,
-      cache_prompt: true,
-      max_tokens: 4096,
-      ...SAMPLING,
-    }),
-  });
+  let res;
+  let perChar = 1 / 3;
+  for (let attempt = 0; ; attempt++) {
+    const messages = [...fitHistory(history, prompt, serverCtx, perChar), { role: "user", content: prompt }];
+    res = await fetch(`${url}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal,
+      body: JSON.stringify({ messages, stream: true, cache_prompt: true, max_tokens: 4096, ...SAMPLING }),
+    });
+    if (res.ok || res.status !== 400 || attempt >= 3) break;
+    const text = await res.text();
+    const info = (() => {
+      try {
+        return JSON.parse(text).error;
+      } catch {
+        return null;
+      }
+    })();
+    if (!/exceed|context/i.test(`${info?.type} ${info?.message}`)) throw new Error(`llama-server returned HTTP 400: ${text.slice(0, 300)}`);
+    // Learn the real context size and token density, then trim harder.
+    if (info.n_ctx) serverCtx = info.n_ctx;
+    const chars = messages.reduce((n, m) => n + String(m.content).length, 0);
+    if (info.n_prompt_tokens && chars) perChar = Math.max(perChar * 1.25, (info.n_prompt_tokens / chars) * 1.1);
+    else perChar *= 1.5;
+    if (messages.length <= 2) throw new Error("Your message is too long for the local model's memory. Try a shorter message, or start Mnx with a larger MNX_CTX.");
+  }
   if (!res.ok || !res.body) throw new Error(`llama-server returned HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const dec = new TextDecoder();
   let buf = "";
@@ -610,7 +647,7 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
     });
     return;
   }
-  const ctx = { location: body.location && Number.isFinite(body.location.latitude) ? body.location : null };
+  const ctx = { location: body.location && Number.isFinite(body.location.latitude) ? body.location : null, messages };
 
   // Convert the shared (Claude-format) history into plain chat turns.
   const chat = [{ role: "system", content: systemPrompt(String(body.userName || "").slice(0, 60)) }];

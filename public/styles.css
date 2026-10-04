@@ -628,6 +628,8 @@ a { color: var(--accent-2); }
 .msg-actions { display: flex; gap: 2px; opacity: 0; transition: opacity .2s; }
 .msg.assistant:hover .msg-actions { opacity: 1; }
 .msg.live .msg-actions { display: none; }
+/* Touch screens have no hover: keep the copy button visible. */
+@media (hover: none) { .msg-actions { opacity: 1; } }
 .msg-actions .icon-btn { width: 30px; height: 30px; }
 .msg-actions .icon-btn svg { width: 16px; height: 16px; }
 
@@ -779,10 +781,10 @@ a.place-name:hover { color: var(--accent-2); }
 .file-ic.code { background: linear-gradient(135deg, #10b981, #3b82f6); }
 .approval { border-color: rgba(251, 191, 36, .45); box-shadow: 0 0 0 4px rgba(251, 191, 36, .07); }
 .approval .file-code { max-height: 300px; }
-.approval-state { padding: 0 16px 14px; font-size: 13px; font-weight: 600; color: var(--fg-2); }
+.approval-state { padding: 10px 16px 14px; font-size: 13px; font-weight: 600; color: var(--fg-2); }
 .approval-state:empty { display: none; }
 .approval:not([data-state="pending"]) .approval-actions { display: none; }
-.approval:not([data-state="pending"]) .file-code { max-height: 120px; opacity: .65; }
+.approval:not([data-state="pending"]) .file-code { max-height: 120px; overflow: hidden; opacity: .65; -webkit-mask-image: linear-gradient(#000 55%, transparent); mask-image: linear-gradient(#000 55%, transparent); }
 .approval[data-state="approved"] { border-color: rgba(74, 222, 128, .45); box-shadow: none; }
 .approval[data-state="approved"] .approval-state { color: var(--ok); }
 .approval[data-state="declined"], .approval[data-state="expired"] { border-color: var(--line); box-shadow: none; }
@@ -814,7 +816,7 @@ a.place-name:hover { color: var(--accent-2); }
 .code-run .file-code { margin: 0 16px 12px; border: 1px solid var(--line); border-radius: 12px; }
 
 /* Location card */
-.loc-card { display: flex; align-items: center; gap: 10px; padding: 10px 14px; font-size: 13.5px; }
+.loc-card { display: flex; align-items: center; gap: 14px; padding: 12px 18px; font-size: 13.5px; }
 .loc-pulse { width: 12px; height: 12px; border-radius: 50%; background: var(--accent-2); position: relative; flex: none; }
 .loc-pulse::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--accent-2); animation: ping 1.6s ease-out infinite; }
 @keyframes ping { to { transform: scale(3); opacity: 0; } }

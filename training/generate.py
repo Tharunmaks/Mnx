@@ -34,8 +34,25 @@ import content_more as M  # noqa: E402
 import content_more2 as M2  # noqa: E402
 import content_qa as Q  # noqa: E402
 
+
+def art(w):
+    """'a pub', 'an airline', 'an 18%', 'a user', 'an hour'."""
+    s = str(w).lower()
+    an = (s[:1] in "aeiou" and not s.startswith(("uni", "use", "usu", "eu", "one"))) or s.startswith(("hour", "honest", "8", "11", "18"))
+    return f"{'an' if an else 'a'} {w}"
+
+
+def Art(w):
+    a = art(w)
+    return a[0].upper() + a[1:]
+
+
 PROMPT = json.load(open(os.path.join(HERE, "system_prompt.json"), encoding="utf-8"))
 TOOLS = set(PROMPT["tools"])
+
+
+def nth(n):
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
 
 class Gen:
@@ -303,10 +320,12 @@ class Gen:
                 p["opening_hours"] = self.pick(["Mo-Su 08:00-22:00", "Mo-Sa 09:00-21:00", "24/7", "Mo-Fr 07:00-19:00"])
             places.append(p)
         result = {"query": query, "near": f"{city}, {country}" if near_me else near, "count": count, "places": places}
-        lines = [f"Here are the closest {what} I found{' near you' if near_me else ' in ' + city}:\n"]
+        where = ' near you' if near_me else ' in ' + city
+        singular = what.startswith(("a ", "an "))
+        lines = [f"Here are the closest options for {what}{where}:\n" if singular else f"Here are the closest {what} I found{where}:\n"]
         for p in places:
-            extra = f" · open {p['opening_hours']}" if p.get("opening_hours") else ""
-            lines.append(f"1. **{p['name']}**, {p['distance_km']} km away{extra}\n   {p['address']} · [Open in Maps]({p['maps_url']})")
+            extra = f", open {p['opening_hours']}" if p.get("opening_hours") else ""
+            lines.append(f"1. **{p['name']}** ({p['distance_km']} km away{extra}): {p['address']} · [Open in Maps]({p['maps_url']})")
         lines.append("\nWant directions to one of them?")
         expect = {"tool": "find_places", "args": {"near": "my location|me|here|current" if near_me else re.escape(city)}, "answer": [re.escape(places[0]["name"])]}
         return self.conv("places", user, [("Finding places", f"The user wants {what}{' near them' if near_me else ' in ' + city}. I'll use find_places.", "find_places", {"query": query, "near": near}, result)],
@@ -356,7 +375,7 @@ class Gen:
             elif wall < 0.35:
                 user, aspect = self.pick([f"Make a desktop wallpaper of {subj}", f"Create a wide banner image of {subj}"]), "landscape"
             else:
-                user = self.pick([f"Draw {subj}", f"Generate an image of {subj}", f"Create a picture of {subj} in {style} style", f"Can you make an image of {subj}?", f"Paint {subj} as a {style}"])
+                user = self.pick([f"Draw {subj}", f"Generate an image of {subj}", f"Create a picture of {subj} in {style} style", f"Can you make an image of {subj}?", f"Paint {subj} as {art(style)}"])
                 aspect = "square"
             prompt = f"{subj}, {desc}"
             key = subj.split()[-1]
@@ -386,8 +405,8 @@ class Gen:
         fmt = fmt or self.pick(["pptx", "pptx", "pdf", "docx"])
         n = n or self.r.randint(3, len(sections))
         word = {"pptx": self.pick(["presentation", "slide deck", "PPT", "slides"]), "pdf": self.pick(["PDF", "PDF report", "PDF document"]), "docx": self.pick(["Word document", "docx", "Word file"])}[fmt]
-        user = user or self.pick([f"Make a {word} on {title.lower()}", f"Create a {n}-{'slide' if fmt == 'pptx' else 'section'} {word} about {title.lower()}", f"I need a {word} explaining {title.lower()}",
-                                  f"Can you prepare a {word} on {title.lower()} for my class?", f"{word} about {title.lower()} please"])
+        user = user or self.pick([f"Make {art(word)} on {title.lower()}", f"Create {art(n)}-{'slide' if fmt == 'pptx' else 'section'} {word} about {title.lower()}", f"I need {art(word)} explaining {title.lower()}",
+                                  f"Can you prepare {art(word)} on {title.lower()} for my class?", f"{word} about {title.lower()} please"])
         if fmt == "pptx":
             args = {"format": "pptx", "title": title, "subtitle": self.pick(["An overview", "Key ideas explained", "A quick guide"]), "slides": [{"title": t, "bullets": b} for t, b in sections[:n]]}
             unit = "slides"
@@ -398,7 +417,7 @@ class Gen:
         result = {"delivered": True, "filename": fname, "format": fmt, "pages_or_slides": n}
         answer = f"I've created **{fname}** with {n} {unit}" + (" plus a title slide" if fmt == "pptx" else "") + ":\n\n" + "\n".join(f"{i + 1}. {t}" for i, (t, _) in enumerate(sections[:n])) + "\n\nYou can preview it above and tap **Download**. Want me to add or change anything?"
         expect = {"tool": "create_document", "args_eq": {"format": fmt}, "min_items": 3, "answer": [re.escape(fmt)]}
-        return self.conv(category, user, [("Planning the document", f"The user wants a {fmt} about {title.lower()}. I'll outline {n} {unit} and call create_document.", "create_document", args, result)],
+        return self.conv(category, user, [("Planning the document", f"The user wants {art(fmt)} about {title.lower()}. I'll outline {n} {unit} and call create_document.", "create_document", args, result)],
                          ("Document ready", "The file was delivered; I'll summarize what's inside."), answer, expect, history=history)
 
     def algo_task(self, algo, lang):
@@ -460,8 +479,8 @@ class Gen:
             code = f"p = {p}\nr = {rate} / 12 / 100\nn = {months}\nemi = p * r * (1 + r) ** n / ((1 + r) ** n - 1)\nprint(f\"EMI: {{emi:,.2f}} per month\")\nprint(f\"Total paid: {{emi * n:,.2f}}\")"
         elif k == 6:
             n = self.r.randint(15, 40)
-            user = self.pick([f"Show the first {n} Fibonacci numbers", f"What's the {n}th Fibonacci number?"])
-            code = f"a, b = 0, 1\nseq = []\nfor _ in range({n}):\n    seq.append(a)\n    a, b = b, a + b\nprint(seq)\nprint(f\"The {n}th number is {{seq[-1]}}\")"
+            user = self.pick([f"Show the first {n} Fibonacci numbers", f"What's the {nth(n)} Fibonacci number?"])
+            code = f"a, b = 0, 1\nseq = []\nfor _ in range({n}):\n    seq.append(a)\n    a, b = b, a + b\nprint(seq)\nprint(f\"The {nth(n)} number is {{seq[-1]}}\")"
         else:
             x, y = self.r.randint(2, 99), self.r.randint(10, 64)
             user = self.pick([f"What is {x} to the power of {y}?", f"Calculate {x}^{y} exactly"])
@@ -541,7 +560,7 @@ class Gen:
         variant = self.r.random()
         if variant < 0.15:
             result = {"ran": False, "reason": "The user chose not to run this code."}
-            answer = f"No problem, I didn't run it. Here's what it would print:\n\n```\n{stdout.strip()}\n```\n\nYou can also run the code yourself any time."
+            answer = f"No problem, I didn't run it. Here's what it would print:\n\n```text\n{stdout.strip()}\n```\n\nYou can also run the code yourself any time."
             return self.conv("run_code_declined", user, [("Computing it", "This needs an exact calculation, so I'll run a short Python program.", "run_code", {"language": "python", "code": code}, result)],
                              ("Not run", "The user chose not to run it. I can still give the result."), answer,
                              {"tool": "run_code", "args_eq": {"language": "python"}, "decline": True, "answer": ["didn't run|did not run|not run|won't run"]})
@@ -555,17 +574,30 @@ class Gen:
         else:
             steps.append(("Computing it", "This needs an exact calculation, so I'll run a short Python program.", "run_code", {"language": "python", "code": code},
                           {"ran": True, "exit_code": 0, "timed_out": False, "stdout": stdout, "stderr": "", "images_shown_to_user": []}))
-        first = stdout.strip().splitlines()[0]
-        answer = f"{self._lead(first)}\n\n```\n{stdout.strip()}\n```"
-        key = re.escape(re.sub(r"^[^:]*:\s*", "", first)[:40])
+        first = self._key_line(stdout)
+        answer = f"{self._lead(first)}\n\n```text\n{stdout.strip()}\n```"
+        key = re.escape(re.sub(r"^[^:]*:\s*|^.* is ", "", first)[:40])
         return self.conv("run_code", user, steps, ("Reading the output", "The program ran successfully. I'll state the result first."), answer,
                          {"tool": "run_code", "args_eq": {"language": "python"}, "answer": [key]})
+
+    @staticmethod
+    def _key_line(stdout):
+        # The line that states the result: usually a "label: value" or "… is …"
+        # line (often the last), not a raw list printed before it.
+        lines = [l for l in stdout.strip().splitlines() if l.strip()]
+        for l in reversed(lines):
+            if ":" in l or " is " in l:
+                return l
+        return lines[0]
 
     @staticmethod
     def _lead(first):
         if ":" in first:
             label, value = first.split(":", 1)
             return f"**{label.strip()}: {value.strip()}**"
+        if " is " in first:
+            label, value = first.rsplit(" is ", 1)
+            return f"{label.strip()} is **{value.strip().rstrip('.')}**."
         return f"The answer is **{first.strip()}**."
 
     CHART_FUNCS = [("x ** 2", "y = x²"), ("2 ** x", "y = 2^x"), ("x ** 3 - 3 * x", "y = x³ − 3x"), ("10 * x + 5", "y = 10x + 5"),
@@ -586,7 +618,7 @@ class Gen:
                 labels = sorted(labels, key=["Jan", "Feb", "Mar", "Apr", "May", "Jun"].index)
             vals = [self.r.randint(5, 95) * 100 for _ in labels]
             data = ", ".join(f"{l} {v}" for l, v in zip(labels, vals))
-            user = self.pick([f"Make a {kind} chart of: {data}", f"{kind} chart for my expenses: {data}", f"Visualize this as a {kind} chart: {data}"])
+            user = self.pick([f"Make {art(kind)} chart of: {data}", f"{kind} chart for my expenses: {data}", f"Visualize this as {art(kind)} chart: {data}"])
             draw = {"bar": "plt.bar(labels, values)", "pie": "plt.pie(values, labels=labels, autopct=\"%1.0f%%\")", "line": "plt.plot(labels, values, marker=\"o\")"}[kind]
             code = f"import matplotlib.pyplot as plt\nlabels = {labels}\nvalues = {vals}\n{draw}\nplt.title(\"{kind.title()} chart\")\nplt.tight_layout()\nplt.savefig(\"chart.png\")\nprint(f\"Saved chart.png, total = {{sum(values)}}\")"
             answer = f"Here's your {kind} chart. It's shown above. The total is **{sum(vals):,}**, and the biggest item is **{labels[vals.index(max(vals))]}** ({max(vals):,})."
@@ -832,7 +864,7 @@ class Gen:
         elif k == 5:
             bill, tip = self.r.choice([200, 450, 800, 1250, 2000, 3600]), self.r.choice([5, 10, 15, 18, 20])
             t = bill * tip / 100
-            q, a, key = self.pick([f"What's a {tip}% tip on {bill}?", f"{tip} percent tip on {bill}"]), f"A {tip}% tip on {bill} is **{t:g}**, making the total **{bill + t:g}**.", f"{t:g}"
+            q, a, key = self.pick([f"What's {art(tip)}% tip on {bill}?", f"{tip} percent tip on {bill}"]), f"{Art(tip)}% tip on {bill} is **{t:g}**, making the total **{bill + t:g}**.", f"{t:g}"
         elif k == 6:
             month, year = self.r.randrange(1, 13), self.r.randint(1990, 2035)
             days = (dt.date(year + (month == 12), month % 12 + 1, 1) - dt.timedelta(days=1)).day

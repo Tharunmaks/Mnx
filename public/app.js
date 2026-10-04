@@ -489,7 +489,7 @@
 
   function cardDocument(d) {
     const c = el("div", "card");
-    const count = d.format === "pptx" ? `${d.slides.length + 1} slides` : `${d.sections.length} sections`;
+    const count = d.format === "pptx" ? `${d.slides.length} slides + title` : `${d.sections.length} sections`;
     c.innerHTML = `
       <div class="card-head"><div class="file-ic ${esc(d.format)}">${esc(d.format)}</div>
         <div style="min-width:0"><div class="card-title">${esc(d.title)}</div><div class="card-sub">${esc(d.filename)} · ${count}</div></div></div>`;

@@ -8,6 +8,14 @@ import itertools
 import json
 import re
 
+
+def art(w):
+    """'a pub', 'an airline', 'an 18%', 'a user', 'an hour'."""
+    s = str(w).lower()
+    an = (s[:1] in "aeiou" and not s.startswith(("uni", "use", "usu", "eu", "one"))) or s.startswith(("hour", "honest", "8", "11", "18"))
+    return f"{'an' if an else 'a'} {w}"
+
+
 # ───────── unit converters (Python) ─────────
 CONVERSIONS = [
     ("kilometres", "miles", "km", "mi", 0.621371, 0), ("miles", "kilometres", "mi", "km", 1.609344, 0),
@@ -27,7 +35,7 @@ def converter(c):
     code = (f"import sys\n\n\ndef convert(value):\n    \"\"\"Convert {a} to {b}.\"\"\"\n    return value * {factor!r} + {offset!r}\n\n\n"
             f"if __name__ == \"__main__\":\n    value = float(sys.argv[1]) if len(sys.argv) > 1 else float(input(\"{a.capitalize()}: \"))\n"
             f"    print(f\"{{value:g}} {ua} = {{convert(value):.2f}} {ub}\")\n")
-    return {"asks": [f"Write a Python script to convert {a} to {b}", f"{a} to {b} converter in python", f"Make a {ua} to {ub} converter",
+    return {"asks": [f"Write a Python script to convert {a} to {b}", f"{a} to {b} converter in python", f"Make {art(ua)} to {ub} converter",
                      f"python program that converts {a} into {b}"],
             "filename": f"{slug}.py", "desc": f"converts {a} to {b}", "content": code,
             "explain": f"Run `python {slug}.py 10` to convert 10 {a}, or run it without a number and type one in.", "check_args": ["10"]}
@@ -93,9 +101,9 @@ def model_task(entity, fields, lang):
         fn, how = f"{entity}.java", f"Compile and run with `javac {entity}.java && java {entity}`."
     names = {"python": "Python", "typescript": "TypeScript", "java": "Java"}[lang]
     field_list = ", ".join(f.replace("_", " ") for f, _, _ in fields)
-    return {"asks": [f"Create a {entity} class in {names} with {field_list}", f"{names} model for a {entity.lower()}", f"Write a {entity} {('dataclass' if lang == 'python' else 'class')} in {names}",
-                     f"I need a {names} class to store {entity.lower()} details"],
-            "filename": fn, "desc": f"a {entity} {('dataclass' if lang == 'python' else 'class')} with {field_list}", "content": code, "explain": how, "lang": lang}
+    return {"asks": [f"Create {art(entity)} class in {names} with {field_list}", f"{names} model for {art(entity.lower())}", f"Write {art(entity)} {('dataclass' if lang == 'python' else 'class')} in {names}",
+                     f"I need {art(names)} class to store {entity.lower()} details"],
+            "filename": fn, "desc": f"{art(entity)} {('dataclass' if lang == 'python' else 'class')} with {field_list}", "content": code, "explain": how, "lang": lang}
 
 
 # ───────── SQL schemas (checked in SQLite) ─────────
@@ -116,9 +124,9 @@ def sql_task(domain, tables):
             f"INSERT INTO {b} (name, email) VALUES ('Asha', 'asha@example.com'), ('Ben', 'ben@example.com');\n"
             f"INSERT INTO {link} ({a[:-1]}_id, {b[:-1]}_id, date) VALUES (1, 1, '2025-01-10'), (2, 1, '2025-01-12'), (1, 2, '2025-01-15');\n\n"
             f"-- How many {link} each {b[:-1]} has\nSELECT {b}.name, COUNT({link}.id) AS total\nFROM {b}\nLEFT JOIN {link} ON {link}.{b[:-1]}_id = {b}.id\nGROUP BY {b}.id\nORDER BY total DESC;\n")
-    return {"asks": [f"Design a SQL database for a {domain}", f"sql schema for a {domain} management system", f"Create tables for a {domain} app in SQL",
-                     f"Write SQL to create a {domain} database with sample data"],
-            "filename": f"{domain}.sql", "desc": f"a {domain} database with {a}, {b} and {link} tables, sample data and a summary query",
+    return {"asks": [f"Design a SQL database for {art(domain)}", f"sql schema for {art(domain)} management system", f"Create tables for {art(domain)} app in SQL",
+                     f"Write SQL to create {art(domain)} database with sample data"],
+            "filename": f"{domain}.sql", "desc": f"{art(domain)} database with {a}, {b} and {link} tables, sample data and a summary query",
             "content": code, "explain": f"Try it with `sqlite3 {domain}.db < {domain}.sql`. The last query counts {link} per {b[:-1]}."}
 
 
@@ -151,8 +159,8 @@ def page_task(kind, biz, theme):
             f".btn{{display:inline-block;margin-top:16px;padding:12px 26px;border-radius:999px;background:#fff;color:{color};font-weight:700;text-decoration:none}}\n"
             f".grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;max-width:960px;margin:40px auto;padding:0 20px}}\n"
             f".card{{background:#fff;padding:20px;border-radius:14px;box-shadow:0 4px 18px rgba(0,0,0,.06)}}\n</style>\n</head>\n<body>\n{body}{script}\n</body>\n</html>\n")
-    return {"asks": [f"Make a {kind} for {biz}", f"Create a {theme} themed {kind} for {biz}", f"html {kind} for {biz}", f"Build a simple {kind} website for {biz} in {theme} colors"],
-            "filename": f"{slug}.html", "desc": f"a {theme}-themed {kind} for {biz}", "content": code,
+    return {"asks": [f"Make {art(kind)} for {biz}", f"Create {art(theme)} themed {kind} for {biz}", f"html {kind} for {biz}", f"Build a simple {kind} website for {biz} in {theme} colors"],
+            "filename": f"{slug}.html", "desc": f"{art(theme)}-themed {kind} for {biz}", "content": code,
             "explain": "Open it in a browser. It works on phones too. Edit the text and the colors at the top of the `<style>` section."}
 
 
