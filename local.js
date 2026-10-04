@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { TOOLS, LOCAL_ONLY_TOOLS, runTool } from "./tools.js";
 
 export const LOCAL_ID = "local";
 const ON_ANDROID = process.platform === "android" || !!process.env.TERMUX_VERSION;
@@ -106,7 +107,7 @@ async function ensureLlamaServer(file) {
     const bin = process.env.MNX_LLAMA_SERVER_BIN || findOnPath("llama-server");
     if (!bin) throw new Error("llama-server wasn't found. On Termux run: pkg install llama-cpp");
     const port = Number(process.env.MNX_LLAMA_PORT) || 8089;
-    const args = ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || 4096)];
+    const args = ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || 8192)];
     if (process.env.MNX_THREADS) args.push("-t", process.env.MNX_THREADS);
     console.log(`[local] starting ${bin} ${args.join(" ")}`);
     const child = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
@@ -224,14 +225,40 @@ const blocksText = (content) =>
         .filter(Boolean)
         .join("\n\n");
 
+// Tools the local model can call. Kept compact: on a phone, every token of
+// the system prompt costs prompt-processing time.
+const LOCAL_TOOL_NAMES = ["search_web", "read_webpage", "get_weather", "get_user_location", "find_places", "get_directions", "create_image", "create_document", "create_file"];
+const toolSpecs = () => {
+  const all = [...LOCAL_ONLY_TOOLS, ...TOOLS];
+  const strip = (schema) => JSON.parse(JSON.stringify(schema, (k, v) => (k === "additionalProperties" || k === "minimum" || k === "maximum" ? undefined : v)));
+  return LOCAL_TOOL_NAMES.map((n) => all.find((t) => t.name === n))
+    .filter(Boolean)
+    .map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: strip(t.input_schema) } }));
+};
+
 function systemPrompt(userName) {
   return `You are Mnx, a friendly and helpful AI assistant running locally on the user's own device. Today's date is ${new Date().toISOString().slice(0, 10)}.${
     userName ? ` The user's name is ${userName}.` : ""
   }
 Help with anything legal; politely decline only requests that would facilitate crimes or serious harm.
 
-Before every answer, think briefly inside <think></think> tags: start with a short bold title like **Understanding the question**, then 1-3 sentences about what the user needs and how you'll answer. After </think>, write the final answer in markdown.
-You can't browse the internet or check live data such as weather or news; if asked, say so and suggest switching to an online Mnx model.`;
+Before every reply, think briefly inside <think></think> tags: start with a short bold title like **Understanding the question**, then 1-3 sentences about what the user needs and whether a tool is needed. After </think>, either call a tool or write the final answer in markdown.
+
+Use tools when they help: search_web for current events, facts you're unsure of or anything recent (then read_webpage for details); get_weather for weather; find_places / get_directions for places and routes; create_image to draw or generate a picture; create_document for slides (pptx), PDF or Word files; create_file for code or text files. When you receive a <tool_response>, use it to answer. Never invent tool results, and don't paste file contents or image links that were already shown to the user.
+
+# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+${toolSpecs().map((t) => JSON.stringify(t)).join("\n")}
+</tools>
+
+For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+<tool_call>
+{"name": <function-name>, "arguments": <args-json-object>}
+</tool_call>`;
 }
 
 // Splits the stream into thinking / answer as it arrives.
@@ -295,6 +322,79 @@ function partialTagLength(s, tag) {
   return 0;
 }
 
+// Pulls <tool_call>…</tool_call> sections out of the answer stream.
+export class ToolCallScanner {
+  constructor({ onText, onCallStart, onCallChunk, onCallEnd }) {
+    Object.assign(this, { onText, onCallStart, onCallChunk, onCallEnd });
+    this.buf = "";
+    this.inCall = false;
+  }
+  push(chunk) {
+    this.buf += chunk;
+    for (;;) {
+      const tag = this.inCall ? "</tool_call>" : "<tool_call>";
+      const at = this.buf.indexOf(tag);
+      if (at >= 0) {
+        const before = this.buf.slice(0, at);
+        this.buf = this.buf.slice(at + tag.length);
+        if (this.inCall) {
+          if (before) this.onCallChunk(before);
+          this.onCallEnd();
+        } else {
+          if (before) this.onText(before);
+          this.onCallStart();
+        }
+        this.inCall = !this.inCall;
+        continue;
+      }
+      const keep = partialTagLength(this.buf, tag);
+      const out = this.buf.slice(0, this.buf.length - keep);
+      this.buf = this.buf.slice(this.buf.length - keep);
+      if (out) (this.inCall ? this.onCallChunk : this.onText)(out);
+      return;
+    }
+  }
+  end() {
+    if (this.inCall) {
+      if (this.buf) this.onCallChunk(this.buf);
+      this.onCallEnd();
+    } else if (this.buf) this.onText(this.buf);
+    this.buf = "";
+    this.inCall = false;
+  }
+}
+
+// Parse a tool call body like {"name": "x", "arguments": {...}}, tolerating
+// small-model slips (code fences, trailing commas, arguments as a string).
+export function parseToolCall(raw) {
+  let t = raw.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const first = t.indexOf("{");
+  const last = t.lastIndexOf("}");
+  if (first < 0 || last < first) return null;
+  t = t.slice(first, last + 1);
+  let obj;
+  for (const candidate of [t, t.replace(/,\s*([}\]])/g, "$1")]) {
+    try {
+      obj = JSON.parse(candidate);
+      break;
+    } catch {
+      /* try the next repair */
+    }
+  }
+  if (!obj || typeof obj.name !== "string") return null;
+  let args = obj.arguments ?? obj.parameters ?? {};
+  if (typeof args === "string") {
+    try {
+      args = JSON.parse(args);
+    } catch {
+      args = {};
+    }
+  }
+  return { name: obj.name, input: args && typeof args === "object" && !Array.isArray(args) ? args : {} };
+}
+
+const MAX_STEPS = 5;
+
 export async function handleLocalChat({ body, messages, file, send, isClosed, signal }) {
   if (!file || !fs.existsSync(file)) {
     send({
@@ -303,80 +403,153 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
     });
     return;
   }
+  const ctx = { location: body.location && Number.isFinite(body.location.latitude) ? body.location : null };
 
   // Convert the shared (Claude-format) history into plain chat turns.
-  const history = [{ role: "system", content: systemPrompt(String(body.userName || "").slice(0, 60)) }];
+  const chat = [{ role: "system", content: systemPrompt(String(body.userName || "").slice(0, 60)) }];
   for (const m of messages.slice(0, -1)) {
     const text = blocksText(m.content);
     if (!text) continue;
-    const prev = history[history.length - 1];
+    const prev = chat[chat.length - 1];
     const role = m.role === "user" ? "user" : "assistant";
     if (prev.role === role) prev.content += `\n\n${text}`;
-    else if (role === "user" || prev.role === "user") history.push({ role, content: text });
+    else if (role === "user" || prev.role === "user") chat.push({ role, content: text });
   }
   // Drop the oldest turns if the history is too long for the context.
-  while (history.length > 3 && JSON.stringify(history).length > 12000) history.splice(1, 2);
-  const prompt = blocksText(messages[messages.length - 1].content);
+  const budget = chat[0].content.length + 8000;
+  while (chat.length > 3 && JSON.stringify(chat).length > budget) chat.splice(1, 2);
+  chat.push({ role: "user", content: blocksText(messages[messages.length - 1].content) });
 
-  send({ t: "iteration", it: 0 });
   send({ t: "phase", phrases: ["Waking up your local model", "Loading Mnx into memory", "Warming up the neurons"] });
 
   await exclusive(async () => {
-    if (isClosed()) return;
-    let index = -1;
-    let thinkingOpen = false;
-    let textOpen = false;
-    let answer = "";
-    const openThinking = () => {
-      if (!thinkingOpen) {
+    const shown = []; // user-visible answer text across steps
+
+    for (let it = 0; it < MAX_STEPS && !isClosed(); it++) {
+      send({ t: "iteration", it });
+      let index = -1;
+      let thinkingOpen = false;
+      let textOpen = false;
+      let raw = ""; // what the model wrote, minus thinking (kept in its history)
+      let answer = "";
+      const calls = [];
+      let call = null;
+
+      const closeOpen = () => {
+        if (thinkingOpen || textOpen) send({ t: "block_stop", it, i: index });
+        thinkingOpen = textOpen = false;
+      };
+      const openThinking = () => {
+        if (thinkingOpen) return;
+        closeOpen();
         index++;
         thinkingOpen = true;
-        send({ t: "block_start", it: 0, i: index, block: { type: "thinking" } });
-      }
-    };
-    const splitter = new ThinkSplitter(
-      (t) => {
-        if (t === null) {
-          if (thinkingOpen) send({ t: "block_stop", it: 0, i: index });
-          thinkingOpen = false;
-          return;
-        }
-        openThinking();
-        if (t) send({ t: "thinking", it: 0, i: index, text: t });
-      },
-      (t) => {
-        t = t.replace(/<\/?think>/g, "");
-        if (!textOpen && !t.trim()) return;
-        if (!textOpen) {
-          if (thinkingOpen) send({ t: "block_stop", it: 0, i: index });
-          thinkingOpen = false;
-          index++;
-          textOpen = true;
-          send({ t: "block_start", it: 0, i: index, block: { type: "text" } });
-        }
-        answer += t;
-        send({ t: "text", it: 0, i: index, text: t });
-      },
-    );
-
-    await generate(
-      file,
-      history,
-      prompt,
-      (chunk, kind) => {
-        if (isClosed()) return;
-        if (kind === "reasoning") {
+        send({ t: "block_start", it, i: index, block: { type: "thinking" } });
+      };
+      const scanner = new ToolCallScanner({
+        onText: (t) => {
+          raw += t;
+          t = t.replace(/<\/?think>/g, "");
+          if (!textOpen && !t.trim()) return;
+          if (!textOpen) {
+            closeOpen();
+            index++;
+            textOpen = true;
+            send({ t: "block_start", it, i: index, block: { type: "text" } });
+          }
+          answer += t;
+          send({ t: "text", it, i: index, text: t });
+        },
+        onCallStart: () => {
+          closeOpen();
+          call = { json: "", id: `local_${it}_${calls.length}_${Date.now().toString(36)}`, index: null };
+        },
+        onCallChunk: (t) => {
+          call.json += t;
+          if (call.index === null) {
+            const name = call.json.match(/"name"\s*:\s*"([^"]+)"/)?.[1];
+            if (!name) return;
+            call.index = ++index;
+            send({ t: "block_start", it, i: call.index, block: { type: "tool_use", id: call.id, name, input: {} } });
+            send({ t: "input", it, i: call.index, json: call.json });
+          } else send({ t: "input", it, i: call.index, json: t });
+        },
+        onCallEnd: () => {
+          raw += `<tool_call>\n${call.json.trim()}\n</tool_call>`;
+          if (call.index !== null) send({ t: "block_stop", it, i: call.index });
+          calls.push(call);
+          call = null;
+        },
+      });
+      const splitter = new ThinkSplitter(
+        (t) => {
+          if (t === null) {
+            if (thinkingOpen) closeOpen();
+            return;
+          }
           openThinking();
-          send({ t: "thinking", it: 0, i: index, text: chunk });
-        } else splitter.push(chunk);
-      },
-      signal,
-    );
-    splitter.end();
+          if (t) send({ t: "thinking", it, i: index, text: t });
+        },
+        (t) => scanner.push(t),
+      );
+
+      await generate(
+        file,
+        chat.slice(0, -1),
+        chat[chat.length - 1].content,
+        (chunk, kind) => {
+          if (isClosed()) return;
+          if (kind === "reasoning") {
+            openThinking();
+            send({ t: "thinking", it, i: index, text: chunk });
+          } else splitter.push(chunk);
+        },
+        signal,
+      );
+      splitter.end();
+      scanner.end();
+      if (isClosed()) return;
+      closeOpen();
+      if (answer.trim()) shown.push(answer.trim());
+
+      if (!calls.length) break;
+      if (it === MAX_STEPS - 1) {
+        send({ t: "notice", level: "warn", text: "Mnx used the maximum number of tool steps for one reply." });
+        break;
+      }
+
+      // Run the requested tools on this device and hand the results back.
+      chat.push({ role: "assistant", content: raw.trim() });
+      const responses = [];
+      for (const c of calls) {
+        const parsed = parseToolCall(c.json);
+        if (!parsed) {
+          responses.push({ error: "Your tool call wasn't valid JSON. Use the exact <tool_call> format." });
+          continue;
+        }
+        const known = LOCAL_TOOL_NAMES.includes(parsed.name);
+        if (c.index === null) {
+          c.index = ++index;
+          send({ t: "block_start", it, i: c.index, block: { type: "tool_use", id: c.id, name: parsed.name, input: {} } });
+          send({ t: "block_stop", it, i: c.index });
+        }
+        send({ t: "tool_run", id: c.id, name: parsed.name, input: parsed.input });
+        const out = known ? await runTool(parsed.name, parsed.input, ctx) : { error: `Unknown tool "${parsed.name}". Available: ${LOCAL_TOOL_NAMES.join(", ")}` };
+        if (isClosed()) return;
+        send({ t: "tool_done", id: c.id, name: parsed.name, error: !!out.error, display: out.display });
+        let json = JSON.stringify(out.error ? { error: out.error } : out.result);
+        if (json.length > 3500) json = `${json.slice(0, 3500)}…(truncated)`;
+        responses.push(json);
+      }
+      chat.push({
+        role: "user",
+        content: responses.map((r) => `<tool_response>\n${typeof r === "string" ? r : JSON.stringify(r)}\n</tool_response>`).join("\n"),
+      });
+      send({ t: "phase", phrases: ["Reading the results", "Making sense of it all", "Writing your answer"] });
+    }
+
     if (isClosed()) return;
-    if (thinkingOpen) send({ t: "block_stop", it: 0, i: index });
-    if (textOpen) send({ t: "block_stop", it: 0, i: index });
-    send({ t: "assistant_turn", content: [{ type: "text", text: answer.trim() || "…" }], model: LOCAL_ID });
+    send({ t: "assistant_turn", content: [{ type: "text", text: shown.join("\n\n") || "…" }], model: LOCAL_ID });
     send({ t: "done" });
   });
 }

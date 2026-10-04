@@ -62,7 +62,19 @@ On Android, Mnx starts `llama-server` itself the first time you chat with the lo
 
 The online models still work from the phone if you set `ANTHROPIC_API_KEY`.
 
-What the local model can't do: it can't browse the web, use the weather, maps or file tools, or see images and PDFs. Switch to an online model for those. Chats can mix both.
+### Tools for your local model
+
+Your model can use tools on the phone. It writes a `<tool_call>` in Qwen2.5's native format, Mnx runs the tool, sends the result back as a `<tool_response>`, and the model writes the final answer. Every step shows up live in the chat:
+
+| Tool | What it does |
+|---|---|
+| `search_web` / `read_webpage` | Free web search (DuckDuckGo, with Wikipedia as a fallback) and reading pages |
+| `create_image` | Images from a text prompt through the free Pollinations service (no key) |
+| `create_document` | Slides (PPTX), PDF and Word files, built in your browser |
+| `create_file` | Code and text files |
+| `get_weather`, `find_places`, `get_directions`, `get_user_location` | Weather, places and routes |
+
+A 3B model sometimes misses a tool or formats a call badly. Mnx repairs small JSON mistakes and allows up to 5 tool steps per reply. The local model still can't see images or PDFs you attach.
 
 ## How it works
 

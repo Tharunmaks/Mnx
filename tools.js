@@ -118,6 +118,44 @@ export const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "create_image",
+    description:
+      "Create an image from a text description (illustrations, photos, logos, art, wallpapers). Write a detailed English prompt describing subject, style, lighting and composition.",
+    eager_input_streaming: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "Detailed description of the image" },
+        aspect: { type: "string", enum: ["square", "landscape", "portrait"] },
+      },
+      required: ["prompt"],
+      additionalProperties: false,
+    },
+  },
+];
+
+// Extra tools only the local model needs (online models use Anthropic's
+// built-in web search / fetch instead).
+export const LOCAL_ONLY_TOOLS = [
+  {
+    name: "search_web",
+    description: "Search the internet for current information, news, facts or anything you don't know.",
+    input_schema: {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "read_webpage",
+    description: "Read the text of a web page (for example a search result) to get details.",
+    input_schema: {
+      type: "object",
+      properties: { url: { type: "string" } },
+      required: ["url"],
+    },
+  },
 ];
 
 const WEATHER_CODES = {
@@ -419,7 +457,116 @@ const handlers = {
       display: doc,
     };
   },
+
+  async search_web(input) {
+    const query = str(input.query, 300);
+    if (!query) throw new Error("'query' is required");
+    let results = [];
+    try {
+      results = await duckDuckGo(query);
+    } catch (err) {
+      console.warn("[search_web] DuckDuckGo failed:", err.message);
+    }
+    if (!results.length) results = await wikipediaSearch(query);
+    if (!results.length) throw new Error("No search results");
+    return { result: { query, results }, display: { kind: "sources", query, results } };
+  },
+
+  async read_webpage(input) {
+    const url = str(input.url, 2000);
+    if (!url || !/^https?:\/\//i.test(url)) throw new Error("'url' must be an http(s) URL");
+    const res = await fetch(url, {
+      headers: { "user-agent": "Mozilla/5.0 (Linux; Android 14) Mnx/1.0", accept: "text/html,text/plain;q=0.9,*/*;q=0.5" },
+      signal: AbortSignal.timeout(15000),
+      redirect: "follow",
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const type = res.headers.get("content-type") || "";
+    if (!/text|html|json|xml/.test(type)) throw new Error(`Can't read ${type || "this kind of"} content`);
+    const raw = (await res.text()).slice(0, 2_000_000);
+    const rawTitle = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+    const title = rawTitle ? decodeEntities(rawTitle.trim()) : url;
+    return {
+      result: { url, title, text: htmlToText(raw).slice(0, 6000) },
+      display: { kind: "sources", query: null, results: [{ title, url }] },
+    };
+  },
+
+  async create_image(input) {
+    const prompt = str(input.prompt, 1500);
+    if (!prompt) throw new Error("'prompt' is required");
+    const [width, height] = { landscape: [1280, 768], portrait: [768, 1280] }[input.aspect] || [1024, 1024];
+    const seed = Math.floor(Math.random() * 1e9);
+    // Pollinations: free, key-less image generation. The browser loads the image directly.
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true`;
+    return {
+      result: { created: true, shown_to_user: true, prompt },
+      display: { kind: "image", prompt, url, width, height },
+    };
+  },
 };
+
+/* ───────────── Free web search ───────────── */
+function decodeEntities(s) {
+  return s
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;|&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+}
+const stripTags = (s) => decodeEntities(s.replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
+
+export function htmlToText(html) {
+  return decodeEntities(
+    html
+      .replace(/<(script|style|noscript|svg|nav|footer|header|form)[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<\/(p|div|li|h[1-6]|tr|section|article)>/gi, "\n")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]+>/g, " "),
+  )
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n+/g, "\n")
+    .trim();
+}
+
+export function parseDuckDuckGo(html) {
+  const results = [];
+  const re = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)(?=<a[^>]+class="result__a"|$)/g;
+  let m;
+  while ((m = re.exec(html)) && results.length < 6) {
+    let url = decodeEntities(m[1]);
+    const real = url.match(/[?&]uddg=([^&]+)/);
+    if (real) url = decodeURIComponent(real[1]);
+    if (url.startsWith("//")) url = `https:${url}`;
+    if (/duckduckgo\.com\/y\.js/.test(url)) continue; // ads
+    const snip = m[3].match(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/);
+    results.push({ title: stripTags(m[2]), url, snippet: snip ? stripTags(snip[1]).slice(0, 300) : "" });
+  }
+  return results;
+}
+
+async function duckDuckGo(query) {
+  const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+    headers: { "user-agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Mobile Safari/537.36", accept: "text/html" },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return parseDuckDuckGo(await res.text());
+}
+
+async function wikipediaSearch(query) {
+  const q = new URLSearchParams({ action: "query", list: "search", srsearch: query, format: "json", srlimit: "5", origin: "*" });
+  const data = await getJson(`https://en.wikipedia.org/w/api.php?${q}`);
+  return (data.query?.search || []).map((r) => ({
+    title: r.title,
+    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(r.title.replace(/ /g, "_"))}`,
+    snippet: stripTags(r.snippet).slice(0, 300),
+  }));
+}
 
 export async function runTool(name, input, ctx) {
   const handler = handlers[name];

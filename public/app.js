@@ -62,6 +62,7 @@
     doc: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4M7 9h6M7 12h10"/></svg>',
     mcp: '<svg viewBox="0 0 24 24"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0z"/><path d="M12 16v5"/></svg>',
     read: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 12h6M9 15h6M9 18h4"/></svg>',
+    image: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>',
     tool: '<svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>',
   };
   const CHEV = '<svg class="step-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>';
@@ -250,6 +251,9 @@
     create_document: "doc",
     web_search: "search",
     web_fetch: "fetch",
+    search_web: "search",
+    read_webpage: "fetch",
+    create_image: "image",
   };
   function toolLabel(name, input, phase, display) {
     const i = input || {};
@@ -273,6 +277,12 @@
         const fmt = (i.format || "document").toUpperCase();
         return done ? `Created ${display?.filename || fmt}` : `Building ${i.format === "pptx" ? "slides" : fmt}${i.title ? ` · ${i.title}` : ""}`;
       }
+      case "search_web":
+        return done ? `Searched “${i.query || "the web"}” · ${display?.results?.length ?? 0} results` : `Searching the web${i.query ? ` · “${i.query}”` : ""}`;
+      case "read_webpage":
+        return done ? `Read ${display?.results?.[0]?.title || host(i.url || "")}` : `Reading ${i.url ? host(i.url) : "a web page"}`;
+      case "create_image":
+        return done ? "Created an image" : `Painting${i.prompt ? ` “${i.prompt.length > 48 ? `${i.prompt.slice(0, 48)}…` : i.prompt}”` : " an image"}`;
       case "web_search":
         return done ? `Searched${i.query ? ` “${i.query}”` : " the web"}` : `Searching the web${i.query ? ` · “${i.query}”` : ""}`;
       case "web_fetch":
@@ -496,8 +506,38 @@
     return c;
   }
 
+  function cardSources(d) {
+    const c = el("div", "card");
+    const list = d.results || [];
+    c.innerHTML = `${d.query ? `<div class="card-head"><div class="step-ic" style="position:static">${ICONS.search}</div>
+        <div><div class="card-title">${esc(d.query)}</div><div class="card-sub">${list.length} result${list.length === 1 ? "" : "s"}</div></div></div>` : ""}
+      <div class="places">${list
+        .map(
+          (r, k) => `<div class="place" style="animation-delay:${k * 50}ms"><div class="place-n">${k + 1}</div><div class="place-info">
+            <a class="place-name" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title || r.url)}</a>
+            <div class="place-meta">${esc(host(r.url))}</div>
+            ${r.snippet ? `<div class="place-meta">${esc(r.snippet)}</div>` : ""}</div></div>`,
+        )
+        .join("")}</div>`;
+    return c;
+  }
+
+  function cardImage(d) {
+    const c = el("div", "card image-card");
+    c.innerHTML = `<div class="img-wrap" style="aspect-ratio:${d.width}/${d.height}"><div class="img-shimmer"><span class="orb"><i></i><i></i><i></i></span><span>Painting your image…</span></div><img alt="${esc(d.prompt)}" /></div>
+      <div class="card-head"><div style="min-width:0"><div class="card-sub">${esc(d.prompt)}</div></div></div>
+      <div class="card-actions"><a class="btn primary" href="${esc(d.url)}" target="_blank" rel="noopener" download="mnx-image.jpg">${DL_IC} Open / save</a></div>`;
+    const img = $("img", c);
+    img.onload = () => c.classList.add("loaded");
+    img.onerror = () => ($(".img-shimmer span:last-child", c).textContent = "Couldn't load the image — check your connection.");
+    img.src = d.url;
+    return c;
+  }
+
   function renderCard(d) {
     switch (d?.kind) {
+      case "sources": return cardSources(d);
+      case "image": return cardImage(d);
       case "weather": return cardWeather(d);
       case "places": return cardPlaces(d);
       case "directions": return cardDirections(d);
@@ -1026,7 +1066,7 @@
     liveInput(b) {
       const json = b.json;
       const input = { ...b.step.input };
-      for (const k of ["query", "url", "location", "near", "destination", "origin", "filename", "format", "title"]) {
+      for (const k of ["query", "url", "location", "near", "destination", "origin", "filename", "format", "title", "prompt"]) {
         const v = partialString(json, k);
         if (v !== undefined) input[k] = v;
       }
@@ -1035,7 +1075,9 @@
         patch.body = { type: "text", text: json.slice(-600) };
       } else {
         patch.label = toolLabel(b.name, input, "running");
-        if (b.name === "create_file") {
+        if (b.name === "create_image" && input.prompt) {
+          patch.body = { type: "text", text: input.prompt };
+        } else if (b.name === "create_file") {
           patch.body = { type: "code", text: partialString(json, "content") || "" };
           const lines = patch.body.text.split("\n").length;
           patch.meta = patch.body.text ? `${lines} line${lines === 1 ? "" : "s"}` : "";
