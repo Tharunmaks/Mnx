@@ -864,6 +864,9 @@ a.place-name:hover { color: var(--accent-2); }
   .w-temp { font-size: 46px; }
   .w-icon { width: 72px; height: 72px; }
   .page-view { padding: 18px; }
+  /* Keep toasts clear of the message box on phones. */
+  .toast { top: 14px; bottom: auto; transform: translate(-50%, -30px); max-width: calc(100vw - 32px); }
+  .toast.show { transform: translate(-50%, 0); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

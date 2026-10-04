@@ -81,6 +81,16 @@ Your model can use tools on the phone. It writes a `<tool_call>` in Qwen2.5's na
 
 A 3B model sometimes misses a tool or formats a call badly. Mnx repairs common JSON mistakes (raw line breaks in code, trailing commas, code fences) and allows up to 5 tool steps per reply. The local model still can't see images or PDFs you attach.
 
+## Testing
+
+```bash
+npm test               # 69 unit + integration tests (mock Anthropic API, fake llama-server)
+npm run test:runtime   # real llama.cpp with a tiny random-weight model (pip install gguf numpy)
+MNX_LLAMA_SERVER_BIN=$(which llama-server) npm run test:runtime   # also the real llama-server (e.g. on Termux)
+```
+
+The tests cover the streaming parsers (`<think>`, `<tool_call>`), repair of malformed tool calls, every tool, the code runner's safety rules, full tool loops for both the online and local models, approvals, aborts, and the server's security checks.
+
 ## How it works
 
 ```

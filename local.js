@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { TOOLS, LOCAL_ONLY_TOOLS, runTool } from "./tools.js";
+import { CODE_RUNNER, runTool } from "./tools.js";
 
 export const LOCAL_ID = "local";
 const ON_ANDROID = process.platform === "android" || !!process.env.TERMUX_VERSION;
@@ -67,7 +67,9 @@ async function loadInProcess(file) {
     const llama = await getLlama();
     const model = await llama.loadModel({ modelPath: file });
     const context = await model.createContext({ contextSize: { max: 8192 } });
-    return { file, LlamaChatSession, context };
+    // One long-lived sequence: llama.cpp reuses the already-processed prefix
+    // (system prompt + earlier turns) instead of re-reading it every time.
+    return { file, LlamaChatSession, sequence: context.getSequence() };
   })();
   try {
     const loaded = await loading;
@@ -80,8 +82,7 @@ async function loadInProcess(file) {
 }
 
 async function generateInProcess(file, history, prompt, onChunk, signal) {
-  const { LlamaChatSession, context } = await loadInProcess(file);
-  const sequence = context.getSequence();
+  const { LlamaChatSession, sequence } = await loadInProcess(file);
   const session = new LlamaChatSession({ contextSequence: sequence, autoDisposeSequence: false });
   session.setChatHistory(
     history.map((h) => (h.role === "system" ? { type: "system", text: h.content } : h.role === "user" ? { type: "user", text: h.content } : { type: "model", response: [h.content] })),
@@ -99,7 +100,6 @@ async function generateInProcess(file, history, prompt, onChunk, signal) {
     });
   } finally {
     session.dispose({ disposeSequence: false });
-    sequence.dispose();
   }
 }
 
@@ -145,7 +145,7 @@ async function ensureLlamaServer(file) {
         return `http://127.0.0.1:${port}`;
       }
     }
-    const args = ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || 8192)];
+    const args = ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || 8192), "-np", "1"];
     if (process.env.MNX_THREADS) args.push("-t", process.env.MNX_THREADS);
     console.log(`[local] starting ${bin} ${args.join(" ")}`);
     const child = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
@@ -192,6 +192,7 @@ async function generateViaServer(file, history, prompt, onChunk, signal) {
     body: JSON.stringify({
       messages: [...history, { role: "user", content: prompt }],
       stream: true,
+      cache_prompt: true,
       max_tokens: 4096,
       ...SAMPLING,
     }),
@@ -263,33 +264,52 @@ const blocksText = (content) =>
         .filter(Boolean)
         .join("\n\n");
 
-// Tools the local model can call. Kept compact: on a phone, every token of
-// the system prompt costs prompt-processing time.
-const LOCAL_TOOL_NAMES = ["search_web", "read_webpage", "get_weather", "get_user_location", "find_places", "get_directions", "create_image", "create_document", "create_file", "run_code"];
-const toolSpecs = () => {
-  const all = [...LOCAL_ONLY_TOOLS, ...TOOLS];
-  const strip = (schema) => JSON.parse(JSON.stringify(schema, (k, v) => (k === "additionalProperties" || k === "minimum" || k === "maximum" ? undefined : v)));
-  return LOCAL_TOOL_NAMES.map((n) => all.find((t) => t.name === n))
-    .filter(Boolean)
-    .map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: strip(t.input_schema) } }));
-};
+// Tools the local model can call. Written compactly on purpose: on a phone,
+// every token of the system prompt costs prompt-processing time.
+const fn = (name, description, properties = {}, required = []) => ({
+  type: "function",
+  function: { name, description, parameters: { type: "object", properties, required } },
+});
+const str = { type: "string" };
+const LOCAL_TOOLS = [
+  fn("search_web", "Search the internet for current or unknown information.", { query: str }, ["query"]),
+  fn("read_webpage", "Read the text of a web page.", { url: str }, ["url"]),
+  fn("get_weather", "Current weather and forecast. Omit location to use the user's location.", { location: str, days: { type: "integer" } }),
+  fn("get_user_location", "The user's current location."),
+  fn("find_places", "Find restaurants, shops, places or addresses.", { query: str, near: str }, ["query"]),
+  fn("get_directions", "Route between two places. origin may be 'my location'.", { origin: str, destination: str, mode: { enum: ["driving", "walking", "cycling"] } }, ["origin", "destination"]),
+  fn("create_image", "Generate an image from a detailed English description.", { prompt: str, aspect: { enum: ["square", "landscape", "portrait"] } }, ["prompt"]),
+  fn(
+    "create_document",
+    "Make a pptx slide deck (use slides) or a pdf/docx document (use sections; body is markdown).",
+    {
+      format: { enum: ["pptx", "pdf", "docx"] },
+      title: str,
+      subtitle: str,
+      slides: { type: "array", items: { type: "object", properties: { title: str, bullets: { type: "array", items: str } } } },
+      sections: { type: "array", items: { type: "object", properties: { heading: str, body: str } } },
+    },
+    ["format", "title"],
+  ),
+  fn("create_file", "Give the user a code or text file.", { filename: str, content: str }, ["filename", "content"]),
+  ...(CODE_RUNNER
+    ? [fn("run_code", "Run Python or JavaScript on the user's device (they approve first). Print results; save charts as .png.", { language: { enum: ["python", "javascript"] }, code: str }, ["language", "code"])]
+    : []),
+];
+const LOCAL_TOOL_NAMES = LOCAL_TOOLS.map((t) => t.function.name);
 
-function systemPrompt(userName) {
-  return `You are Mnx, a friendly and helpful AI assistant running locally on the user's own device. Today's date is ${new Date().toISOString().slice(0, 10)}.${
-    userName ? ` The user's name is ${userName}.` : ""
-  }
-Help with anything legal; politely decline only requests that would facilitate crimes or serious harm.
+// Everything except the last line is identical between requests, so
+// llama.cpp can reuse its cached processing of it.
+const STABLE_PROMPT = `You are Mnx, a friendly and helpful AI assistant running on the user's own device. Help with anything legal; politely decline only requests that would facilitate crimes or serious harm.
 
-Before every reply, think briefly inside <think></think> tags: start with a short bold title like **Understanding the question**, then 1-3 sentences about what the user needs and whether a tool is needed. After </think>, either call a tool or write the final answer in markdown.
+Before every reply, think briefly inside <think></think>: a short bold title like **Understanding the question**, then 1-3 sentences on what the user needs and whether a tool helps. After </think>, call a tool or write the answer.
 
-How to write great answers:
-- Start with the direct answer in the first sentence, then add the details that matter.
-- Format with markdown: short paragraphs, **bold** key terms, numbered lists for steps, bullet lists for options, tables for comparisons, and fenced code blocks with the language name for code.
-- Fit the length to the question: a quick question gets 1-3 sentences; explanations, how-tos and plans get clear sections with ### headings.
-- Be specific: real numbers, names and examples. If you're not sure about something, say so instead of guessing.
-- After using tools, explain what you found in your own words, cite web sources as [title](url), and mention any image, file, slides or code results you made.
-
-Use tools when they help: search_web for current events, facts you're unsure of or anything recent (then read_webpage for details); get_weather for weather; find_places / get_directions for places and routes; create_image to draw or generate a picture; create_document for slides (pptx), PDF or Word files; create_file for code or text files; run_code to calculate, analyse data or make charts (the user approves each run). When you receive a <tool_response>, use it to answer. Never invent tool results, and don't paste file contents or image links that were already shown to the user.
+Answer well:
+- Give the direct answer first, then the details that matter.
+- Use markdown: short paragraphs, **bold** key terms, numbered steps, bullet lists, tables for comparisons, fenced code blocks with the language.
+- Quick questions get 1-3 sentences; explanations and how-tos get ### sections.
+- Be specific. If unsure, say so instead of guessing.
+- After tools, explain the results in your own words and cite web sources as [title](url). Never invent tool results; don't repeat files or images already shown.
 
 # Tools
 
@@ -297,13 +317,16 @@ You may call one or more functions to assist with the user query.
 
 You are provided with function signatures within <tools></tools> XML tags:
 <tools>
-${toolSpecs().map((t) => JSON.stringify(t)).join("\n")}
+${LOCAL_TOOLS.map((t) => JSON.stringify(t)).join("\n")}
 </tools>
 
 For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
 <tool_call>
 {"name": <function-name>, "arguments": <args-json-object>}
 </tool_call>`;
+
+function systemPrompt(userName) {
+  return `${STABLE_PROMPT}\n\nToday's date is ${new Date().toISOString().slice(0, 10)}.${userName ? ` The user's name is ${userName}.` : ""}`;
 }
 
 // Splits the stream into thinking / answer as it arrives.
@@ -470,6 +493,22 @@ export function parseToolCall(raw) {
     }
   }
   return { name: obj.name, input: args && typeof args === "object" && !Array.isArray(args) ? args : {} };
+}
+
+// Start the model and process the system prompt in the background, so the
+// first message doesn't wait for it. Used on the llama-server backend.
+export async function warmUpLocal(file) {
+  if (!useServer || !file || !fs.existsSync(file)) return false;
+  const url = await ensureLlamaServer(file);
+  const t0 = Date.now();
+  const res = await fetch(`${url}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ messages: [{ role: "system", content: systemPrompt("") }, { role: "user", content: "hi" }], max_tokens: 1, cache_prompt: true, stream: false }),
+  });
+  await res.text();
+  console.log(`[local] model ready (system prompt cached in ${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  return true;
 }
 
 const MAX_STEPS = 5;

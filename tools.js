@@ -162,29 +162,6 @@ export const TOOLS = [
     : []),
 ];
 
-// Extra tools only the local model needs (online models use Anthropic's
-// built-in web search / fetch instead).
-export const LOCAL_ONLY_TOOLS = [
-  {
-    name: "search_web",
-    description: "Search the internet for current information, news, facts or anything you don't know.",
-    input_schema: {
-      type: "object",
-      properties: { query: { type: "string" } },
-      required: ["query"],
-    },
-  },
-  {
-    name: "read_webpage",
-    description: "Read the text of a web page (for example a search result) to get details.",
-    input_schema: {
-      type: "object",
-      properties: { url: { type: "string" } },
-      required: ["url"],
-    },
-  },
-];
-
 const WEATHER_CODES = {
   0: ["Clear sky", "sun"], 1: ["Mainly clear", "sun"], 2: ["Partly cloudy", "partly"], 3: ["Overcast", "cloud"],
   45: ["Fog", "fog"], 48: ["Rime fog", "fog"],

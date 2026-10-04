@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { TOOLS, runTool } from "./tools.js";
-import { LOCAL_ID, localModelPath, localModelLabel, handleLocalChat } from "./local.js";
+import { LOCAL_ID, localModelPath, localModelLabel, handleLocalChat, warmUpLocal } from "./local.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -430,4 +430,9 @@ const server = http.createServer(async (req, res) => {
   serveFile(res, file);
 });
 
-server.listen(PORT, HOST, () => console.log(`Mnx is live at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`));
+server.listen(PORT, HOST, () => {
+  console.log(`Mnx is live at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
+  // On the phone (llama-server backend), get the local model ready right away.
+  if (localAvailable() && !/^(0|off|false|no)$/i.test(process.env.MNX_PREWARM || "on"))
+    warmUpLocal(localFile()).catch((err) => console.warn(`[local] warm-up failed: ${err.message}`));
+});

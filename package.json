@@ -8,7 +8,8 @@
     "dev": "node --watch server.js",
     "get-model": "node scripts/get-model.js",
     "setup:termux": "bash scripts/termux-setup.sh",
-    "test": "node --test --test-concurrency=1 --test-timeout=60000 test/*.test.mjs"
+    "test": "node --test --test-concurrency=1 --test-timeout=60000 test/*.test.mjs",
+    "test:runtime": "MNX_RUNTIME_TESTS=1 node --test --test-timeout=600000 test/runtime.test.mjs"
   },
   "repository": {
     "type": "git",

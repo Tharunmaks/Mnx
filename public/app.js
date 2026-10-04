@@ -681,7 +681,7 @@
     if (!chat) return;
     chat.updated = Date.now();
     // Strip runtime-only fields (DOM refs are prefixed with "_").
-    await db.put(JSON.parse(JSON.stringify(chat, (k, v) => (k.startsWith("_") ? undefined : v))));
+    await db.put(JSON.parse(JSON.stringify(chat, (k, v) => (k.startsWith("_") || k === "token" ? undefined : v))));
     refreshHistory();
   }
 
@@ -838,7 +838,12 @@
     thread.innerHTML = "";
     for (const turn of c.view) {
       if (turn.role === "user") renderUserTurn(turn);
-      else new AssistantView(turn, false);
+      else {
+        // Steps that were still running when the page closed are finished now.
+        for (const part of turn.parts)
+          if (part.type === "steps") for (const st of part.steps) if (st.status === "running") Object.assign(st, { status: "done", open: false });
+        new AssistantView(turn, false);
+      }
     }
     main.classList.toggle("empty", !c.view.length);
     $("#chatTitle").textContent = c.title || "Chat";
@@ -921,6 +926,7 @@
     chat.view.push(userTurn);
     chat.api.push({ role: "user", content: buildUserContent(text, files) });
     renderUserTurn(userTurn);
+    saveChat(); // save right away so a reload or closed tab never loses the message
     stick = true;
 
     const turn = { role: "assistant", parts: [] };
@@ -1078,6 +1084,7 @@
           return;
         }
         case "tool_done": {
+          saveChat();
           const step = this.toolSteps.get(ev.id);
           if (step) {
             if (step.status === "running") this.active--;
@@ -1100,6 +1107,7 @@
           saveChat();
           return;
         case "approval_request": {
+          setTimeout(saveChat, 0);
           const step = this.toolSteps.get(ev.tool_use_id);
           if (step) this.view.updateStep(step, { label: "Waiting for your OK to run this code", open: false });
           this.view.addPart({ type: "approval", id: ev.id, token: ev.token, language: ev.language, code: ev.code, state: "pending" });
@@ -1543,6 +1551,10 @@
     closeDrawer();
     newChat();
   };
+
+  // Phones close background tabs without warning: save whenever we're hidden.
+  document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && saveChat());
+  window.addEventListener("pagehide", () => saveChat());
 
   /* ───────────── Boot ───────────── */
   fillModelSelects();
