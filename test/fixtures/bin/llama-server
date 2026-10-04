@@ -14,7 +14,18 @@ setTimeout(() => (ready = true), Number(process.env.FAKE_LLAMA_LOAD_MS || 200));
 
 const call = (name, args) => `<tool_call>\n${JSON.stringify({ name, arguments: args })}\n</tool_call>`;
 
+// Oracle mode (FAKE_ORACLE=training/data/test.jsonl): replay each test case's
+// reference answers, i.e. behave like a perfect model. Used to check the scorer.
+const oracle = process.env.FAKE_ORACLE
+  ? new Map(fs.readFileSync(process.env.FAKE_ORACLE, "utf8").trim().split("\n").map((l) => JSON.parse(l)).map((c) => [c.messages[1].content, c.reference]))
+  : null;
+
 function reply(messages) {
+  if (oracle) {
+    const ref = oracle.get(messages.find((m) => m.role === "user").content);
+    const step = messages.filter((m) => m.role === "assistant").length;
+    if (ref) return ref.filter((m) => m.role === "assistant")[step].content;
+  }
   const last = messages[messages.length - 1].content;
   const prompt = [...messages].reverse().find((m) => m.role === "user" && !m.content.includes("<tool_response>"))?.content || "";
   if (last.includes("<tool_response>")) {

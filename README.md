@@ -81,10 +81,20 @@ Your model can use tools on the phone. It writes a `<tool_call>` in Qwen2.5's na
 
 A 3B model sometimes misses a tool or formats a call badly. Mnx repairs common JSON mistakes (raw line breaks in code, trailing commas, code fences) and allows up to 5 tool steps per reply. The local model still can't see images or PDFs you attach.
 
+## Training your model
+
+`training/` fine-tunes your local model to use Mnx's tools reliably, then measures how reliable it is.
+
+1. **Data.** Run `npm run train:data`. It writes `training/data/train.jsonl` with thousands of conversations in exactly the format Mnx uses at runtime (`<think>`, `<tool_call>`, `<tool_response>`), covering search, weather, places, directions, images, slides/PDF/Word, code files, running code (including when you decline), charts, multi-step tasks, recovering from errors, answering without tools, and saying when it can't do something. Every example is checked with Mnx's own parsers. Code outputs in the data come from actually running the code. No other AI model wrote the data.
+2. **Train.** Open `training/mnx_train.ipynb` in Google Colab with a T4 GPU (free tier works) and run the cells. It does a LoRA fine-tune of Qwen2.5-3B-Instruct with Unsloth, then exports `mnx-q4_k_m.gguf` and the faster-on-phones `mnx-q4_0.gguf`, then uploads them to your Hugging Face repo.
+3. **Measure.** Run `npm run eval -- --model models/mnx-q4_k_m.gguf --target 98`. It runs 400 held-out cases (cities, topics and tasks never seen in training) through Mnx's real tool loop, including the permission step for code, and prints the success rate per category and overall. A case only passes if the right tool was called with valid arguments and the final answer uses the result. On a phone, add `--limit 100` to keep it short.
+
+Permission for running code is enforced by Mnx itself, so it never depends on the model. Image quality comes from the image service. Speed depends on your phone; the Q4_0 file and shorter thinking help.
+
 ## Testing
 
 ```bash
-npm test               # 69 unit + integration tests (mock Anthropic API, fake llama-server)
+npm test               # unit, integration and training-pipeline tests (mock Anthropic API, fake llama-server)
 npm run test:runtime   # real llama.cpp with a tiny random-weight model (pip install gguf numpy)
 MNX_LLAMA_SERVER_BIN=$(which llama-server) npm run test:runtime   # also the real llama-server (e.g. on Termux)
 ```
@@ -101,5 +111,6 @@ browser (public/)  ── POST /api/chat ──►  server.js  ── stream ─
 
 - `server.js` runs the agent loop. It streams Claude's events (thinking deltas, text deltas, tool-input deltas) to the browser, runs the tools, and loops until the answer is complete. Adaptive thinking is on with summarized display, so the reasoning can be shown live. Server-side refusal fallbacks are enabled.
 - `local.js` runs the local GGUF model, either in process (node-llama-cpp, desktop) or through `llama-server` (Termux), and streams it with the same events.
+- `training/` makes the training data, runs the Colab fine-tune and scores the model.
 - `tools.js` defines the tools and calls the free public APIs.
 - `public/app.js` renders the live timeline, cards and history. `public/docs.js` builds the PPTX, PDF and DOCX files.

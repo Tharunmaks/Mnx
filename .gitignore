@@ -1,3 +1,4 @@
 node_modules/
 .env
 models/*.part
+training/data/

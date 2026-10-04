@@ -147,6 +147,7 @@ async function ensureLlamaServer(file) {
     }
     const args = ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || 8192), "-np", "1"];
     if (process.env.MNX_THREADS) args.push("-t", process.env.MNX_THREADS);
+    if (process.env.MNX_GPU_LAYERS) args.push("-ngl", process.env.MNX_GPU_LAYERS); // e.g. 99 on a GPU machine
     console.log(`[local] starting ${bin} ${args.join(" ")}`);
     const child = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
     let log = "";
@@ -271,7 +272,7 @@ const fn = (name, description, properties = {}, required = []) => ({
   function: { name, description, parameters: { type: "object", properties, required } },
 });
 const str = { type: "string" };
-const LOCAL_TOOLS = [
+export const LOCAL_TOOLS = [
   fn("search_web", "Search the internet for current or unknown information.", { query: str }, ["query"]),
   fn("read_webpage", "Read the text of a web page.", { url: str }, ["url"]),
   fn("get_weather", "Current weather and forecast. Omit location to use the user's location.", { location: str, days: { type: "integer" } }),
@@ -300,7 +301,7 @@ const LOCAL_TOOL_NAMES = LOCAL_TOOLS.map((t) => t.function.name);
 
 // Everything except the last line is identical between requests, so
 // llama.cpp can reuse its cached processing of it.
-const STABLE_PROMPT = `You are Mnx, a friendly and helpful AI assistant running on the user's own device. Help with anything legal; politely decline only requests that would facilitate crimes or serious harm.
+export const STABLE_PROMPT = `You are Mnx, a friendly and helpful AI assistant running on the user's own device. Help with anything legal; politely decline only requests that would facilitate crimes or serious harm.
 
 Before every reply, think briefly inside <think></think>: a short bold title like **Understanding the question**, then 1-3 sentences on what the user needs and whether a tool helps. After </think>, call a tool or write the answer.
 
@@ -325,8 +326,8 @@ For each function call, return a json object with function name and arguments wi
 {"name": <function-name>, "arguments": <args-json-object>}
 </tool_call>`;
 
-function systemPrompt(userName) {
-  return `${STABLE_PROMPT}\n\nToday's date is ${new Date().toISOString().slice(0, 10)}.${userName ? ` The user's name is ${userName}.` : ""}`;
+export function systemPrompt(userName, date = new Date()) {
+  return `${STABLE_PROMPT}\n\nToday's date is ${date.toISOString().slice(0, 10)}.${userName ? ` The user's name is ${userName}.` : ""}`;
 }
 
 // Splits the stream into thinking / answer as it arrives.
@@ -513,7 +514,8 @@ export async function warmUpLocal(file) {
 
 const MAX_STEPS = 5;
 
-export async function handleLocalChat({ body, messages, file, send, isClosed, signal, requestApproval }) {
+// `runToolImpl` lets the evaluation harness supply fixed tool results.
+export async function handleLocalChat({ body, messages, file, send, isClosed, signal, requestApproval, runToolImpl = runTool }) {
   if (!file || !fs.existsSync(file)) {
     send({
       t: "error",
@@ -548,7 +550,8 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
       let index = -1;
       let thinkingOpen = false;
       let textOpen = false;
-      let raw = ""; // what the model wrote, minus thinking (kept in its history)
+      let raw = ""; // what the model wrote after thinking
+      let thought = ""; // its <think> text; kept in history so it matches training
       let answer = "";
       const calls = [];
       let call = null;
@@ -606,7 +609,10 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
             return;
           }
           openThinking();
-          if (t) send({ t: "thinking", it, i: index, text: t });
+          if (t) {
+            thought += t;
+            send({ t: "thinking", it, i: index, text: t });
+          }
         },
         (t) => scanner.push(t),
       );
@@ -637,7 +643,7 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
       }
 
       // Run the requested tools on this device and hand the results back.
-      chat.push({ role: "assistant", content: raw.trim() });
+      chat.push({ role: "assistant", content: `${thought.trim() ? `<think>${thought.trim()}</think>\n` : ""}${raw.trim()}` });
       const responses = [];
       for (const c of calls) {
         const parsed = parseToolCall(c.json);
@@ -653,7 +659,7 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
           send({ t: "block_stop", it, i: c.index });
         }
         send({ t: "tool_run", id: c.id, name: parsed.name, input: parsed.input });
-        const out = known ? await runTool(parsed.name, parsed.input, {
+        const out = known ? await runToolImpl(parsed.name, parsed.input, {
               ...ctx,
               requestApproval: (p) => requestApproval({ ...p, tool_use_id: c.id }),
             }) : { error: `Unknown tool "${parsed.name}". Available: ${LOCAL_TOOL_NAMES.join(", ")}` };
