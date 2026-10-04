@@ -40,6 +40,7 @@ Set `PORT` to change the port. Node 18+ is required.
 Mnx can run your own GGUF model, such as **mnx-q4_k_m.gguf** (your Qwen2.5-3B fine-tune), on your own device with llama.cpp. It's private, it works offline, and it needs no API key. Mnx uses the first `.gguf` in `models/` (preferring `mnx*`), or the file you set in `MNX_LOCAL_MODEL`. It appears in the model picker as **Mnx · Local (your model)**, and it's the default when no `ANTHROPIC_API_KEY` is set.
 
 Get the model into `models/` by one of these:
+- **Keep it in this repo (Git LFS).** Run `bash scripts/add-model-to-repo.sh /path/to/mnx-q4_k_m.gguf` once, from any computer or phone that has the file. It commits the model with Git LFS and pushes it. After that, `git clone` followed by `git lfs pull` gets the model, and the Termux setup script does this for you. GitHub's free plan allows LFS files up to 2 GB, and LFS storage and download bandwidth count against your quota. Every clone downloads the full ~1.9 GB.
 - `HF_TOKEN=hf_... npm run get-model`. This downloads `tharunmakes/mnx-qwen2.5-3b-gguf/mnx-q4_k_m.gguf`. The repo is private, so you need a read token from https://huggingface.co/settings/tokens.
 - `npm run get-model -- <google-drive-link>`. The file must be shared as "Anyone with the link".
 - Copy the file in by hand.

@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 echo "==> Installing Node.js and llama.cpp"
 pkg update -y
-pkg install -y nodejs-lts git
+pkg install -y nodejs-lts git git-lfs
 if ! pkg install -y llama-cpp || ! command -v llama-server >/dev/null; then
   echo "==> llama-cpp package not available; building llama-server from source (takes a while)"
   pkg install -y cmake clang make
@@ -22,8 +22,19 @@ npm install --omit=optional
 
 echo "==> Looking for your model"
 mkdir -p models
-if ls models/*.gguf >/dev/null 2>&1; then
-  echo "    Found: $(ls models/*.gguf | head -1)"
+# If the model is stored in the repo with Git LFS, download the real file.
+if git lfs ls-files 2>/dev/null | grep -q '\.gguf'; then
+  git lfs install --local >/dev/null
+  echo "    Downloading the model from the repo (Git LFS)…"
+  git lfs pull --include "models/*.gguf" || echo "    git lfs pull failed; trying other sources."
+fi
+real_model=""
+for f in models/*.gguf; do
+  # Skip Git LFS placeholder files (tiny text pointers).
+  [ -f "$f" ] && [ "$(wc -c < "$f")" -gt 1000000 ] && real_model="$f" && break
+done
+if [ -n "$real_model" ]; then
+  echo "    Found: $real_model"
 else
   [ -d "$HOME/storage" ] || termux-setup-storage || true
   sleep 2

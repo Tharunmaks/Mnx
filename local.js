@@ -22,7 +22,19 @@ export function localModelPath(baseDir) {
   const dir = path.join(baseDir, "models");
   let files = [];
   try {
-    files = fs.readdirSync(dir).filter((f) => /\.gguf$/i.test(f)).sort();
+    // Skip Git LFS placeholder files (small text pointers left when the
+    // real model hasn't been downloaded with `git lfs pull`).
+    files = fs
+      .readdirSync(dir)
+      .filter((f) => /\.gguf$/i.test(f))
+      .filter((f) => {
+        try {
+          return fs.statSync(path.join(dir, f)).size > 1_000_000;
+        } catch {
+          return false;
+        }
+      })
+      .sort();
   } catch {
     /* no models folder */
   }
