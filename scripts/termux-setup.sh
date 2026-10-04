@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 echo "==> Installing Node.js and llama.cpp"
 pkg update -y
-pkg install -y nodejs-lts git git-lfs
+pkg install -y nodejs-lts git git-lfs python
 if ! pkg install -y llama-cpp || ! command -v llama-server >/dev/null; then
   echo "==> llama-cpp package not available; building llama-server from source (takes a while)"
   pkg install -y cmake clang make

@@ -4,12 +4,15 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { TOOLS, runTool } from "./tools.js";
 import { LOCAL_ID, localModelPath, localModelLabel, handleLocalChat } from "./local.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
+// Only this device can reach Mnx unless HOST is set (e.g. HOST=0.0.0.0).
+const HOST = process.env.HOST || "127.0.0.1";
 const MAX_ITERATIONS = 16;
 
 const MODELS = {
@@ -69,6 +72,53 @@ Use your tools whenever they make the answer better:
 - Tools from connected MCP servers (connectors) when relevant.
 
 Format answers in GitHub-flavoured markdown. Keep answers focused; use headings, lists and tables when they help.`;
+}
+
+// Pending "may I run this?" questions (the code runner waits on these).
+const approvals = new Map(); // id -> { token, done }
+function approvalRequester(send) {
+  const mine = new Set();
+  const request = (payload) =>
+    new Promise((resolve) => {
+      const id = crypto.randomUUID();
+      const token = crypto.randomBytes(18).toString("hex");
+      const entry = {
+        token,
+        done: (ok) => {
+          if (!approvals.has(id)) return;
+          clearTimeout(entry.timer);
+          approvals.delete(id);
+          mine.delete(id);
+          send({ t: "approval_result", id, approved: ok });
+          resolve(ok);
+        },
+        timer: setTimeout(() => entry.done(false), 10 * 60 * 1000),
+      };
+      approvals.set(id, entry);
+      mine.add(id);
+      send({ t: "approval_request", id, token, ...payload });
+    });
+  const cancelAll = () => [...mine].forEach((id) => approvals.get(id)?.done(false));
+  return { request, cancelAll };
+}
+
+async function handleApprove(req, res) {
+  let body;
+  try {
+    body = await readJson(req, 10000);
+  } catch {
+    body = {};
+  }
+  const entry = approvals.get(String(body.id || ""));
+  const ok = entry && typeof body.token === "string" && body.token.length === entry.token.length &&
+    crypto.timingSafeEqual(Buffer.from(body.token), Buffer.from(entry.token));
+  if (!ok) {
+    res.writeHead(404, { "content-type": "application/json" });
+    return res.end(JSON.stringify({ error: "This request has expired." }));
+  }
+  entry.done(body.approve === true);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
 }
 
 function sse(res, payload) {
@@ -177,9 +227,11 @@ async function handleChat(req, res) {
 
   let closed = false;
   let current = null;
+  const approver = approvalRequester((p) => !closed && sse(res, p));
   res.on("close", () => {
     closed = true;
     current?.abort();
+    approver.cancelAll();
   });
 
   const tools = [
@@ -267,7 +319,10 @@ async function handleChat(req, res) {
       const outcomes = await Promise.all(
         toolUses.map(async (tu) => {
           sse(res, { t: "tool_run", id: tu.id, name: tu.name, input: tu.input });
-          const out = await runTool(tu.name, tu.input, ctx);
+          const out = await runTool(tu.name, tu.input, {
+            ...ctx,
+            requestApproval: (p) => approver.request({ ...p, tool_use_id: tu.id }),
+          });
           sse(res, { t: "tool_done", id: tu.id, name: tu.name, error: !!out.error, display: out.display });
           return {
             type: "tool_result",
@@ -306,12 +361,16 @@ async function handleLocal(req, res, body, messages) {
   });
   let closed = false;
   const abort = new AbortController();
+  const approver = approvalRequester((p) => !closed && sse(res, p));
+  const keepAlive = setInterval(() => !closed && res.write(": ping\n\n"), 15000);
   res.on("close", () => {
     closed = true;
     abort.abort();
+    approver.cancelAll();
   });
   try {
     await handleLocalChat({
+      requestApproval: approver.request,
       body,
       messages,
       file: localFile(),
@@ -323,6 +382,7 @@ async function handleLocal(req, res, body, messages) {
     console.error("[local]", err);
     if (!closed) sse(res, { t: "error", text: `Local model error: ${err?.message || err}` });
   } finally {
+    clearInterval(keepAlive);
     if (!closed) res.end();
   }
 }
@@ -344,6 +404,7 @@ function serveFile(res, file) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   if (req.method === "POST" && url.pathname === "/api/chat") return handleChat(req, res);
+  if (req.method === "POST" && url.pathname === "/api/approve") return handleApprove(req, res);
   if (req.method === "GET" && url.pathname === "/api/config") {
     res.writeHead(200, { "content-type": "application/json" });
     return res.end(JSON.stringify({ models: allModels(), local: localAvailable() ? LOCAL_ID : null, hasKey: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) }));
@@ -369,4 +430,4 @@ const server = http.createServer(async (req, res) => {
   serveFile(res, file);
 });
 
-server.listen(PORT, () => console.log(`Mnx is live at http://localhost:${PORT}`));
+server.listen(PORT, HOST, () => console.log(`Mnx is live at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`));

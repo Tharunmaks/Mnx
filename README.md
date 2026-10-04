@@ -73,8 +73,13 @@ Your model can use tools on the phone. It writes a `<tool_call>` in Qwen2.5's na
 | `create_document` | Slides (PPTX), PDF and Word files, built in your browser |
 | `create_file` | Code and text files |
 | `get_weather`, `find_places`, `get_directions`, `get_user_location` | Weather, places and routes |
+| `run_code` | Runs Python or JavaScript on your phone, **only after you tap Run**. Shows the output, errors and any charts the code saves |
 
-A 3B model sometimes misses a tool or formats a call badly. Mnx repairs small JSON mistakes and allows up to 5 tool steps per reply. The local model still can't see images or PDFs you attach.
+**Code runner safety.** Every program appears in an approval card, and nothing runs until you tap **Run**. **Don't run** (or no answer within 10 minutes) skips it. Programs run in a temporary folder with a 30-second limit, and they don't get Mnx's API keys. They can still reach your files and the internet, so read the code before you approve it. To turn the runner off, set `MNX_CODE_RUNNER=off`. Charts need `pip install matplotlib`. Mnx only accepts connections from the device it runs on. To use it from another device, set `HOST=0.0.0.0`, but only on a network you trust.
+
+**Answer quality.** The local model is told to start with the direct answer, use clear markdown (headings, lists, tables, code blocks), match the answer's length to the question, and cite its sources. It uses Qwen2.5's recommended sampling: temperature 0.7, top_p 0.8, top_k 20, repeat penalty 1.05. You can change these with `MNX_TEMPERATURE`, `MNX_TOP_P`, `MNX_TOP_K` and `MNX_REPEAT_PENALTY`.
+
+A 3B model sometimes misses a tool or formats a call badly. Mnx repairs common JSON mistakes (raw line breaks in code, trailing commas, code fences) and allows up to 5 tool steps per reply. The local model still can't see images or PDFs you attach.
 
 ## How it works
 

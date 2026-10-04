@@ -62,6 +62,7 @@
     doc: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4M7 9h6M7 12h10"/></svg>',
     mcp: '<svg viewBox="0 0 24 24"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0z"/><path d="M12 16v5"/></svg>',
     read: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 12h6M9 15h6M9 18h4"/></svg>',
+    code: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>',
     image: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>',
     tool: '<svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>',
   };
@@ -254,6 +255,7 @@
     search_web: "search",
     read_webpage: "fetch",
     create_image: "image",
+    run_code: "code",
   };
   function toolLabel(name, input, phase, display) {
     const i = input || {};
@@ -281,6 +283,13 @@
         return done ? `Searched “${i.query || "the web"}” · ${display?.results?.length ?? 0} results` : `Searching the web${i.query ? ` · “${i.query}”` : ""}`;
       case "read_webpage":
         return done ? `Read ${display?.results?.[0]?.title || host(i.url || "")}` : `Reading ${i.url ? host(i.url) : "a web page"}`;
+      case "run_code": {
+        const lang = i.language === "javascript" ? "JavaScript" : "Python";
+        if (!done) return `Running ${lang} code`;
+        if (display?.declined) return "Didn't run the code (you said no)";
+        if (display?.timedOut) return `${lang} code timed out`;
+        return display?.exitCode === 0 ? `Ran ${lang} code · ${display.seconds}s` : `${lang} code failed (exit ${display?.exitCode})`;
+      }
       case "create_image":
         return done ? "Created an image" : `Painting${i.prompt ? ` “${i.prompt.length > 48 ? `${i.prompt.slice(0, 48)}…` : i.prompt}”` : " an image"}`;
       case "web_search":
@@ -534,8 +543,103 @@
     return c;
   }
 
+  function codeBlock(code, language) {
+    const pre = el("pre", "");
+    const c = el("code", "hljs");
+    const lang = language === "javascript" ? "javascript" : "python";
+    c.innerHTML = hljs.getLanguage(lang) ? hljs.highlight(code, { language: lang }).value : esc(code);
+    pre.appendChild(c);
+    return pre;
+  }
+
+  function cardCodeRun(d) {
+    const c = el("div", "card code-run");
+    const lang = d.language === "javascript" ? "JavaScript" : "Python";
+    if (d.declined) {
+      c.innerHTML = `<div class="card-head"><div class="file-ic code">${d.language === "javascript" ? "JS" : "PY"}</div>
+        <div><div class="card-title">${lang} code not run</div><div class="card-sub">You chose not to run it.</div></div></div>`;
+      return c;
+    }
+    const status = d.timedOut ? ["timeout", "Timed out"] : d.exitCode === 0 ? ["ok", "Success"] : ["err", `Exit ${d.exitCode}`];
+    c.innerHTML = `
+      <div class="card-head"><div class="file-ic code">${d.language === "javascript" ? "JS" : "PY"}</div>
+        <div style="flex:1;min-width:0"><div class="card-title">${lang} output</div><div class="card-sub">Ran in ${esc(d.seconds)}s on this device</div></div>
+        <span class="badge ${status[0]}">${status[1]}</span></div>
+      <div class="term"></div>
+      <div class="run-images"></div>
+      <details class="card-more"><summary>Show code</summary><div class="file-code"></div></details>
+      <div class="card-actions"><button class="btn" data-act="out">${COPY_IC} Copy output</button><button class="btn" data-act="code">${COPY_IC} Copy code</button></div>`;
+    const term = $(".term", c);
+    if (d.stdout) term.appendChild(document.createTextNode(d.stdout));
+    if (d.stderr) {
+      const e = el("span", "err");
+      e.textContent = (d.stdout && !d.stdout.endsWith("\n") ? "\n" : "") + d.stderr;
+      term.appendChild(e);
+    }
+    if (!d.stdout && !d.stderr) term.appendChild(el("span", "muted", "(no output)"));
+    for (const img of d.images || []) {
+      const fig = el("figure", "");
+      fig.innerHTML = `<img alt="${esc(img.name)}"><figcaption>${esc(img.name)}</figcaption>`;
+      $("img", fig).src = img.src;
+      $(".run-images", c).appendChild(fig);
+    }
+    $(".file-code", c).appendChild(codeBlock(d.code, d.language));
+    c.addEventListener("click", (e) => {
+      const act = e.target.closest("[data-act]")?.dataset.act;
+      if (act === "out") copyText([d.stdout, d.stderr].filter(Boolean).join("\n"));
+      if (act === "code") copyText(d.code);
+    });
+    return c;
+  }
+
+  function cardApproval(part, live) {
+    const c = el("div", "card approval");
+    const lang = part.language === "javascript" ? "JavaScript" : "Python";
+    c.innerHTML = `
+      <div class="card-head"><div class="file-ic code">${part.language === "javascript" ? "JS" : "PY"}</div>
+        <div style="min-width:0"><div class="card-title">Run this ${lang} code?</div>
+        <div class="card-sub">It runs on this device with access to your files and the internet. Check it first.</div></div></div>
+      <div class="file-code"></div>
+      <div class="card-actions approval-actions">
+        <button class="btn primary" data-a="run"><svg viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></svg> Run</button>
+        <button class="btn" data-a="skip">Don't run</button>
+      </div>
+      <div class="approval-state"></div>`;
+    $(".file-code", c).appendChild(codeBlock(part.code, part.language));
+    const paint = () => {
+      const st = part.state === "pending" && !live ? "expired" : part.state;
+      c.dataset.state = st;
+      $(".approval-state", c).textContent =
+        { approved: "✓ Approved — running on your device", declined: "✕ Not run", expired: "This request expired", sending: "Sending…" }[st] || "";
+    };
+    c.addEventListener("click", async (e) => {
+      const a = e.target.closest("[data-a]")?.dataset.a;
+      if (!a || part.state !== "pending") return;
+      part.state = "sending";
+      paint();
+      try {
+        const r = await fetch("/api/approve", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: part.id, token: part.token, approve: a === "run" }),
+        });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+        part.state = a === "run" ? "approved" : "declined";
+      } catch (err) {
+        part.state = "expired";
+        toast(err.message);
+      }
+      delete part.token;
+      paint();
+    });
+    part._paint = paint;
+    paint();
+    return c;
+  }
+
   function renderCard(d) {
     switch (d?.kind) {
+      case "code_run": return cardCodeRun(d);
       case "sources": return cardSources(d);
       case "image": return cardImage(d);
       case "weather": return cardWeather(d);
@@ -604,6 +708,7 @@
   class AssistantView {
     constructor(turn, live) {
       this.turn = turn;
+      this.live = live;
       this.root = el("div", `msg assistant${live ? " live" : ""}`);
       this.root.innerHTML = `<div class="mnx-badge"><span class="wordmark">Mn<span class="x">x</span></span></div>`;
       this.body = el("div", "body");
@@ -633,6 +738,8 @@
         renderMarkdown(node, part.md);
       } else if (part.type === "card") {
         node = renderCard(part.display) || el("div");
+      } else if (part.type === "approval") {
+        node = cardApproval(part, this.live);
       } else if (part.type === "notice") {
         node = el("div", `notice ${part.level || ""}`);
         node.textContent = part.text;
@@ -992,6 +1099,26 @@
           chat.api.push({ role: "user", content: ev.content });
           saveChat();
           return;
+        case "approval_request": {
+          const step = this.toolSteps.get(ev.tool_use_id);
+          if (step) this.view.updateStep(step, { label: "Waiting for your OK to run this code", open: false });
+          this.view.addPart({ type: "approval", id: ev.id, token: ev.token, language: ev.language, code: ev.code, state: "pending" });
+          follow();
+          return;
+        }
+        case "approval_result": {
+          const part = this.view.turn.parts.find((p) => p.type === "approval" && p.id === ev.id);
+          if (part && ["pending", "sending"].includes(part.state)) {
+            part.state = ev.approved ? "approved" : "expired";
+            delete part.token;
+            part._paint?.();
+          }
+          if (ev.approved) {
+            const step = [...this.toolSteps.values()].find((s) => s.name === "run_code" && s.status === "running");
+            if (step) this.view.updateStep(step, { label: toolLabel("run_code", step.input, "running") });
+          }
+          return;
+        }
         case "phase":
           this.startPhrases(ev.phrases);
           return;
@@ -1030,6 +1157,7 @@
           server: block.type === "server_tool_use",
           name,
         });
+        if (name === "run_code") Object.assign(step, { open: true, body: { type: "code", text: "" } });
         if (name === "create_file") Object.assign(step, { open: true, body: { type: "code", text: "" } });
         if (name === "create_document") Object.assign(step, { open: true, body: { type: "outline", items: [] } });
         this.blocks.set(key, { type: block.type, step, name, json: "" });
@@ -1075,7 +1203,12 @@
         patch.body = { type: "text", text: json.slice(-600) };
       } else {
         patch.label = toolLabel(b.name, input, "running");
-        if (b.name === "create_image" && input.prompt) {
+        if (b.name === "run_code") {
+          const code = partialString(json, "code") || "";
+          patch.body = { type: "code", text: code };
+          const lines = code.split("\n").length;
+          patch.meta = code ? `${lines} line${lines === 1 ? "" : "s"}` : "";
+        } else if (b.name === "create_image" && input.prompt) {
           patch.body = { type: "text", text: input.prompt };
         } else if (b.name === "create_file") {
           patch.body = { type: "code", text: partialString(json, "content") || "" };

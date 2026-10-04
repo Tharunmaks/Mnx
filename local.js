@@ -51,6 +51,14 @@ export function localModelLabel(file) {
   return `Local · ${name}`;
 }
 
+// Qwen2.5-Instruct's recommended sampling settings (override with env vars).
+const SAMPLING = {
+  temperature: Number(process.env.MNX_TEMPERATURE) || 0.7,
+  top_p: Number(process.env.MNX_TOP_P) || 0.8,
+  top_k: Number(process.env.MNX_TOP_K) || 20,
+  repeat_penalty: Number(process.env.MNX_REPEAT_PENALTY) || 1.05,
+};
+
 /* ───────────── Backend 1: node-llama-cpp (in process) ───────────── */
 let loading = null;
 async function loadInProcess(file) {
@@ -79,7 +87,16 @@ async function generateInProcess(file, history, prompt, onChunk, signal) {
     history.map((h) => (h.role === "system" ? { type: "system", text: h.content } : h.role === "user" ? { type: "user", text: h.content } : { type: "model", response: [h.content] })),
   );
   try {
-    await session.prompt(prompt, { maxTokens: 2048, temperature: 0.7, signal, stopOnAbortSignal: true, onTextChunk: onChunk });
+    await session.prompt(prompt, {
+      maxTokens: 4096,
+      temperature: SAMPLING.temperature,
+      topP: SAMPLING.top_p,
+      topK: SAMPLING.top_k,
+      repeatPenalty: { penalty: SAMPLING.repeat_penalty },
+      signal,
+      stopOnAbortSignal: true,
+      onTextChunk: onChunk,
+    });
   } finally {
     session.dispose({ disposeSequence: false });
     sequence.dispose();
@@ -154,8 +171,8 @@ async function generateViaServer(file, history, prompt, onChunk, signal) {
     body: JSON.stringify({
       messages: [...history, { role: "user", content: prompt }],
       stream: true,
-      max_tokens: 2048,
-      temperature: 0.7,
+      max_tokens: 4096,
+      ...SAMPLING,
     }),
   });
   if (!res.ok || !res.body) throw new Error(`llama-server returned HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
@@ -227,7 +244,7 @@ const blocksText = (content) =>
 
 // Tools the local model can call. Kept compact: on a phone, every token of
 // the system prompt costs prompt-processing time.
-const LOCAL_TOOL_NAMES = ["search_web", "read_webpage", "get_weather", "get_user_location", "find_places", "get_directions", "create_image", "create_document", "create_file"];
+const LOCAL_TOOL_NAMES = ["search_web", "read_webpage", "get_weather", "get_user_location", "find_places", "get_directions", "create_image", "create_document", "create_file", "run_code"];
 const toolSpecs = () => {
   const all = [...LOCAL_ONLY_TOOLS, ...TOOLS];
   const strip = (schema) => JSON.parse(JSON.stringify(schema, (k, v) => (k === "additionalProperties" || k === "minimum" || k === "maximum" ? undefined : v)));
@@ -244,7 +261,14 @@ Help with anything legal; politely decline only requests that would facilitate c
 
 Before every reply, think briefly inside <think></think> tags: start with a short bold title like **Understanding the question**, then 1-3 sentences about what the user needs and whether a tool is needed. After </think>, either call a tool or write the final answer in markdown.
 
-Use tools when they help: search_web for current events, facts you're unsure of or anything recent (then read_webpage for details); get_weather for weather; find_places / get_directions for places and routes; create_image to draw or generate a picture; create_document for slides (pptx), PDF or Word files; create_file for code or text files. When you receive a <tool_response>, use it to answer. Never invent tool results, and don't paste file contents or image links that were already shown to the user.
+How to write great answers:
+- Start with the direct answer in the first sentence, then add the details that matter.
+- Format with markdown: short paragraphs, **bold** key terms, numbered lists for steps, bullet lists for options, tables for comparisons, and fenced code blocks with the language name for code.
+- Fit the length to the question: a quick question gets 1-3 sentences; explanations, how-tos and plans get clear sections with ### headings.
+- Be specific: real numbers, names and examples. If you're not sure about something, say so instead of guessing.
+- After using tools, explain what you found in your own words, cite web sources as [title](url), and mention any image, file, slides or code results you made.
+
+Use tools when they help: search_web for current events, facts you're unsure of or anything recent (then read_webpage for details); get_weather for weather; find_places / get_directions for places and routes; create_image to draw or generate a picture; create_document for slides (pptx), PDF or Word files; create_file for code or text files; run_code to calculate, analyse data or make charts (the user approves each run). When you receive a <tool_response>, use it to answer. Never invent tool results, and don't paste file contents or image links that were already shown to the user.
 
 # Tools
 
@@ -364,6 +388,33 @@ export class ToolCallScanner {
   }
 }
 
+// Small models often put raw newlines/tabs inside JSON strings (e.g. code).
+function escapeControlCharsInStrings(json) {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i];
+    if (inString) {
+      if (ch === "\\") {
+        out += ch + (json[i + 1] ?? "");
+        i++;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      else if (ch === "\n") {
+        out += "\\n";
+        continue;
+      } else if (ch === "\r") continue;
+      else if (ch === "\t") {
+        out += "\\t";
+        continue;
+      }
+    } else if (ch === '"') inString = true;
+    out += ch;
+  }
+  return out;
+}
+
 // Parse a tool call body like {"name": "x", "arguments": {...}}, tolerating
 // small-model slips (code fences, trailing commas, arguments as a string).
 export function parseToolCall(raw) {
@@ -373,7 +424,8 @@ export function parseToolCall(raw) {
   if (first < 0 || last < first) return null;
   t = t.slice(first, last + 1);
   let obj;
-  for (const candidate of [t, t.replace(/,\s*([}\]])/g, "$1")]) {
+  const fixed = escapeControlCharsInStrings(t);
+  for (const candidate of [t, fixed, fixed.replace(/,\s*([}\]])/g, "$1")]) {
     try {
       obj = JSON.parse(candidate);
       break;
@@ -395,7 +447,7 @@ export function parseToolCall(raw) {
 
 const MAX_STEPS = 5;
 
-export async function handleLocalChat({ body, messages, file, send, isClosed, signal }) {
+export async function handleLocalChat({ body, messages, file, send, isClosed, signal, requestApproval }) {
   if (!file || !fs.existsSync(file)) {
     send({
       t: "error",
@@ -524,7 +576,8 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
       for (const c of calls) {
         const parsed = parseToolCall(c.json);
         if (!parsed) {
-          responses.push({ error: "Your tool call wasn't valid JSON. Use the exact <tool_call> format." });
+          if (c.index !== null) send({ t: "tool_done", id: c.id, name: c.json.match(/"name"\s*:\s*"([^"]+)"/)?.[1] || "tool", error: true });
+          responses.push({ error: "Your tool call wasn't valid JSON. Use the exact <tool_call> format with properly escaped strings." });
           continue;
         }
         const known = LOCAL_TOOL_NAMES.includes(parsed.name);
@@ -534,7 +587,10 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
           send({ t: "block_stop", it, i: c.index });
         }
         send({ t: "tool_run", id: c.id, name: parsed.name, input: parsed.input });
-        const out = known ? await runTool(parsed.name, parsed.input, ctx) : { error: `Unknown tool "${parsed.name}". Available: ${LOCAL_TOOL_NAMES.join(", ")}` };
+        const out = known ? await runTool(parsed.name, parsed.input, {
+              ...ctx,
+              requestApproval: (p) => requestApproval({ ...p, tool_use_id: c.id }),
+            }) : { error: `Unknown tool "${parsed.name}". Available: ${LOCAL_TOOL_NAMES.join(", ")}` };
         if (isClosed()) return;
         send({ t: "tool_done", id: c.id, name: parsed.name, error: !!out.error, display: out.display });
         let json = JSON.stringify(out.error ? { error: out.error } : out.result);

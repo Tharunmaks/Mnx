@@ -3,7 +3,15 @@
 // Weather, geocoding, places and routing use free, key-less public APIs
 // (Open-Meteo, OpenStreetMap Nominatim, OSRM).
 
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 const UA = "Mnx-Assistant/1.0 (+https://github.com/Tharunmaks/Mnx)";
+// The code runner only ever runs after the user approves each program in the
+// chat. Turn it off completely with MNX_CODE_RUNNER=off.
+export const CODE_RUNNER = !/^(0|off|false|no)$/i.test(process.env.MNX_CODE_RUNNER || "on");
 
 export const TOOLS = [
   {
@@ -133,6 +141,25 @@ export const TOOLS = [
       additionalProperties: false,
     },
   },
+  ...(CODE_RUNNER
+    ? [
+        {
+          name: "run_code",
+          description:
+            "Run a short Python or JavaScript program on the user's device and get its output. The user sees the code and must approve it first. Use it for calculations, data processing, simulations and charts (Python: save charts with matplotlib to a .png in the current folder and they are shown to the user). Always print the results you need.",
+          eager_input_streaming: true,
+          input_schema: {
+            type: "object",
+            properties: {
+              language: { type: "string", enum: ["python", "javascript"] },
+              code: { type: "string", description: "The complete program" },
+            },
+            required: ["language", "code"],
+            additionalProperties: false,
+          },
+        },
+      ]
+    : []),
 ];
 
 // Extra tools only the local model needs (online models use Anthropic's
@@ -504,7 +531,110 @@ const handlers = {
       display: { kind: "image", prompt, url, width, height },
     };
   },
+
+  async run_code(input, ctx) {
+    if (!CODE_RUNNER) throw new Error("The code runner is turned off on this device (MNX_CODE_RUNNER=off).");
+    const language = input.language === "javascript" ? "javascript" : "python";
+    if (typeof input.code !== "string" || !input.code.trim()) throw new Error("'code' is required");
+    if (input.code.length > 100_000) throw new Error("The program is too long (100 KB max).");
+    // Never run without an explicit OK from the user.
+    const approved = typeof ctx?.requestApproval === "function" && (await ctx.requestApproval({ kind: "run_code", language, code: input.code }));
+    if (!approved) {
+      return {
+        result: { ran: false, reason: "The user chose not to run this code." },
+        display: { kind: "code_run", language, code: input.code, declined: true },
+      };
+    }
+    return runCode(language, input.code);
+  },
 };
+
+/* ───────────── Code runner ───────────── */
+function findExe(names) {
+  for (const name of names)
+    for (const dir of (process.env.PATH || "").split(path.delimiter)) {
+      const p = path.join(dir, name);
+      try {
+        fs.accessSync(p, fs.constants.X_OK);
+        return p;
+      } catch {
+        /* keep looking */
+      }
+    }
+  return null;
+}
+
+const IMAGE_MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp" };
+const OUTPUT_LIMIT = 20000;
+
+async function runCode(language, code) {
+  const exe = language === "python" ? findExe(["python3", "python"]) : process.execPath;
+  if (!exe) throw new Error("Python isn't installed on this device. On Termux run: pkg install python");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mnx-run-"));
+  const file = path.join(dir, language === "python" ? "main.py" : "main.mjs");
+  fs.writeFileSync(file, code);
+  const started = Date.now();
+  try {
+    const run = await new Promise((resolve) => {
+      // A minimal environment: no API keys or other secrets from this server.
+      const child = spawn(exe, [file], {
+        cwd: dir,
+        env: {
+          PATH: process.env.PATH,
+          HOME: process.env.HOME || dir,
+          TMPDIR: dir,
+          LANG: "C.UTF-8",
+          PYTHONIOENCODING: "utf-8",
+          PYTHONUNBUFFERED: "1",
+          MPLBACKEND: "Agg",
+          ...(process.env.PREFIX ? { PREFIX: process.env.PREFIX } : {}),
+          ...(process.env.LD_PRELOAD ? { LD_PRELOAD: process.env.LD_PRELOAD } : {}),
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => stdout.length < OUTPUT_LIMIT && (stdout += d));
+      child.stderr.on("data", (d) => stderr.length < OUTPUT_LIMIT && (stderr += d));
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGKILL");
+      }, Number(process.env.MNX_CODE_TIMEOUT_MS) || 30000);
+      child.on("close", (exitCode) => {
+        clearTimeout(timer);
+        resolve({ stdout: stdout.slice(0, OUTPUT_LIMIT), stderr: stderr.slice(0, OUTPUT_LIMIT), exitCode, timedOut });
+      });
+      child.on("error", (e) => {
+        clearTimeout(timer);
+        resolve({ stdout: "", stderr: e.message, exitCode: -1, timedOut: false });
+      });
+    });
+    // Show images the program saved (charts etc.).
+    const images = [];
+    for (const name of fs.readdirSync(dir).sort()) {
+      const mime = IMAGE_MIME[path.extname(name).toLowerCase()];
+      const full = path.join(dir, name);
+      if (!mime || fs.statSync(full).size > 4 * 1048576) continue;
+      images.push({ name, src: `data:${mime};base64,${fs.readFileSync(full).toString("base64")}` });
+      if (images.length >= 4) break;
+    }
+    const seconds = Math.round((Date.now() - started) / 100) / 10;
+    return {
+      result: {
+        ran: true,
+        exit_code: run.exitCode,
+        timed_out: run.timedOut,
+        stdout: run.stdout.slice(0, 4000),
+        stderr: run.stderr.slice(-2000),
+        images_shown_to_user: images.map((i) => i.name),
+      },
+      display: { kind: "code_run", language, code, ...run, seconds, images },
+    };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 /* ───────────── Free web search ───────────── */
 function decodeEntities(s) {
