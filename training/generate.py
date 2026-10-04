@@ -31,6 +31,7 @@ import content_code as CC  # noqa: E402
 import content_codegen as CG  # noqa: E402
 import content_docs as D  # noqa: E402
 import content_more as M  # noqa: E402
+import content_more2 as M2  # noqa: E402
 import content_qa as Q  # noqa: E402
 
 PROMPT = json.load(open(os.path.join(HERE, "system_prompt.json"), encoding="utf-8"))
@@ -45,13 +46,13 @@ class Gen:
             self.cities = C.HELD_OUT_CITIES + M.MORE_HELD_OUT_CITIES
             self.subjects = C.HELD_OUT_IMAGE_SUBJECTS
             self.animals, self.objects, self.settings = M.HELD_OUT_ANIMALS, [], M.HELD_OUT_SETTINGS
-            self.topics = {**C.HELD_OUT_DOC_TOPICS, **D.MORE_HELD_OUT_DOC_TOPICS}
+            self.topics = {**C.HELD_OUT_DOC_TOPICS, **D.MORE_HELD_OUT_DOC_TOPICS, **M2.HELD_OUT_DOC_TOPICS2}
             self.code = C.HELD_OUT_CODE_TASKS + CC.MORE_HELD_OUT_CODE_TASKS
         else:
             self.cities = C.CITIES + M.MORE_CITIES
             self.subjects = C.IMAGE_SUBJECTS
             self.animals, self.objects, self.settings = M.ANIMALS, M.OBJECTS, M.SETTINGS
-            self.topics = {**C.DOC_TOPICS, **D.MORE_DOC_TOPICS}
+            self.topics = {**C.DOC_TOPICS, **D.MORE_DOC_TOPICS, **M2.DOC_TOPICS2}
             self.code = C.CODE_TASKS + CC.MORE_CODE_TASKS
         self.algo_pairs = [(a, l) for a in A.ALGOS for l in A.LANGS if A.held_out(a, l) == held_out]
         # Generated code families, grouped so no single family dominates.
@@ -63,8 +64,9 @@ class Gen:
         self.place_kinds = C.PLACE_KINDS + M.MORE_PLACE_KINDS
         self.cuisines = C.CUISINES + M.MORE_CUISINES
         self.streets = C.STREETS + M.MORE_STREETS
-        self.qa = C.QA + Q.MORE_QA
-        self.unsupported_bank = C.UNSUPPORTED + Q.MORE_UNSUPPORTED
+        self.qa = C.QA + Q.MORE_QA + M2.QA2
+        self.unsupported_bank = C.UNSUPPORTED + Q.MORE_UNSUPPORTED + M2.UNSUPPORTED2
+        self.clarify_bank = Q.CLARIFY + M2.CLARIFY2
 
     # ───────── format helpers (must match local.js) ─────────
     def system(self):
@@ -265,7 +267,8 @@ class Gen:
 
     def location(self):
         city, country = self.pick(self.cities)
-        user = self.pick(["Where am I?", "What's my current location?", "Which city am I in right now?"])
+        user = self.pick(["Where am I?", "What's my current location?", "Which city am I in right now?", "what area am I in", "where am i rn",
+                          "Which city is this?", "my location?", "Can you tell where I am?", "What neighbourhood am I in?"])
         if self.r.random() < 0.25:
             result = {"available": False, "message": "The user hasn't shared their location. Ask them which city they're in."}
             answer = "I can't see your location yet. Tap the 📍 button next to the message box to share it, or tell me which city you're in."
@@ -652,11 +655,11 @@ class Gen:
         return {"category": "no_tool", "messages": msgs, "mock": {}, "expect": {"tool": None, "answer": [re.escape(ans_s)]}, "train_from": 1}
 
     def clarify(self):
-        asks, answer = self.pick(Q.CLARIFY)
+        asks, answer = self.pick(self.clarify_bank)
         sys_msg, _ = self.system()
         msgs = [sys_msg, {"role": "user", "content": self.noisy(self.pick(asks))},
                 {"role": "assistant", "content": self.think("Need more details", "The request is too vague to act on, so I'll ask one short question first.") + answer}]
-        return {"category": "clarify", "messages": msgs, "mock": {}, "expect": {"tool": None, "answer": [r"\?"]}, "train_from": 1}
+        return {"category": "clarify", "messages": msgs, "mock": {}, "expect": {"tool": None, "answer": [r"\?|please|tell me|which|what"]}, "train_from": 1}
 
     def notes_slides(self):
         title, sections = self.pick(list(self.topics.items()))
@@ -792,6 +795,142 @@ class Gen:
         hist = [{"role": "user", "content": f"What's new about {title.lower()}?"}, {"role": "assistant", "content": f"Here's a quick summary: {sections[0][1][0]} ([source]({res1[0]['url']}))."}]
         return self.document(title=title, fmt="pptx", n=self.r.randint(3, 5), user=self.pick(["Turn that into a presentation", "make slides about this", "Can you make a ppt on it?"]), history=hist, category="followup")
 
+    SENTENCES = ["the quick brown fox jumps over the lazy dog", "mnx makes my phone smarter every day", "learning to code is a superpower",
+                 "chennai is hot in may", "rain makes the city smell fresh", "practice beats talent when talent does not practice",
+                 "small steps every day lead to big results", "coffee first then the world", "the stars look bright tonight",
+                 "books are portable magic", "good design is as little design as possible", "my cat sleeps all afternoon"]
+    UNITS = [("km", "miles", 0.621371), ("miles", "km", 1.609344), ("kg", "lb", 2.20462), ("lb", "kg", 0.453592), ("inches", "cm", 2.54),
+             ("feet", "m", 0.3048), ("litres", "gallons", 0.264172), ("cups", "ml", 236.588)]
+
+    def quick_facts(self):
+        """Simple things answered exactly, without tools (results computed here)."""
+        k = self.r.randrange(9)
+        s = self.pick(self.SENTENCES)
+        if k == 0:
+            mode = self.pick(["uppercase", "title case", "lowercase"])
+            text = s.upper() if mode == "uppercase" else s.title() if mode == "title case" else s.lower()
+            q, a, key = f"Convert to {mode}: {s if mode != 'lowercase' else s.upper()}", text, text
+        elif k == 1:
+            n = len(s.split())
+            q, a, key = self.pick([f"How many words are in \"{s}\"?", f"count the words: {s}"]), f"**{n} words.**", str(n)
+        elif k == 2:
+            w = s.split()
+            r = " ".join(sorted(w))
+            q, a, key = f"Sort these words alphabetically: {', '.join(w)}", f"{', '.join(sorted(w))}", sorted(w)[0]
+        elif k == 3:
+            n = self.r.randint(2, 199)
+            prime = n > 1 and all(n % d for d in range(2, int(n ** 0.5) + 1))
+            div = next((d for d in range(2, n) if n % d == 0), None)
+            q = self.pick([f"Is {n} a prime number?", f"is {n} prime"])
+            a = f"**Yes, {n} is prime.** It has no divisors other than 1 and itself." if prime else f"**No, {n} is not prime.** It's divisible by {div} ({n} = {div} × {n // div})."
+            key = "Yes" if prime else "No"
+        elif k == 4:
+            u1, u2, f = self.pick(self.UNITS)
+            v = self.r.choice([1, 2, 3, 5, 10, 12, 20, 25, 50, 100])
+            res = round(v * f, 2)
+            q, a, key = self.pick([f"Convert {v} {u1} to {u2}", f"{v} {u1} in {u2}?", f"how many {u2} is {v} {u1}"]), f"**{v} {u1} ≈ {res:g} {u2}.**\n\n1 {u1} = {f:g} {u2}, so {v} × {f:g} = {res:g}.", f"{res:g}"
+        elif k == 5:
+            bill, tip = self.r.choice([200, 450, 800, 1250, 2000, 3600]), self.r.choice([5, 10, 15, 18, 20])
+            t = bill * tip / 100
+            q, a, key = self.pick([f"What's a {tip}% tip on {bill}?", f"{tip} percent tip on {bill}"]), f"A {tip}% tip on {bill} is **{t:g}**, making the total **{bill + t:g}**.", f"{t:g}"
+        elif k == 6:
+            month, year = self.r.randrange(1, 13), self.r.randint(1990, 2035)
+            days = (dt.date(year + (month == 12), month % 12 + 1, 1) - dt.timedelta(days=1)).day
+            name = dt.date(year, month, 1).strftime("%B")
+            q, a, key = self.pick([f"How many days are in {name} {year}?", f"days in {name} {year}"]), f"**{name} {year} has {days} days.**" + (" (it's a leap year)" if month == 2 and days == 29 else ""), str(days)
+        elif k == 7:
+            w = self.pick(s.split())
+            q, a, key = f"Spell \"{w}\" backwards", f"**{w[::-1]}**", w[::-1]
+        else:
+            days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            d, n = self.r.randrange(7), self.r.randint(1, 30)
+            q, a, key = self.pick([f"If today is {days[d]}, what day will it be in {n} days?", f"{days[d]} + {n} days = ?"]), f"It will be **{days[(d + n) % 7]}**.", days[(d + n) % 7]
+        sys_msg, _ = self.system()
+        msgs = [sys_msg, {"role": "user", "content": self.noisy(q)}, {"role": "assistant", "content": self.think("Quick answer", "This is simple enough to answer directly, without a tool.") + a}]
+        return {"category": "no_tool", "messages": msgs, "mock": {}, "expect": {"tool": None, "answer": [re.escape(key)]}, "train_from": 1}
+
+    def multi2(self):
+        """More multi-step chains in one turn."""
+        k = self.r.randrange(4)
+        city, country = self.pick(self.cities)
+        if k == 0:  # find the nearest X, then directions to it
+            asks, query, osm, parts = self.pick(self.place_kinds)
+            c = self.places()
+            places = self.first_result(c)["places"]
+            p = places[0]
+            mins = max(2, round(p["distance_km"] / 4.8 * 60))
+            route = {"origin": "Current location", "destination": f"{p['name']}, {p['address']}", "mode": "walking", "distance_km": p["distance_km"], "duration_min": mins,
+                     "steps": [{"instruction": "Head north", "distance_m": 150}, {"instruction": f"Arrive at {p['name']}", "distance_m": 0}], "maps_url": "https://www.google.com/maps/dir/?api=1&destination=x"}
+            what = self.first_call(c)["arguments"]["query"]
+            user = self.pick([f"Find the nearest {what} and tell me how to get there", f"nearest {what}? and directions pls"])
+            steps = [("Finding places", f"First I'll find {what} near the user.", "find_places", {"query": what, "near": "my location"}, self.first_result(c)),
+                     ("Getting directions", f"The nearest is {p['name']}; now the route.", "get_directions", {"origin": "my location", "destination": f"{p['name']}, {p['address']}", "mode": "walking"}, route)]
+            answer = f"The nearest is **{p['name']}** ({p['distance_km']} km, {p['address']}). It's about **{mins} min** on foot:\n\n1. Head north\n2. Arrive at {p['name']}\n\n[Open the route in Google Maps]({route['maps_url']})"
+            return self.conv("multi_step", user, steps, ("Both done", "I'll give the place and the route."), answer, {"tool": "find_places", "then": "get_directions", "answer": [re.escape(p["name"])]})
+        if k == 1:  # weather, then indoor places if it's raining
+            w = self.weather(city=city, user=f"Is it raining in {city}? If yes, suggest indoor places to visit")
+            res = self.first_result(w)
+            kind = self.pick(["museum", "cinema", "library", "cafe"])
+            places = [{"name": f"{city} {self.pick(['City', 'Grand', 'Heritage', 'Central'])} {kind.title()}", "type": kind, "address": f"{self.r.randint(1, 99)} {self.pick(self.streets)}, {city}",
+                       "latitude": 0.0, "longitude": 0.0, "distance_km": round(self.r.uniform(0.5, 4), 1), "maps_url": "https://www.google.com/maps/search/?api=1&query=x"} for _ in range(3)]
+            pres = {"query": kind, "near": city, "count": 3, "places": places}
+            cond = res["current"]["condition"]
+            steps = [("Checking the weather", f"First, the weather in {city}.", "get_weather", {"location": city}, res),
+                     ("Finding indoor places", f"It's {cond.lower()}, so I'll find {kind}s to visit indoors.", "find_places", {"query": kind, "near": city}, pres)]
+            answer = f"It's **{cond.lower()}** and {res['current']['temperature']} in {city} right now. Good indoor options:\n\n" + "\n".join(f"- **{p['name']}**, {p['distance_km']} km away ({p['address']})" for p in places)
+            return self.conv("multi_step", f"Is it raining in {city}? Suggest indoor places to visit", steps, ("Done", "I'll give the weather and the indoor ideas."), answer, {"tool": "get_weather", "then": "find_places", "answer": [re.escape(places[0]["name"])]})
+        if k == 2:  # where am I + weather there
+            area = self.pick(["Old Town", "Central", "Lakeside", "Riverside", "Market Area"])
+            loc = {"latitude": 12.97, "longitude": 77.59, "name": f"{area}, {city}, {country}"}
+            w = self.weather(city=city, user=f"Where am I and what's the weather here?")
+            res = self.first_result(w)
+            steps = [("Finding the location", "I need the user's location first.", "get_user_location", {}, loc),
+                     ("Checking the weather", f"They're in {city}; now the weather.", "get_weather", {"location": city}, res)]
+            answer = f"You're in **{area}, {city}**. It's **{res['current']['temperature']}** and {res['current']['condition'].lower()} right now (feels like {res['current']['feels_like']})."
+            return self.conv("multi_step", self.pick(["Where am I and what's the weather here?", "whats my location and weather"]), steps, ("Done", "Location and weather together."), answer,
+                             {"tool": "get_user_location", "then": "get_weather", "answer": [re.escape(city)]})
+        # search → read the top page → PDF report
+        title, sections = self.pick(list(self.topics.items()))
+        res = [{"title": f"{title}: a complete guide", "url": f"https://guides.example.org/{title.lower().replace(' ', '-')}", "snippet": sections[0][1][0] + "."}]
+        page = {"url": res[0]["url"], "title": res[0]["title"], "text": " ".join(f"{t}. " + ". ".join(b) + "." for t, b in sections)}
+        doc = {"format": "pdf", "title": title, "subtitle": "Research summary", "sections": [{"heading": t, "body": "\n".join(f"- {x}" for x in b)} for t, b in sections]}
+        steps = [("Researching", "I'll search first.", "search_web", {"query": f"{title.lower()} guide"}, {"query": f"{title.lower()} guide", "results": res}),
+                 ("Reading the source", "I'll read the top result for details.", "read_webpage", {"url": res[0]["url"]}, page),
+                 ("Writing the report", "Now I'll turn it into a PDF.", "create_document", doc, {"delivered": True, "filename": f"{title}.pdf", "format": "pdf", "pages_or_slides": len(sections)})]
+        answer = f"I researched **{title.lower()}** and made **{title}.pdf** with {len(sections)} sections:\n\n" + "\n".join(f"{i + 1}. {t}" for i, (t, _) in enumerate(sections)) + f"\n\nSource: [{res[0]['title']}]({res[0]['url']})"
+        return self.conv("multi_step", self.pick([f"Research {title.lower()} and make me a PDF report", f"make a pdf report on {title.lower()} using the web"]), steps,
+                         ("Report ready", "I'll summarise and cite the source."), answer, {"tool": "search_web", "then": "create_document", "answer": ["pdf"]})
+
+    def tool_error2(self):
+        k = self.r.randrange(3)
+        if k == 0:  # a page that can't be read: fall back to the search snippet
+            c = self.search()
+            m = c["messages"]
+            # Use the successful search (some search examples start with a failed attempt).
+            results = next(json.loads(x["content"][len("<tool_response>\n"):-len("\n</tool_response>")]) for x in m
+                           if x["role"] == "user" and x["content"].startswith("<tool_response>") and '"results"' in x["content"])
+            res = results["results"][0]
+            q = results["query"]
+            final = m[-1]["content"].split("</think>\n", 1)[1]
+            return self.conv("tool_error", m[1]["content"], [
+                ("Searching the web", "This needs current information.", "search_web", {"query": q}, results),
+                ("Reading the top result", "I'll open the first result for details.", "read_webpage", {"url": res["url"]}, {"error": "HTTP 403"})],
+                ("Using the snippet", "The page blocked me, but the search snippet answers the question."), final, c["expect"], noise=False)
+        if k == 1:  # weather service down
+            city, _ = self.pick(self.cities)
+            return self.conv("tool_error", self.pick([f"weather in {city}", f"What's the weather in {city}?"]),
+                             [("Checking the weather", f"I'll check {city}.", "get_weather", {"location": city}, {"error": "api.open-meteo.com returned HTTP 503"})],
+                             ("Service down", "The weather service isn't responding; I'll say so honestly."),
+                             f"Sorry, the weather service isn't responding right now, so I can't get the weather for {city}. Please try again in a few minutes.",
+                             {"tool": "get_weather", "answer": ["sorry|can't|couldn't|not responding"]})
+        user, code, _ = self._program()
+        slow = code + "\nwhile True:\n    pass"
+        res = {"ran": True, "exit_code": None, "timed_out": True, "stdout": "", "stderr": "", "images_shown_to_user": []}
+        return self.conv("tool_error", user, [("Computing it", "I'll run a short program.", "run_code", {"language": "python", "code": slow}, res)],
+                         ("Timed out", "It ran too long because of an endless loop I added by mistake. I'll explain."),
+                         "The program **timed out** (it ran for more than 30 seconds) because it had an endless loop. Ask me again and I'll run a corrected version.",
+                         {"tool": "run_code", "answer": ["timed out|time"]})
+
     def direct(self):
         asks, answer = self.pick(self.qa)
         user = self.pick(asks)
@@ -808,9 +947,10 @@ class Gen:
 
 
 # Share of each category in the data.
-MIX = [("weather", 0.09), ("search", 0.12), ("location", 0.02), ("places", 0.08), ("directions", 0.05), ("image", 0.09),
+MIX = [("weather", 0.08), ("search", 0.11), ("location", 0.02), ("places", 0.07), ("directions", 0.04), ("image", 0.08),
        ("document", 0.08), ("notes_slides", 0.02), ("code_file", 0.09), ("run_code", 0.10), ("chart", 0.03), ("multi", 0.03),
-       ("direct", 0.06), ("simple_math", 0.03), ("clarify", 0.02), ("unsupported", 0.02), ("followup", 0.05), ("tool_error", 0.02)]
+       ("direct", 0.05), ("simple_math", 0.03), ("clarify", 0.02), ("unsupported", 0.02), ("followup", 0.05), ("tool_error", 0.02),
+       ("quick_facts", 0.03), ("multi2", 0.02), ("tool_error2", 0.01)]
 
 
 def generate(n, seed, held_out):

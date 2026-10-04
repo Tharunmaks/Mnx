@@ -75,3 +75,24 @@ test("starts a new server on the next port if a different model is loaded", asyn
   const props = await (await fetch(`http://127.0.0.1:${port + 1}/props`)).json();
   assert.equal(props.model_path, modelA);
 });
+
+test("recovers when llama-server is killed between messages (e.g. Android freeing memory)", async () => {
+  const port = 34400 + Math.floor(Math.random() * 100);
+  process.env.MNX_LLAMA_PORT = String(port);
+  delete process.env.FAKE_LLAMA_LOG;
+  const mod = await import(`../local.js?recover=${port}`);
+  assert.equal((await ask(mod, modelA)).filter((e) => e.t === "error").length, 0);
+  // Find and kill the llama-server Mnx started.
+  const pid = fs.readdirSync("/proc").find((p) => {
+    try {
+      return /llama-server/.test(fs.readFileSync(`/proc/${p}/cmdline`, "utf8")) && fs.readFileSync(`/proc/${p}/cmdline`, "utf8").includes(String(port));
+    } catch {
+      return false;
+    }
+  });
+  assert.ok(pid, "llama-server should be running");
+  process.kill(Number(pid), "SIGKILL");
+  const events = await ask(mod, modelA); // straight away, before Mnx notices
+  assert.equal(events.filter((e) => e.t === "error").length, 0, JSON.stringify(events.find((e) => e.t === "error")));
+  assert.ok(events.some((e) => e.t === "done"));
+});

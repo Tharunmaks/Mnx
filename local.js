@@ -150,6 +150,7 @@ async function ensureLlamaServer(file) {
     if (process.env.MNX_GPU_LAYERS) args.push("-ngl", process.env.MNX_GPU_LAYERS); // e.g. 99 on a GPU machine
     console.log(`[local] starting ${bin} ${args.join(" ")}`);
     const child = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
+    serverChild = child;
     let log = "";
     let exited = null;
     child.stderr.on("data", (d) => (log = (log + d).slice(-2000)));
@@ -184,7 +185,29 @@ async function ensureLlamaServer(file) {
   }
 }
 
+// If llama-server died (Android can kill it to free memory) the next request
+// fails before any output. Restart it and retry once, so the user never
+// sees that error.
+let serverChild = null;
 async function generateViaServer(file, history, prompt, onChunk, signal) {
+  let produced = false;
+  const tracked = (chunk, kind) => {
+    produced = true;
+    onChunk(chunk, kind);
+  };
+  try {
+    return await generateViaServerOnce(file, history, prompt, tracked, signal);
+  } catch (err) {
+    const lost = /fetch failed|ECONNREFUSED|ECONNRESET|socket|other side closed/i.test(`${err?.message} ${err?.cause?.code} ${err?.cause?.message}`);
+    if (!lost || produced || signal?.aborted || process.env.MNX_LLAMA_SERVER) throw err;
+    console.warn("[local] llama-server connection lost; restarting it");
+    serverChild?.kill();
+    serverStart = null;
+    return generateViaServerOnce(file, history, prompt, tracked, signal);
+  }
+}
+
+async function generateViaServerOnce(file, history, prompt, onChunk, signal) {
   const url = await ensureLlamaServer(file);
   const res = await fetch(`${url}/v1/chat/completions`, {
     method: "POST",
