@@ -1,0 +1,68 @@
+#!/usr/bin/env node
+// Fake llama.cpp `llama-server` for tests: answers /health and streams
+// OpenAI-style chat completions that behave like a Qwen2.5 model using
+// <think> and <tool_call>. The reply is chosen from the latest user prompt.
+// Every request body is appended (one JSON per line) to $FAKE_LLAMA_LOG.
+import http from "node:http";
+import fs from "node:fs";
+
+const args = process.argv;
+const port = Number(args[args.indexOf("--port") + 1]);
+const delay = Number(process.env.FAKE_LLAMA_DELAY_MS || 3);
+let ready = false;
+setTimeout(() => (ready = true), Number(process.env.FAKE_LLAMA_LOAD_MS || 200));
+
+const call = (name, args) => `<tool_call>\n${JSON.stringify({ name, arguments: args })}\n</tool_call>`;
+
+function reply(messages) {
+  const last = messages[messages.length - 1].content;
+  const prompt = [...messages].reverse().find((m) => m.role === "user" && !m.content.includes("<tool_response>"))?.content || "";
+  if (last.includes("<tool_response>")) {
+    const n = messages.filter((m) => m.role === "user" && m.content.includes("<tool_response>")).length;
+    if (/two tools/i.test(prompt) && n === 1) return `<think>**Next step**\nNow the image.</think>\n${call("create_image", { prompt: "a red fox" })}`;
+    if (/loop forever/i.test(prompt)) return call("create_image", { prompt: `again ${n}` });
+    return `<think>**Using the results**\nSummarize.</think>\nDone. Results: ${last.slice(last.indexOf("<tool_response>") + 16, last.indexOf("<tool_response>") + 76).replace(/\n/g, " ")}`;
+  }
+  if (/raw newline code/i.test(prompt))
+    // Raw newlines inside the JSON string, as small models often write.
+    return `<think>**Doing the math**\nRun code.</think>\n<tool_call>\n{"name": "run_code", "arguments": {"language": "python", "code": "x = 6 * 7\nprint('answer', x)"}}\n</tool_call>`;
+  if (/leak/i.test(prompt))
+    return call("run_code", { language: "python", code: "import os\nprint('KEY=' + os.environ.get('ANTHROPIC_API_KEY', 'none'))" });
+  if (/two tools/i.test(prompt)) return call("create_file", { filename: "a.txt", content: "hello" });
+  if (/loop forever/i.test(prompt)) return call("create_image", { prompt: "start" });
+  if (/bad json/i.test(prompt)) return `<tool_call>\n{"name": "create_image", "arguments": {"prompt": oops}\n</tool_call>`;
+  if (/unknown tool/i.test(prompt)) return call("delete_everything", {});
+  if (/no think/i.test(prompt)) return "Plain answer without thinking.";
+  if (/unclosed/i.test(prompt)) return "<think>**Hmm**\nI never close this think tag";
+  if (/slides/i.test(prompt))
+    return call("create_document", { format: "pptx", title: "Test Deck", slides: [{ title: "One", bullets: ["a", "b"] }] });
+  if (/slow/i.test(prompt)) return `<think>**Slow**\n${"thinking ".repeat(400)}</think>\nSlow answer`;
+  return `<think>**Understanding the question**\nSimple greeting.</think>\nHello! I'm **Mnx**.`;
+}
+
+http
+  .createServer(async (req, res) => {
+    if (req.url === "/props") {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ model_path: args[args.indexOf("-m") + 1] }));
+    }
+    if (req.url === "/health") {
+      res.writeHead(ready ? 200 : 503);
+      return res.end(ready ? '{"status":"ok"}' : '{"status":"loading model"}');
+    }
+    let body = "";
+    for await (const c of req) body += c;
+    const json = JSON.parse(body);
+    if (process.env.FAKE_LLAMA_LOG) fs.appendFileSync(process.env.FAKE_LLAMA_LOG, JSON.stringify(json) + "\n");
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    let closed = false;
+    res.on("close", () => (closed = true));
+    for (const c of reply(json.messages).match(/[\s\S]{1,7}/g)) {
+      if (closed) return;
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: c } }] })}\n\n`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+    res.write("data: [DONE]\n\n");
+    res.end();
+  })
+  .listen(port, "127.0.0.1");

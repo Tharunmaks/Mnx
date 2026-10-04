@@ -117,13 +117,34 @@ function findOnPath(name) {
   return null;
 }
 
+// "free" if nothing answers on the port, else the model path it serves (or "busy").
+async function probeLlamaServer(url) {
+  try {
+    const r = await fetch(`${url}/props`, { signal: AbortSignal.timeout(1500) });
+    const props = await r.json().catch(() => ({}));
+    return props.model_path ? path.resolve(props.model_path) : "busy";
+  } catch (err) {
+    return err?.cause?.code === "ECONNREFUSED" ? "free" : "busy";
+  }
+}
+
 let serverStart = null;
 async function ensureLlamaServer(file) {
   if (process.env.MNX_LLAMA_SERVER) return process.env.MNX_LLAMA_SERVER.replace(/\/+$/, "");
   serverStart ||= (async () => {
     const bin = process.env.MNX_LLAMA_SERVER_BIN || findOnPath("llama-server");
     if (!bin) throw new Error("llama-server wasn't found. On Termux run: pkg install llama-cpp");
-    const port = Number(process.env.MNX_LLAMA_PORT) || 8089;
+    // Android can kill Mnx without warning, leaving an old llama-server
+    // running. Reuse it if it has this model loaded; otherwise find a free port.
+    let port = Number(process.env.MNX_LLAMA_PORT) || 8089;
+    for (let tries = 0; tries < 10; tries++, port++) {
+      const state = await probeLlamaServer(`http://127.0.0.1:${port}`);
+      if (state === "free") break;
+      if (state === file) {
+        console.log(`[local] reusing llama-server already running on port ${port}`);
+        return `http://127.0.0.1:${port}`;
+      }
+    }
     const args = ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || 8192)];
     if (process.env.MNX_THREADS) args.push("-t", process.env.MNX_THREADS);
     console.log(`[local] starting ${bin} ${args.join(" ")}`);
@@ -311,8 +332,9 @@ export class ThinkSplitter {
         if (end >= 0) {
           this.thought += this.buf.slice(0, end);
           this.onThink(this.buf.slice(0, end));
-          this.buf = this.buf.slice(end + 8).replace(/^\s+/, "");
+          this.buf = this.buf.slice(end + 8);
           this.mode = "text";
+          this.trimLead = true; // drop blank lines after </think>, even across chunks
           this.onThink(null);
           continue;
         }
@@ -324,6 +346,11 @@ export class ThinkSplitter {
         this.buf = this.buf.slice(this.buf.length - keep);
         return;
       } else {
+        if (this.trimLead) {
+          this.buf = this.buf.replace(/^\s+/, "");
+          if (!this.buf) return;
+          this.trimLead = false;
+        }
         if (this.buf) this.onText(this.buf);
         this.buf = "";
         return;

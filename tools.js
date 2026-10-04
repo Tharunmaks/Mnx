@@ -659,7 +659,8 @@ export function htmlToText(html) {
       .replace(/<[^>]+>/g, " "),
   )
     .replace(/[ \t]+/g, " ")
-    .replace(/\n\s*\n+/g, "\n")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{2,}/g, "\n")
     .trim();
 }
 
