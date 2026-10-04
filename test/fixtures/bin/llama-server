@@ -17,13 +17,19 @@ const call = (name, args) => `<tool_call>\n${JSON.stringify({ name, arguments: a
 // Oracle mode (FAKE_ORACLE=training/data/test.jsonl): replay each test case's
 // reference answers, i.e. behave like a perfect model. Used to check the scorer.
 const oracle = process.env.FAKE_ORACLE
-  ? new Map(fs.readFileSync(process.env.FAKE_ORACLE, "utf8").trim().split("\n").map((l) => JSON.parse(l)).map((c) => [c.messages[1].content, c.reference]))
+  ? new Map(fs.readFileSync(process.env.FAKE_ORACLE, "utf8").trim().split("\n").map((l) => JSON.parse(l)).map((c) => [userKey(c.messages), c.reference]))
   : null;
+// A conversation is identified by the user's own messages (not tool results).
+function userKey(messages) {
+  return messages.filter((m) => m.role === "user" && !m.content.startsWith("<tool_response>")).map((m) => m.content).join("\x1e");
+}
 
 function reply(messages) {
   if (oracle) {
-    const ref = oracle.get(messages.find((m) => m.role === "user").content);
-    const step = messages.filter((m) => m.role === "assistant").length;
+    const ref = oracle.get(userKey(messages));
+    // Count only this turn's steps (after the user's latest message).
+    const lastUser = messages.findLastIndex((m) => m.role === "user" && !m.content.startsWith("<tool_response>"));
+    const step = messages.slice(lastUser + 1).filter((m) => m.role === "assistant").length;
     if (ref) return ref.filter((m) => m.role === "assistant")[step].content;
   }
   const last = messages[messages.length - 1].content;

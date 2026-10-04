@@ -85,9 +85,21 @@ A 3B model sometimes misses a tool or formats a call badly. Mnx repairs common J
 
 `training/` fine-tunes your local model to use Mnx's tools reliably, then measures how reliable it is.
 
-1. **Data.** Run `npm run train:data`. It writes `training/data/train.jsonl` with thousands of conversations in exactly the format Mnx uses at runtime (`<think>`, `<tool_call>`, `<tool_response>`), covering search, weather, places, directions, images, slides/PDF/Word, code files, running code (including when you decline), charts, multi-step tasks, recovering from errors, answering without tools, and saying when it can't do something. Every example is checked with Mnx's own parsers. Code outputs in the data come from actually running the code. No other AI model wrote the data.
-2. **Train.** Open `training/mnx_train.ipynb` in Google Colab with a T4 GPU (free tier works) and run the cells. It does a LoRA fine-tune of Qwen2.5-3B-Instruct with Unsloth, then exports `mnx-q4_k_m.gguf` and the faster-on-phones `mnx-q4_0.gguf`, then uploads them to your Hugging Face repo.
-3. **Measure.** Run `npm run eval -- --model models/mnx-q4_k_m.gguf --target 98`. It runs 400 held-out cases (cities, topics and tasks never seen in training) through Mnx's real tool loop, including the permission step for code, and prints the success rate per category and overall. A case only passes if the right tool was called with valid arguments and the final answer uses the result. On a phone, add `--limit 100` to keep it short.
+1. **Data.** `npm run train:data` writes `training/data/train.jsonl` with **100,000 distinct conversations** (~600 MB, under a minute) in exactly the format Mnx uses at runtime (`<think>`, `<tool_call>`, `<tool_response>`):
+   - Web search (prices, sports, launches, events, software versions, news, films; reading pages; retrying after errors)
+   - Weather, location, places and directions in about 150 cities
+   - Images: combinations of subjects, settings, times of day and 25 styles
+   - Slides, PDF and Word on 26 topics, including turning your notes into slides
+   - 30 code files, all compiled or run by `training/check_code.py`
+   - Running code: about 20 kinds of problems, with outputs from actually running them; includes the user saying no and fixing a failed run
+   - Charts
+   - Follow-ups ("make it portrait", "add a slide…", "what about Delhi?", "directions to the first one")
+   - Clarifying questions, simple math without tools, direct answers, and requests Mnx can't do
+   - Messy phone typing (lowercase, "pls", "wether", "tmrw")
+
+   Every conversation is checked with Mnx's own parsers (`training/validate.mjs`). The 600 test cases use cities, topics and tasks that never appear in training. No other AI model wrote the data.
+2. **Train.** Open `training/mnx_train.ipynb` in Google Colab with a T4 GPU (free tier works) and run the cells. It does a LoRA fine-tune of Qwen2.5-3B-Instruct with Unsloth, learning only the reply to your latest message (not the system prompt, earlier turns or tool results). It saves progress to Google Drive so it can resume after a disconnect. The full 100,000 conversations take roughly 25–35 h on a free T4 (several sessions), 10–12 h on an L4, or 4–6 h on an A100; `USE = 20000` takes about 6 h on a T4. Afterwards it exports `mnx-q4_k_m.gguf` and the faster-on-phones `mnx-q4_0.gguf`, then uploads them to your Hugging Face repo.
+3. **Measure.** Run `npm run eval -- --model models/mnx-q4_k_m.gguf --target 98`. It runs 600 held-out cases (cities, topics and tasks never seen in training) through Mnx's real tool loop, including the permission step for code, and prints the success rate per category and overall. A case only passes if the right tool was called with valid arguments and the final answer uses the result. On a phone, add `--limit 100` to keep it short.
 
 Permission for running code is enforced by Mnx itself, so it never depends on the model. Image quality comes from the image service. Speed depends on your phone; the Q4_0 file and shorter thinking help.
 

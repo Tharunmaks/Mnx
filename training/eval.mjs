@@ -67,7 +67,8 @@ async function runCase(ex) {
   const t0 = Date.now();
   await handleLocalChat({
     body: {},
-    messages: [{ role: "user", content: ex.messages[1].content }],
+    // Earlier turns (follow-ups) are sent as history, like the app does.
+    messages: ex.messages.slice(1).map((m) => ({ role: m.role, content: m.content })),
     file,
     isClosed: () => false,
     requestApproval: async () => {
@@ -116,7 +117,7 @@ for (const [i, ex] of cases.entries()) {
   const c = (byCat[ex.category] ||= { pass: 0, total: 0 });
   c.total++;
   if (!fails.length) c.pass++;
-  else failures.push({ category: ex.category, prompt: ex.messages[1].content, fails, calls: run.calls, answer: run.answer.slice(0, 400) });
+  else failures.push({ category: ex.category, prompt: ex.messages[ex.messages.length - 1].content, fails, calls: run.calls, answer: run.answer.slice(0, 400) });
   if (process.stdout.isTTY) process.stdout.write(`\r  ${i + 1}/${cases.length}`);
 }
 const pass = Object.values(byCat).reduce((a, c) => a + c.pass, 0);

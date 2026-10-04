@@ -2,6 +2,7 @@
 // model is only ever trained on output Mnx can actually understand.
 //   node training/validate.mjs [training/data/train.jsonl]
 import fs from "node:fs";
+import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ThinkSplitter, ToolCallScanner, parseToolCall, LOCAL_TOOLS, STABLE_PROMPT } from "../local.js";
@@ -23,7 +24,7 @@ function parseAssistant(text) {
     onCallEnd: () => calls.push(cur),
   });
   const splitter = new ThinkSplitter((t) => t && (think += t), (t) => scanner.push(t));
-  for (let i = 0; i < text.length; i += 5) splitter.push(text.slice(i, i + 5));
+  for (let i = 0; i < text.length; i += 7) splitter.push(text.slice(i, i + 7));
   splitter.end();
   scanner.end();
   return { think, answer, calls };
@@ -51,10 +52,17 @@ function checkArgs(name, args) {
 export function validateConversation(ex) {
   const m = ex.messages;
   if (m[0]?.role !== "system" || !m[0].content.startsWith(STABLE_PROMPT)) return "system prompt doesn't match local.js (re-run export_prompt.mjs)";
-  if (m[1]?.role !== "user") return "second message must be the user";
-  for (let i = 2; i < m.length; i++) {
+  // Earlier turns (follow-ups) are plain user/assistant text, exactly as Mnx
+  // sends history. Only the turn after `train_from` is learned.
+  const from = ex.train_from ?? 1;
+  for (let i = 1; i <= from; i++) {
+    const want = (i - from) % 2 === 0 ? "user" : "assistant";
+    if (m[i]?.role !== want) return `history message ${i} should be ${want}`;
+    if (want === "assistant" && /<\/?(think|tool_call)>/.test(m[i].content)) return `history message ${i} must be a plain answer`;
+  }
+  for (let i = from + 1; i < m.length; i++) {
     const msg = m[i];
-    const expectAssistant = i % 2 === 0;
+    const expectAssistant = (i - from) % 2 === 1;
     if (msg.role !== (expectAssistant ? "assistant" : "user")) return `message ${i} should be ${expectAssistant ? "assistant" : "user"}`;
     if (!expectAssistant) {
       if (!/^<tool_response>\n[\s\S]+\n<\/tool_response>$/.test(msg.content)) return `message ${i}: tool result not wrapped in <tool_response>`;
@@ -80,10 +88,14 @@ export function validateConversation(ex) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  const lines = fs.readFileSync(file, "utf8").trim().split("\n");
+  // Stream line by line: a 100,000-conversation file is far too big to load at once.
   let bad = 0;
+  let total = 0;
   const byCat = {};
-  for (const [n, line] of lines.entries()) {
+  const lines = readline.createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity });
+  for await (const line of lines) {
+    if (!line.trim()) continue;
+    const n = total++;
     const ex = JSON.parse(line);
     byCat[ex.category] = (byCat[ex.category] || 0) + 1;
     const err = validateConversation(ex);
@@ -92,7 +104,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
       if (bad <= 10) console.log(`line ${n + 1} (${ex.category}): ${err}`);
     }
   }
-  console.log(`${lines.length - bad}/${lines.length} conversations valid`);
+  console.log(`${total - bad}/${total} conversations valid`);
   console.log(Object.entries(byCat).map(([k, v]) => `${k} ${v}`).join(", "));
   process.exit(bad ? 1 : 0);
 }

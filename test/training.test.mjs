@@ -20,6 +20,11 @@ test("training/system_prompt.json matches the app's prompt (run: node training/e
   assert.deepEqual(exported.tools, LOCAL_TOOLS.map((t) => t.function.name));
 });
 
+test("every hand-written code task compiles/runs", { skip: !hasPython && "python3 not installed" }, () => {
+  const r = spawnSync("python3", [path.join(root, "training/check_code.py")], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+});
+
 test("generated data passes Mnx's runtime parsers", { skip: !hasPython && "python3 not installed" }, () => {
   execFileSync("python3", [path.join(root, "training/generate.py"), "--train", "300", "--test", "60", "--out", tmp]);
   const r = spawnSync(process.execPath, [path.join(root, "training/validate.mjs"), path.join(tmp, "train.jsonl")], { encoding: "utf8" });
