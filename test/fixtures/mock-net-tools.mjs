@@ -9,9 +9,10 @@ import { fileURLToPath } from "node:url";
 import * as real from "../../tools.js?real";
 import { extraDisplay } from "../../tools-extra.js";
 
-export const { TOOLS, CODE_RUNNER, htmlToText, parseDuckDuckGo } = real;
+export const { TOOLS, CODE_RUNNER, htmlToText, parseDuckDuckGo, runSnippet } = real;
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const NET = new Set(["get_weather", "search_web", "read_webpage", "find_places", "get_directions", "get_user_location", "convert_currency", "get_time", "wikipedia", "define_word", "translate"]);
+const NET = new Set(["get_weather", "search_web", "read_webpage", "find_places", "get_directions", "get_user_location", "convert_currency", "get_time", "wikipedia", "define_word", "translate",
+  "public_holidays", "country_info", "crypto_price", "book_search", "find_words", "air_quality", "sunrise_sunset", "recent_earthquakes", "random_joke", "quote", "github_repo", "package_info"]);
 const key = (name, args) => `${name}:${JSON.stringify(args, Object.keys(args || {}).sort())}`;
 // The same call (e.g. weather in Lisbon) appears in several cases with
 // different results, so results are stored per conversation as well.
@@ -42,6 +43,13 @@ function display(name, r) {
   if (name === "search_web") return { kind: "sources", query: r.query, results: r.results };
   if (name === "read_webpage") return { kind: "sources", query: null, results: [{ title: r.title, url: r.url }] };
   if (extraDisplay(name, r)) return extraDisplay(name, r);
+  // Online quick tools: a simple card from the stored result.
+  if (!["get_weather", "find_places", "get_directions", "search_web", "read_webpage", "get_user_location"].includes(name)) {
+    const entries = Object.entries(r).filter(([, v]) => v !== null && typeof v !== "object");
+    const lists = Object.entries(r).filter(([, v]) => Array.isArray(v));
+    const rows = lists.length ? lists[0][1].slice(0, 8).map((x) => (typeof x === "object" ? [Object.values(x)[0], Object.values(x).slice(1).join(" · ")] : ["•", String(x)])) : entries.slice(1).map(([k, v]) => [k.replace(/_/g, " "), String(v)]);
+    return { kind: "info", icon: "globe", title: String(entries[0]?.[1] ?? name), subtitle: name.replace(/_/g, " "), rows };
+  }
   if (name === "get_user_location") return r.available === false ? { kind: "location", available: false } : { kind: "location", available: true, ...r };
   return undefined;
 }

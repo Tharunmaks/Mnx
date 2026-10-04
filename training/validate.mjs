@@ -6,10 +6,14 @@ import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ThinkSplitter, ToolCallScanner, parseToolCall, LOCAL_TOOLS, STABLE_PROMPT } from "../local.js";
+import { MORE_TOOLS } from "../tools-more.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const file = process.argv[2] || path.join(here, "data/train.jsonl");
-const specs = Object.fromEntries(LOCAL_TOOLS.map((t) => [t.function.name, t.function.parameters]));
+const specs = Object.fromEntries([
+  ...LOCAL_TOOLS.map((t) => [t.function.name, t.function.parameters]),
+  ...MORE_TOOLS.map((t) => [t.name, { properties: t.params, required: t.required }]),
+]);
 
 // Parse an assistant message exactly as Mnx does, feeding it in small chunks.
 function parseAssistant(text) {

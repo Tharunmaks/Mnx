@@ -315,7 +315,7 @@ class ToolsMixin:
         tn, ts = CURRENCIES[t]
         q = self.pick([f"convert {amount} {f} to {t}", f"how much is {amount} {fs} in {tn}?", f"{amount} {f.lower()} to {t.lower()}",
                        f"What's {amount} {fn} in {t}?", f"{f} to {t} rate today"])
-        if "rate" in q:
+        if "rate" in q or amount == 1:
             amount, converted = 1, rate
         result = {"amount": amount, "from": f, "to": t, "rate": rate, "converted": converted, "updated": updated}
         shown = f"{converted:,}"

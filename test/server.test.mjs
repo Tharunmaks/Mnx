@@ -45,6 +45,8 @@ before(async () => {
       MNX_LOCAL_MODEL: model,
       MNX_LLAMA_PORT: String(port + 1),
       FAKE_LLAMA_LOG: llamaLog,
+      MNX_LEARNED_FILE: path.join(tmp, "learned.jsonl"),
+      MNX_MEMORY_FILE: path.join(tmp, "memory.json"),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -368,4 +370,50 @@ test("local: a model that repeats itself is stopped, with a note", async () => {
 test("local: an answer cut off at the length limit says so", async () => {
   const { events } = await chat({ messages: [{ role: "user", content: "this will be cut off" }], model: "local" });
   assert.ok(events.some((e) => e.t === "notice" && /length limit/.test(e.text)));
+});
+
+test("learning: 👍 on a local reply saves exactly what the model saw and wrote", async () => {
+  const { events } = await chat({ messages: [{ role: "user", content: "hello there" }], model: "local" });
+  const trace = events.find((e) => e.t === "trace")?.id;
+  assert.ok(trace, "a trace id is sent with every finished local reply");
+  const r = await (await fetch(`${base}/api/feedback`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ trace, rating: "up" }) })).json();
+  assert.equal(r.ok, true);
+  assert.equal(r.stats.good, 1);
+  const row = JSON.parse(fs.readFileSync(path.join(tmp, "learned.jsonl"), "utf8").trim().split("\n").at(-1));
+  assert.equal(row.category, "learned_good");
+  assert.equal(row.messages[row.train_from].content, "hello there");
+  assert.match(row.messages.at(-1).content, /^<think>[\s\S]*<\/think>\n\S/);
+});
+
+test("learning: 👎 with a correction replaces the answer; without one it isn't trained on", async () => {
+  const { events } = await chat({ messages: [{ role: "user", content: "hello again" }], model: "local" });
+  const trace = events.find((e) => e.t === "trace").id;
+  const post = (body) => fetch(`${base}/api/feedback`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((x) => x.json());
+  assert.equal((await post({ trace, rating: "down", correction: "Hi! How can I help you today?" })).stats.corrected, 1);
+  const last = JSON.parse(fs.readFileSync(path.join(tmp, "learned.jsonl"), "utf8").trim().split("\n").at(-1));
+  assert.match(last.messages.at(-1).content, /<\/think>\nHi! How can I help you today\?$/);
+  const before = (await (await fetch(`${base}/api/learn`)).json()).total;
+  await post({ trace, rating: "down" });
+  assert.equal((await (await fetch(`${base}/api/learn`)).json()).total, before);
+  assert.equal((await post({ trace: "nope", rating: "up" })).ok, false);
+});
+
+test("security: other websites can't post to Mnx (chat, memory, learning)", async () => {
+  for (const p of ["/api/chat", "/api/feedback", "/api/run", "/api/approve"]) {
+    const r = await fetch(`${base}${p}`, { method: "POST", headers: { origin: "https://evil.example", "content-type": "application/json" }, body: "{}" });
+    assert.equal(r.status, 403, p);
+  }
+  const same = await fetch(`${base}/api/learn`, { headers: { origin: base } });
+  assert.equal(same.status, 200);
+});
+
+test("▶ Run: runs code from an answer only with this page's token", async () => {
+  const cfg = await (await fetch(`${base}/api/config`)).json();
+  const run = (token) => fetch(`${base}/api/run`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token, language: "python", code: "print(6 * 7)" }) });
+  assert.equal((await run("wrong-token-wrong-token")).status, 403);
+  if (!cfg.runToken) return;
+  const out = await (await run(cfg.runToken)).json();
+  if (out.error && /isn't installed/.test(out.error)) return; // no python here
+  assert.match(out.result.stdout, /42/);
+  assert.equal(out.display.kind, "code_run");
 });

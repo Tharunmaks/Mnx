@@ -101,7 +101,7 @@ test("recovers when llama-server is killed between messages (e.g. Android freein
 test("long chats are trimmed to fit the model's context instead of failing", async () => {
   const port = 34800 + Math.floor(Math.random() * 100);
   process.env.MNX_LLAMA_PORT = String(port);
-  process.env.MNX_CTX = "4096"; // a phone-sized context
+  process.env.MNX_CTX = "8192"; // the default context
   process.env.FAKE_LLAMA_CHARS_PER_TOKEN = "2.5"; // denser than Mnx's estimate, so the server rejects the first try
   process.env.FAKE_LLAMA_LOG = path.join(tmp, "ctx.log");
   try {

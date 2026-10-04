@@ -10,10 +10,11 @@
     "setup:termux": "bash scripts/termux-setup.sh",
     "test": "node --test --test-concurrency=1 --test-timeout=900000 test/*.test.mjs",
     "test:runtime": "MNX_RUNTIME_TESTS=1 node --test --test-timeout=9000000 test/runtime.test.mjs",
-    "train:data": "node training/export_prompt.mjs && python3 training/generate.py && node training/validate.mjs",
+    "train:data": "node training/export_prompt.mjs && python3 training/generate.py && node training/gen_quick.mjs --append && node training/validate.mjs",
     "eval": "node training/eval.mjs",
     "soak": "node training/soak.mjs",
-    "fast-model": "bash scripts/make-fast-model.sh"
+    "fast-model": "bash scripts/make-fast-model.sh",
+    "learn": "node scripts/learn.mjs"
   },
   "repository": {
     "type": "git",

@@ -12,6 +12,7 @@ const UA = "Mnx-Assistant/1.0 (+https://github.com/Tharunmaks/Mnx)";
 // The code runner only ever runs after the user approves each program in the
 // chat. Turn it off completely with MNX_CODE_RUNNER=off.
 import { EXTRA_TOOLS, extraHandlers } from "./tools-extra.js";
+import { MORE_TOOL_DEFS, moreHandlers } from "./tools-more.js";
 
 export const CODE_RUNNER = !/^(0|off|false|no)$/i.test(process.env.MNX_CODE_RUNNER || "on");
 
@@ -528,6 +529,17 @@ const handlers = {
   },
 };
 
+// For the ▶ Run button on code in answers: the user's click is the approval.
+export async function runSnippet(language, code) {
+  if (!CODE_RUNNER) return { error: "The code runner is turned off on this device (MNX_CODE_RUNNER=off)." };
+  if (typeof code !== "string" || !code.trim() || code.length > 100_000) return { error: "Nothing to run (or the program is over 100 KB)." };
+  try {
+    return await runCode(language === "javascript" ? "javascript" : "python", code);
+  } catch (err) {
+    return { error: err?.message || String(err) };
+  }
+}
+
 /* ───────────── Code runner ───────────── */
 function findExe(names) {
   for (const name of names)
@@ -678,8 +690,8 @@ async function wikipediaSearch(query) {
   }));
 }
 
-TOOLS.push(...EXTRA_TOOLS);
-Object.assign(handlers, extraHandlers);
+TOOLS.push(...EXTRA_TOOLS, ...MORE_TOOL_DEFS);
+Object.assign(handlers, extraHandlers, moreHandlers);
 
 export async function runTool(name, input, ctx) {
   const handler = handlers[name];

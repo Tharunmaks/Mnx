@@ -3,3 +3,4 @@ node_modules/
 models/*.part
 training/data/
 __pycache__/
+data/

@@ -13,6 +13,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { CODE_RUNNER, runTool } from "./tools.js";
+import { MORE_TOOLS, MORE_NAMES, memoryPrompt } from "./tools-more.js";
+import { pyJson, rememberTrace, lastUserIndex } from "./learn.js";
 
 export const LOCAL_ID = "local";
 const ON_ANDROID = process.platform === "android" || !!process.env.TERMUX_VERSION;
@@ -421,7 +423,9 @@ export const LOCAL_TOOLS = [
     ? [fn("run_code", "Run Python or JavaScript on the user's device (they approve first). Print results; save charts as .png.", { language: { enum: ["python", "javascript"] }, code: str }, ["language", "code"])]
     : []),
 ];
-const LOCAL_TOOL_NAMES = LOCAL_TOOLS.map((t) => t.function.name);
+// Quick tools are listed compactly (one line each) to keep the prompt short on phones.
+export const QUICK_TOOL_LINES = MORE_TOOLS.map((t) => `${t.sig}: ${t.description}`);
+export const LOCAL_TOOL_NAMES = [...LOCAL_TOOLS.map((t) => t.function.name), ...MORE_NAMES];
 
 // Everything except the last line is identical between requests, so
 // llama.cpp can reuse its cached processing of it.
@@ -445,13 +449,16 @@ You are provided with function signatures within <tools></tools> XML tags:
 ${LOCAL_TOOLS.map((t) => JSON.stringify(t)).join("\n")}
 </tools>
 
+Quick tools, called the same way (? = optional argument):
+${QUICK_TOOL_LINES.join("\n")}
+
 For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
 <tool_call>
 {"name": <function-name>, "arguments": <args-json-object>}
 </tool_call>`;
 
 export function systemPrompt(userName, date = new Date()) {
-  return `${STABLE_PROMPT}\n\nToday's date is ${date.toISOString().slice(0, 10)}.${userName ? ` The user's name is ${userName}.` : ""}`;
+  return `${STABLE_PROMPT}\n\nToday's date is ${date.toISOString().slice(0, 10)}.${userName ? ` The user's name is ${userName}.` : ""}${memoryPrompt()}`;
 }
 
 // Splits the stream into thinking / answer as it arrives.
@@ -581,6 +588,13 @@ const TOOL_ALIASES = {
   dictionary: "define_word", define: "define_word", definition: "define_word", meaning: "define_word",
   translate_text: "translate", translator: "translate", translation: "translate",
   qr_code: "create_qr_code", qr: "create_qr_code", generate_qr_code: "create_qr_code", make_qr_code: "create_qr_code",
+  password: "generate_password", password_generator: "generate_password", dice: "roll_dice", coin: "flip_coin", coin_flip: "flip_coin",
+  random: "random_number", timer: "set_timer", start_timer: "set_timer", note: "save_note", add_note: "save_note", notes: "list_notes",
+  holidays: "public_holidays", get_holidays: "public_holidays", country: "country_info", get_country_info: "country_info", joke: "random_joke",
+  get_joke: "random_joke", emi: "loan_emi", loan_calculator: "loan_emi", emi_calculator: "loan_emi", bmi_calculator: "bmi", calculate_bmi: "bmi",
+  memory: "remember", save_memory: "remember", remember_fact: "remember", get_memories: "recall", synonyms: "find_words", rhymes: "find_words",
+  aqi: "air_quality", get_air_quality: "air_quality", crypto: "crypto_price", bitcoin_price: "crypto_price", stats: "statistics",
+  days_between: "date_diff", date_difference: "date_diff", convert_timezone: "timezone_convert", time_zone_convert: "timezone_convert",
 };
 const ARG_ALIASES = {
   search_web: { query: ["q", "search", "keywords", "text", "search_query"] },
@@ -902,7 +916,10 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
       else if (finish === "length") send({ t: "notice", level: "warn", text: "The answer reached the length limit. Say “continue” for the rest." });
       if (answer.trim()) shown.push(answer.trim());
 
-      if (!calls.length) break;
+      if (!calls.length) {
+        chat.push({ role: "assistant", content: `${thought.trim() ? `<think>${thought.trim()}</think>\n` : ""}${answer.trim()}` });
+        break;
+      }
       if (it === MAX_STEPS - 1) {
         send({ t: "notice", level: "warn", text: "Mnx used the maximum number of tool steps for one reply." });
         break;
@@ -916,7 +933,7 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
         const parsed = raw && normalizeToolCall(raw.name, raw.input);
         if (!parsed) {
           if (c.index !== null) send({ t: "tool_done", id: c.id, name: c.json.match(/"name"\s*:\s*"([^"]+)"/)?.[1] || "tool", error: true });
-          responses.push({ error: "Your tool call wasn't valid JSON. Use the exact <tool_call> format with properly escaped strings." });
+          responses.push(pyJson({ error: "Your tool call wasn't valid JSON. Use the exact <tool_call> format with properly escaped strings." }));
           continue;
         }
         const known = LOCAL_TOOL_NAMES.includes(parsed.name);
@@ -932,7 +949,8 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
             }) : { error: `Unknown tool "${parsed.name}". Available: ${LOCAL_TOOL_NAMES.join(", ")}` };
         if (isClosed()) return;
         send({ t: "tool_done", id: c.id, name: parsed.name, error: !!out.error, display: out.display });
-        let json = JSON.stringify(out.error ? { error: out.error } : out.result);
+        // Same JSON style as the training data.
+        let json = pyJson(out.error ? { error: out.error } : out.result);
         // Every character here is read by the model before it answers, which is slow on phones.
         if (json.length > TOOL_RESULT_CHARS) json = `${json.slice(0, TOOL_RESULT_CHARS)}…(truncated)`;
         responses.push(json);
@@ -946,6 +964,8 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
 
     if (isClosed()) return;
     send({ t: "assistant_turn", content: [{ type: "text", text: shown.join("\n\n") || "…" }], model: LOCAL_ID });
+    // Exactly what the model saw and wrote, so a 👍 can turn it into training data.
+    if (chat[chat.length - 1].role === "assistant") send({ t: "trace", id: rememberTrace({ source: "local", messages: chat.map((m) => ({ ...m })), train_from: lastUserIndex(chat) }) });
     send({ t: "done" });
   });
   clearInterval(waiting);

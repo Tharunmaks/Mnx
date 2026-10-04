@@ -72,6 +72,24 @@
     book: '<svg viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M8 7h7M8 11h7"/></svg>',
     lang: '<svg viewBox="0 0 24 24"><path d="M4 5h9M8.5 3v2M6 5c0 4 3 7 6 8M11 5c0 4-3 7-7 8"/><path d="m13 21 4-9 4 9M14.5 18h5"/></svg>',
     qr: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 14v.01M14 21h3M21 18v3h-3"/></svg>',
+    key: '<svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l3 3M14 9l2 2"/></svg>',
+    text: '<svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
+    link: '<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
+    dice: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r="1"/><circle cx="15" cy="15" r="1"/><circle cx="15" cy="9" r="1"/><circle cx="9" cy="15" r="1"/></svg>',
+    chart: '<svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+    heart: '<svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>',
+    cake: '<svg viewBox="0 0 24 24"><path d="M4 20h16v-7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2zM4 15c2 1 3 1 4 0s3-1 4 0 3 1 4 0 3-1 4 0M12 11V7M12 4v.01"/></svg>',
+    calendar: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+    palette: '<svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18c1 0 1.5-.7 1.5-1.5 0-1.2-1-1.5-1-2.5 0-.8.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.1-4-7.5-9-7.5z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/></svg>',
+    globe: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
+    leaf: '<svg viewBox="0 0 24 24"><path d="M5 19c0-9 6-14 15-14 0 9-5 15-14 15zM5 19l7-7"/></svg>',
+    sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6 19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg>',
+    smile: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>',
+    quote: '<svg viewBox="0 0 24 24"><path d="M7 7h4v4c0 3-2 5-4 6M15 7h4v4c0 3-2 5-4 6"/></svg>',
+    brain: '<svg viewBox="0 0 24 24"><path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a2 2 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/></svg>',
+    note: '<svg viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5z"/><path d="M14 3v5h5M8 12h8M8 16h5"/></svg>',
+    run: '<svg viewBox="0 0 24 24"><circle cx="14" cy="4" r="2"/><path d="m8 21 3-6 3 2v4M6 12l3-4 4 1 3 3 3 1"/></svg>',
+    timer: '<svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M10 2h4"/></svg>',
   };
   const CHEV = '<svg class="step-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>';
   const COPY_IC = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
@@ -133,7 +151,7 @@
 
   /* ───────────── Settings & theme ───────────── */
   let MODELS = { "claude-opus-5-5": "Opus 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-fable-5-1": "Fable 5.1" };
-  const settings = Object.assign({ name: "", model: "claude-opus-5-5", effort: "medium", theme: "system", location: false }, store.get("mnx.settings", {}));
+  const settings = Object.assign({ name: "", model: "claude-opus-5-5", effort: "medium", theme: "system", location: false, learn: true }, store.get("mnx.settings", {}));
   let mcpServers = store.get("mnx.mcp", []);
 
   function applyTheme() {
@@ -178,11 +196,18 @@
       node.setAttribute("rel", "noopener noreferrer");
     }
   });
+  let RUN_TOKEN = null; // from /api/config when the code runner is on
+  const RUNNABLE = { python: "python", py: "python", python3: "python", javascript: "javascript", js: "javascript", node: "javascript" };
   function renderMarkdown(target, md, { final = true } = {}) {
+    target._stream = null;
     target.innerHTML = DOMPurify.sanitize(marked.parse(md || ""));
+    decorateCode(target, final);
+  }
+  function decorateCode(target, final) {
     $$("pre code", target).forEach((code) => {
       try {
-        if (final || !code.dataset.hl) hljs.highlightElement(code);
+        // While streaming, skip re-highlighting big blocks every frame (slow on phones).
+        if (final || code.textContent.length < 4000) hljs.highlightElement(code);
       } catch {
         /* unknown language */
       }
@@ -193,7 +218,65 @@
         b.onclick = () => copyText(code.innerText);
         pre.appendChild(b);
       }
+      const lang = RUNNABLE[(code.className.match(/language-([\w+-]+)/) || [])[1]];
+      if (final && lang && RUN_TOKEN && !$(".run-code", pre)) {
+        const b = el("button", "copy-code run-code", "▶ Run");
+        b.type = "button";
+        b.title = "Run this code on your device";
+        b.onclick = () => runSnippet(pre, lang, code.innerText);
+        pre.appendChild(b);
+      }
     });
+  }
+  async function runSnippet(pre, language, code) {
+    const btn = $(".run-code", pre);
+    btn.disabled = true;
+    btn.textContent = "Running…";
+    try {
+      const r = await fetch("/api/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: RUN_TOKEN, language, code }) });
+      const out = await r.json();
+      pre.nextElementSibling?.classList.contains("snippet-run") && pre.nextElementSibling.remove();
+      const holder = el("div", "snippet-run");
+      holder.appendChild(out.error ? el("div", "notice error", esc(out.error)) : cardCodeRun(out.display));
+      pre.after(holder);
+    } catch {
+      toast("Couldn't reach Mnx", 2500);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "▶ Run";
+    }
+  }
+  // Streaming: finished paragraphs/blocks are rendered once and kept; only the
+  // last, still-growing block is re-rendered each frame. Smooth on phones.
+  function stableCut(md) {
+    let cut = 0;
+    let fence = false;
+    let pos = 0;
+    for (const line of md.split("\n")) {
+      const next = pos + line.length + 1;
+      if (/^\s*(```|~~~)/.test(line)) fence = !fence;
+      else if (!fence && line.trim() === "" && next <= md.length) cut = next;
+      pos = next;
+    }
+    return cut;
+  }
+  function renderStreaming(target, md) {
+    let st = target._stream;
+    if (!st || !target.contains(st.stable)) {
+      st = target._stream = { stable: el("div", "md-stable"), tail: el("div", "md-tail"), len: 0 };
+      target.innerHTML = "";
+      target.append(st.stable, st.tail);
+    }
+    const cut = stableCut(md);
+    if (cut > st.len) {
+      const chunk = el("div");
+      chunk.innerHTML = DOMPurify.sanitize(marked.parse(md.slice(st.len, cut)));
+      decorateCode(chunk, true);
+      st.stable.append(...chunk.childNodes);
+      st.len = cut;
+    }
+    st.tail.innerHTML = DOMPurify.sanitize(marked.parse(md.slice(st.len)));
+    decorateCode(st.tail, false);
   }
   const pending = new Map();
   function scheduleRender(key, fn) {
@@ -250,6 +333,7 @@
   }
 
   /* ───────────── Step labels ───────────── */
+  let TOOL_LABELS = {}; // filled from /api/config (quick tools)
   const TOOL_KIND = {
     get_user_location: "location",
     get_weather: "weather",
@@ -327,8 +411,10 @@
         return done ? `Searched${i.query ? ` “${i.query}”` : " the web"}` : `Searching the web${i.query ? ` · “${i.query}”` : ""}`;
       case "web_fetch":
         return done ? `Read ${i.url ? host(i.url) : "page"}` : `Reading ${i.url ? host(i.url) : "a web page"}`;
-      default:
-        return done ? `Used ${name}` : `Using ${name}`;
+      default: {
+        const nice = TOOL_LABELS[name] || name.replace(/_/g, " ");
+        return done ? `${nice}${display?.title ? ` · ${clip(display.title, 40)}` : ""}` : `${nice}…`;
+      }
     }
   }
   const clip = (t, n) => (String(t).length > n ? `${String(t).slice(0, n)}…` : String(t));
@@ -494,12 +580,67 @@
       <div class="card-head"><div class="step-ic" style="position:static">${ICONS[d.icon] || ICONS.tool}</div>
         <div style="min-width:0"><div class="info-title">${esc(d.title ?? "")}</div>${d.subtitle ? `<div class="card-sub">${esc(d.subtitle)}</div>` : ""}</div>
         ${d.image ? `<img class="info-img" src="${esc(d.image)}" alt="" loading="lazy">` : ""}</div>
+      ${d.swatch ? `<div class="info-swatch" style="background:${esc(d.swatch)}"></div>` : ""}
       ${d.body ? `<p class="info-body">${esc(d.body)}</p>` : ""}
-      ${d.rows?.length ? `<dl class="info-rows">${d.rows.map(([k, v]) => `<dt>${esc(k ?? "")}</dt><dd>${esc(v ?? "")}</dd>`).join("")}</dl>` : ""}
-      ${d.link ? `<div class="card-actions"><a class="btn" href="${esc(d.link)}" target="_blank" rel="noopener">${esc(d.linkText || "Open")}</a></div>` : ""}`;
+      ${d.pre ? `<pre class="info-pre">${esc(d.pre)}</pre>` : ""}
+      ${d.rows?.length ? `<dl class="info-rows${d.mono ? " mono" : ""}">${d.rows.map(([k, v]) => `<dt>${esc(k ?? "")}</dt><dd>${esc(v ?? "")}</dd>`).join("")}</dl>` : ""}
+      ${d.link || d.copy ? `<div class="card-actions">${d.copy ? `<button class="btn" data-act="copy">${COPY_IC} Copy</button>` : ""}${d.link ? `<a class="btn" href="${esc(d.link)}" target="_blank" rel="noopener">${esc(d.linkText || "Open")}</a>` : ""}</div>` : ""}`;
+    if (d.mono) $(".info-title", c).classList.add("mono");
     const img = $(".info-img", c);
     if (img) img.onerror = () => img.remove();
+    const copyBtn = $('[data-act="copy"]', c);
+    if (copyBtn) copyBtn.onclick = () => copyText(String(d.copy));
     return c;
+  }
+
+  // A countdown that rings (sound + notification) while the page is open.
+  function cardTimer(d) {
+    const c = el("div", "card timer-card");
+    c.innerHTML = `<div class="card-head"><div class="step-ic" style="position:static">${ICONS.timer}</div>
+      <div style="min-width:0"><div class="info-title timer-left">--:--</div><div class="card-sub">${esc(d.label || "Timer")}</div></div></div>
+      <div class="timer-bar"><i></i></div>`;
+    const end = Date.parse(d.ends_at) || Date.now() + d.seconds * 1000;
+    const total = d.seconds * 1000;
+    const left = $(".timer-left", c);
+    const bar = $(".timer-bar i", c);
+    if ("Notification" in window && Notification.permission === "default" && end > Date.now()) Notification.requestPermission().catch(() => {});
+    const tick = () => {
+      const ms = Math.max(0, end - Date.now());
+      const s = Math.ceil(ms / 1000);
+      left.textContent = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+      bar.style.width = `${100 - (100 * ms) / total}%`;
+      if (ms > 0) return void setTimeout(tick, 250);
+      c.classList.add("done");
+      left.textContent = "Time's up!";
+      if (c.dataset.rang || Date.now() - end > 5000) return;
+      c.dataset.rang = "1";
+      ring();
+      try {
+        if (Notification.permission === "granted") new Notification(`⏱️ ${d.label || "Timer"}`, { body: "Time's up!" });
+      } catch {
+        /* notifications unavailable */
+      }
+    };
+    tick();
+    return c;
+  }
+  function ring() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.35, 0.7].forEach((t) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.frequency.value = 880;
+        g.gain.setValueAtTime(0.25, ctx.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.3);
+        o.connect(g).connect(ctx.destination);
+        o.start(ctx.currentTime + t);
+        o.stop(ctx.currentTime + t + 0.3);
+      });
+      navigator.vibrate?.([300, 150, 300]);
+    } catch {
+      /* no audio */
+    }
   }
 
   function cardFile(d) {
@@ -696,6 +837,7 @@
       case "file": return cardFile(d);
       case "document": return cardDocument(d);
       case "info": return cardInfo(d);
+      case "timer": return cardTimer(d);
       default: return null;
     }
   }
@@ -764,16 +906,57 @@
       this.parts.style.padding = "0";
       this.loader = el("div", "loader", `<span class="orb"><i></i><i></i><i></i></span><span class="phrase"></span>`);
       this.loader.hidden = true;
-      this.actions = el("div", "msg-actions", `<button class="icon-btn" title="Copy answer" data-act="copy">${COPY_IC}</button>`);
-      this.actions.addEventListener("click", () => {
-        const text = this.turn.parts.filter((p) => p.type === "text").map((p) => p.md).join("\n\n");
-        copyText(text);
+      this.actions = el("div", "msg-actions", `<button class="icon-btn" title="Copy answer" data-act="copy">${COPY_IC}</button>
+        <button class="icon-btn fb" title="Good answer: teach Mnx" data-act="up" hidden>👍</button>
+        <button class="icon-btn fb" title="Bad answer: correct Mnx" data-act="down" hidden>👎</button>`);
+      this.actions.addEventListener("click", (e) => {
+        const act = e.target.closest("[data-act]")?.dataset.act;
+        if (act === "copy") copyText(this.turn.parts.filter((p) => p.type === "text").map((p) => p.md).join("\n\n"));
+        else if (act === "up") this.feedback("up");
+        else if (act === "down") this.askCorrection();
       });
+      this.showFeedback();
       this.body.append(this.parts, this.loader, this.actions);
       this.root.appendChild(this.body);
       thread.appendChild(this.root);
       this.stepEls = new Map();
       for (const part of turn.parts) this.mountPart(part);
+    }
+
+    // 👍/👎 appear when the server can learn from this reply.
+    showFeedback() {
+      const done = this.turn.feedback;
+      $$(".fb", this.actions).forEach((b) => {
+        b.hidden = !this.turn.trace;
+        b.classList.toggle("on", done === b.dataset.act);
+      });
+    }
+    async feedback(rating, correction = "") {
+      try {
+        const r = await fetch("/api/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ trace: this.turn.trace, rating, correction }) });
+        const j = await r.json();
+        if (!j.ok) return toast(j.error || "Couldn't save that", 3500);
+        this.turn.feedback = rating;
+        this.showFeedback();
+        if (chat) saveChat();
+        toast(j.learned ? `Thanks! Mnx will learn from this (${j.stats.total} example${j.stats.total === 1 ? "" : "s"} saved)` : "Thanks for the feedback", 2500);
+      } catch {
+        toast("Couldn't reach Mnx", 2500);
+      }
+    }
+    askCorrection() {
+      if ($(".fix-box", this.body)) return;
+      const box = el("div", "fix-box", `<label>What should Mnx have said? <span>(optional: your answer teaches it)</span></label>
+        <textarea rows="4" placeholder="Write the better answer…"></textarea>
+        <div class="card-actions"><button class="btn primary" data-a="send">Teach Mnx</button><button class="btn" data-a="skip">Just 👎</button><button class="btn" data-a="cancel">Cancel</button></div>`);
+      box.addEventListener("click", (e) => {
+        const a = e.target.closest("[data-a]")?.dataset.a;
+        if (!a) return;
+        if (a !== "cancel") this.feedback("down", a === "send" ? $("textarea", box).value : "");
+        box.remove();
+      });
+      this.body.insertBefore(box, this.actions.nextSibling);
+      $("textarea", box).focus();
     }
 
     mountPart(part) {
@@ -838,6 +1021,11 @@
       const node = this.stepEls.get(step);
       if (!node) return;
       node.className = `step ${step.status || "done"}`;
+      const ic = $(".step-ic", node);
+      if (ic && step.kind && ic.dataset.kind !== step.kind) {
+        ic.innerHTML = ICONS[step.kind] || ICONS.tool;
+        ic.dataset.kind = step.kind;
+      }
       $(".step-label", node).textContent = step.label;
       $(".step-meta", node).textContent = step.meta || "";
       const inner = $(".step-inner", node);
@@ -1001,6 +1189,7 @@
           model: settings.model,
           effort: settings.effort,
           userName: settings.name,
+          learn: settings.learn !== false,
           location,
           mcpServers: mcpServers.filter((s) => s.enabled).map(({ name, url, token }) => ({ name, url, token })),
         }),
@@ -1113,7 +1302,7 @@
           if (!b) return;
           b.part.md += ev.text;
           scheduleRender(b.part, () => {
-            renderMarkdown(b.part._el, b.part.md, { final: false });
+            renderStreaming(b.part._el, b.part.md);
             follow();
           });
           return;
@@ -1138,6 +1327,8 @@
             if (step.status === "running") this.active--;
             const patch = { status: ev.error ? "error" : "done", label: ev.error ? `${toolLabel(ev.name, step.input, "running")} — failed` : toolLabel(ev.name, step.input, "done", ev.display) };
             if (["create_file", "create_document"].includes(ev.name)) patch.open = false;
+            if (!TOOL_KIND[ev.name] && ev.display?.icon) patch.kind = ev.display.icon; // quick tools pick their own icon
+            if (ev.display?.kind === "timer") patch.kind = "timer";
             this.view.updateStep(step, patch);
           }
           if (ev.display) {
@@ -1184,6 +1375,10 @@
         case "error":
           this.view.addPart({ type: "notice", level: "error", text: ev.text });
           this.finish();
+          return;
+        case "trace":
+          this.view.turn.trace = ev.id;
+          this.view.showFeedback();
           return;
         case "done":
           this.finish();
@@ -1564,6 +1759,12 @@
     f.effort.value = settings.effort;
     f.theme.value = settings.theme;
     f.location.checked = settings.location;
+    f.learn.checked = settings.learn !== false;
+    $("#learnStats").textContent = "";
+    fetch("/api/learn")
+      .then((r) => r.json())
+      .then((st) => ($("#learnStats").textContent = st.total ? `Learned so far: ${st.total} examples (${st.good} 👍, ${st.corrected} corrected, ${st.teacher} from online models). Run “npm run learn” to add them to the next training.` : "Nothing learned yet. Tap 👍 on good answers to teach Mnx."))
+      .catch(() => {});
     dlg.showModal();
     if (focusName) f.name.focus();
   }
@@ -1571,7 +1772,7 @@
     if (dlg.returnValue !== "save") return;
     const f = $("#settingsForm");
     const wantsLoc = f.location.checked && !settings.location;
-    Object.assign(settings, { name: f.name.value.trim(), model: f.model.value, effort: f.effort.value, theme: f.theme.value, location: f.location.checked });
+    Object.assign(settings, { name: f.name.value.trim(), model: f.model.value, effort: f.effort.value, theme: f.theme.value, location: f.location.checked, learn: f.learn.checked });
     saveSettings();
     if (wantsLoc) {
       getLocation.cache = null;
@@ -1638,6 +1839,9 @@
       }
       if (!cfg.hasKey && !cfg.local) toast("Heads up: the server has no ANTHROPIC_API_KEY set yet.", 6000);
       if (cfg.local) watchLocalStatus(cfg.localStatus);
+      if (cfg.toolLabels) TOOL_LABELS = cfg.toolLabels;
+      RUN_TOKEN = cfg.runToken || null;
+      if (RUN_TOKEN) $$(".msg.assistant .body").forEach((b) => decorateCode(b, true));
     })
     .catch(() => {});
   if (!settings.name) setTimeout(() => toast("Tip: tap your avatar to tell Mnx your name", 3500), 1200);

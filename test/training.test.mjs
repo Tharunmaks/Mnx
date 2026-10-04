@@ -9,6 +9,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { STABLE_PROMPT, LOCAL_TOOLS } from "../local.js";
+import { MORE_NAMES } from "../tools-more.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const hasPython = spawnSync("python3", ["-c", "1"]).status === 0;
@@ -17,7 +18,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mnx-train-"));
 test("training/system_prompt.json matches the app's prompt (run: node training/export_prompt.mjs)", () => {
   const exported = JSON.parse(fs.readFileSync(path.join(root, "training/system_prompt.json"), "utf8"));
   assert.equal(exported.stable_prompt, STABLE_PROMPT);
-  assert.deepEqual(exported.tools, LOCAL_TOOLS.map((t) => t.function.name));
+  assert.deepEqual(exported.tools, [...LOCAL_TOOLS.map((t) => t.function.name), ...MORE_NAMES]);
 });
 
 test("every code task compiles/runs (hand-written, 10-language programs, generated families)", { skip: !hasPython && "python3 not installed", timeout: 900000 }, () => {

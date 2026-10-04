@@ -58,7 +58,7 @@ Get the model into `models/` by one of these:
    The script installs Node.js and llama.cpp (`llama-server`), then installs Mnx. It finds `mnx*.gguf` in your phone's **Downloads** folder and links it (so the file isn't stored twice), or downloads it if `HF_TOKEN` is set.
 3. `npm start`, then open **http://localhost:3000** in your phone's browser.
 
-On Android, Mnx starts `llama-server` itself the first time you chat with the local model. Loading a 3B model takes a few seconds. `termux-wake-lock` stops Android from pausing it in the background. A 3B Q4 model needs roughly 2.5 GB of free RAM. If your phone is slow, set `MNX_THREADS` to its number of performance cores. For a shorter context, set `MNX_CTX=2048`. To use a llama-server you started yourself, set `MNX_LLAMA_SERVER=http://127.0.0.1:8080`.
+On Android, Mnx starts `llama-server` itself the first time you chat with the local model. Loading a 3B model takes a few seconds. `termux-wake-lock` stops Android from pausing it in the background. A 3B Q4 model needs roughly 2.5 GB of free RAM. If your phone is slow, set `MNX_THREADS` to its number of performance cores. Keep the context at 6144 tokens or more (`MNX_CTX`, default 8192): Mnx's instructions with all 83 tools take about 2,900 tokens. To use a llama-server you started yourself, set `MNX_LLAMA_SERVER=http://127.0.0.1:8080`.
 
 The online models still work from the phone if you set `ANTHROPIC_API_KEY`.
 
@@ -94,6 +94,40 @@ Your model can use tools on the phone. It writes a `<tool_call>` in Qwen2.5's na
 | `translate` | Translations into ~40 languages (MyMemory, no key) |
 | `create_qr_code` | QR codes for links, Wi-Fi details, contacts or any text |
 
+**65 quick tools** (`tools-more.js`) are on top of these, for exact answers instead of guesses:
+
+| Group | Tools |
+|---|---|
+| Money | loan EMI, savings growth (compound interest), tax/GST, discounts, bill split with tip, percentage change, trip fuel cost |
+| Health & sport | BMI, daily calories (BMR/TDEE), running pace |
+| Dates & time | exact age, days between dates, add to a date, day of the week, countdowns, Unix time, time-zone conversion, timers that ring |
+| Numbers | statistics, GCD/LCM, prime factors, number in words (international or lakh/crore), Roman numerals, binary/hex |
+| Text | word count, change case, slugs, sort/de-duplicate lines, extract emails/phones/links, text diff, lorem ipsum |
+| Developer | JSON check & format, regex tester, Base64, URL encoding, hashes, JWT decode, cron explained, HTTP status codes, IP subnets, npm/PyPI and GitHub info |
+| Fun & random | dice, coin flips, random numbers, random picks, jokes, quotes |
+| Live info (free, no key) | public holidays, country facts, crypto prices, books (Open Library), synonyms & rhymes, air quality, sunrise/sunset, recent earthquakes |
+| Memory & notes | remember / recall / forget facts about you, save and list notes, passwords and UUIDs |
+
+The online models get every tool directly. The local model gets them as a compact one-line-each list, so its instructions stay small enough for a phone.
+
+**Memory.** Tell Mnx "remember that I'm vegetarian" and it saves the fact in `data/memory.json` on your device and uses it in every chat, with the local and the online models alike. "What do you remember about me?" lists the facts, and "forget …" removes one.
+
+**Learning from your chats.** Mnx gets better from the way you use it:
+- Tap **👍** on a good answer. Mnx saves the conversation exactly as the model saw and wrote it.
+- Tap **👎** and write what it should have said. Your answer replaces Mnx's in the saved example. A 👎 without a correction is kept for review but never trained on.
+- With **Learn from my chats** on (Settings, on by default), chats with an online model (Fable, Opus, Sonnet) are saved as teacher examples in the local model's format, so your model learns from the bigger one. Chats that used tools the local model doesn't have, such as built-in web search or connectors, are skipped.
+
+Everything is saved in `data/learned.jsonl` on your device. To include it in the next training run:
+```bash
+npm run learn                                   # checks it → training/data/extra.jsonl
+HF_TOKEN=hf_... npm run learn -- --upload       # also uploads it (private) for the Colab notebook
+```
+The notebook downloads your learned examples automatically and weights them 3×. The model only actually changes when you retrain it: a 3B model can't fine-tune itself on a phone. Memory, on the other hand, works instantly.
+
+**▶ Run on code in answers.** Python and JavaScript code blocks in answers have a **Run** button. Tapping it is the approval: the code runs on your device and the output appears under the block.
+
+Other websites open in the same browser can't send requests to Mnx. Requests from another origin are refused, so a web page can't chat as you, change your memory or add training data.
+
 **Code runner safety.** Every program appears in an approval card, and nothing runs until you tap **Run**. **Don't run** (or no answer within 10 minutes) skips it. Programs run in a temporary folder with a 30-second limit, and they don't get Mnx's API keys. They can still reach your files and the internet, so read the code before you approve it. To turn the runner off, set `MNX_CODE_RUNNER=off`. Charts need `pip install matplotlib`. Mnx only accepts connections from the device it runs on. To use it from another device, set `HOST=0.0.0.0`, but only on a network you trust.
 
 **Answer quality.** The local model is told to start with the direct answer, use clear markdown (headings, lists, tables, code blocks), match the answer's length to the question, and cite its sources. It uses Qwen2.5's recommended sampling: temperature 0.7, top_p 0.8, top_k 20, repeat penalty 1.05. You can change these with `MNX_TEMPERATURE`, `MNX_TOP_P`, `MNX_TOP_K` and `MNX_REPEAT_PENALTY`.
@@ -104,7 +138,7 @@ Online models (Opus, Sonnet, Fable) get the same everyday tools. A 3B model some
 
 `training/` fine-tunes your local model to use Mnx's tools reliably, then measures how reliable it is.
 
-1. **Data.** `npm run train:data` writes `training/data/train.jsonl` with **100,000 distinct conversations** (~600 MB, under a minute) in exactly the format Mnx uses at runtime (`<think>`, `<tool_call>`, `<tool_response>`):
+1. **Data.** `npm run train:data` writes `training/data/train.jsonl` with **about 115,000 distinct conversations** (100,000 from `generate.py` plus 15,000 for the quick tools from `gen_quick.mjs`, whose results come from actually running the tools; ~700 MB, about a minute) in exactly the format Mnx uses at runtime (`<think>`, `<tool_call>`, `<tool_response>`):
    - Web search (prices, sports, launches, events, software versions, news, films; reading pages; retrying after errors)
    - Weather, location, places and directions in about 150 cities
    - Everyday tools: calculator, unit and currency conversion, world time, Wikipedia, dictionary, translation and QR codes (`training/content_tools.py`)
@@ -123,8 +157,8 @@ Online models (Opus, Sonnet, Fable) get the same everyday tools. A 3B model some
    - Messy phone typing (lowercase, "pls", "wether", "tmrw")
 
    Every conversation is checked with Mnx's own parsers (`training/validate.mjs`). The 600 test cases use cities, topics and tasks that never appear in training. No other AI model wrote the data.
-2. **Train.** Open `training/mnx_train.ipynb` in Google Colab with a T4 GPU (free tier works) and run the cells. It does a LoRA fine-tune of Qwen2.5-3B-Instruct with Unsloth, learning only the reply to your latest message (not the system prompt, earlier turns or tool results). It saves progress to Google Drive so it can resume after a disconnect. The full 100,000 conversations take roughly 25–35 h on a free T4 (several sessions), 10–12 h on an L4, or 4–6 h on an A100; `USE = 20000` takes about 6 h on a T4. Afterwards it exports `mnx-q4_k_m.gguf` and the faster-on-phones `mnx-q4_0.gguf`, then uploads them to your Hugging Face repo.
-3. **Measure.** Run `npm run eval -- --model models/mnx-q4_k_m.gguf --target 98`. It runs 600 held-out cases (cities, topics and tasks never seen in training) through Mnx's real tool loop, including the permission step for code, and prints the success rate per category and overall. A case only passes if the right tool was called with valid arguments and the final answer uses the result. On a phone, add `--limit 100` to keep it short.
+2. **Train.** Open `training/mnx_train.ipynb` in Google Colab with a T4 GPU (free tier works) and run the cells. It does a LoRA fine-tune of Qwen2.5-3B-Instruct with Unsloth, learning only the reply to your latest message (not the system prompt, earlier turns or tool results). It saves progress to Google Drive so it can resume after a disconnect. The full ~115,000 conversations take roughly 35–45 h on a free T4 (several sessions), 13–16 h on an L4, or 5–8 h on an A100; `USE = 25000` takes about 9 h on a T4. Your learned examples (see *Learning from your chats*) are added automatically. Afterwards it exports `mnx-q4_k_m.gguf` and the faster-on-phones `mnx-q4_0.gguf`, then uploads them to your Hugging Face repo.
+3. **Measure.** Run `npm run eval -- --model models/mnx-q4_k_m.gguf --target 98`. It runs 800 held-out cases (cities, topics and tasks never seen in training) through Mnx's real tool loop, including the permission step for code, and prints the success rate per category and overall. A case only passes if the right tool was called with valid arguments and the final answer uses the result. On a phone, add `--limit 100` to keep it short.
 
 For code, a test only passes if the file the model wrote actually compiles, using whichever compilers are installed.
 

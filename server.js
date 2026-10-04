@@ -6,7 +6,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
-import { TOOLS, runTool } from "./tools.js";
+import { TOOLS, runTool, runSnippet, CODE_RUNNER } from "./tools.js";
+import { MORE_LABELS, memoryPrompt } from "./tools-more.js";
+import { teacherToLocal, saveTeacher, saveFeedback, learnStats, rememberTrace } from "./learn.js";
+import { systemPrompt as localSystemPrompt, LOCAL_TOOL_NAMES } from "./local.js";
 import { LOCAL_ID, localModelPath, localModelLabel, handleLocalChat, warmUpLocal, localStatus } from "./local.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -70,9 +73,11 @@ Use your tools whenever they make the answer better:
 - get_directions for routes between places. The UI shows a route card.
 - create_file to deliver any code or text file (Python, HTML, JSON, Ruby, C, C++, Lua, Markdown, CSV, etc). Always put full, working file contents in the tool call instead of pasting large files into chat. HTML files can be previewed live.
 - create_document for PDF reports, Word documents (docx) and slide decks (pptx). Write rich, well structured content.
+- The everyday tools (calculate, convert_units, convert_currency, get_time, wikipedia, define_word, translate, create_qr_code) and the quick tools (passwords, dates, finance, health, colors, developer helpers, notes, timers, holidays, countries and more) whenever they give an exact or live answer.
+- remember when the user tells you something to remember about them; recall / forget to look up or delete it.
 - Tools from connected MCP servers (connectors) when relevant.
 
-Format answers in GitHub-flavoured markdown. Keep answers focused; use headings, lists and tables when they help.`;
+Format answers in GitHub-flavoured markdown. Keep answers focused; use headings, lists and tables when they help.${memoryPrompt()}`;
 }
 
 // Pending "may I run this?" questions (the code runner waits on these).
@@ -255,6 +260,7 @@ async function handleChat(req, res) {
   const keepAlive = setInterval(() => !closed && res.write(": ping\n\n"), 15000);
 
   try {
+    let finished = false;
     for (let it = 0; it < MAX_ITERATIONS && !closed; it++) {
       const params = {
         model,
@@ -274,6 +280,7 @@ async function handleChat(req, res) {
       current = stream;
 
       let message;
+      finished = false;
       try {
         for await (const ev of stream) {
           if (closed) break;
@@ -301,6 +308,7 @@ async function handleChat(req, res) {
 
       messages.push({ role: "assistant", content: message.content });
       sse(res, { t: "assistant_turn", content: message.content, model: message.model });
+      finished = message.stop_reason === "end_turn";
 
       if (message.stop_reason === "pause_turn") continue;
       if (message.stop_reason === "refusal") {
@@ -344,6 +352,15 @@ async function handleChat(req, res) {
       );
       messages.push({ role: "user", content: outcomes });
       sse(res, { t: "user_turn", content: outcomes });
+    }
+    // Teacher mode: turn this online-model chat into a training example for the local model.
+    if (!closed && finished) {
+      const sys = localSystemPrompt(String(body.userName || "").slice(0, 60));
+      const taught = teacherToLocal(messages, sys, LOCAL_TOOL_NAMES);
+      if (taught) {
+        if (body.learn) saveTeacher({ ...taught, model });
+        sse(res, { t: "trace", id: rememberTrace({ source: model, ...taught }) });
+      }
     }
     if (!closed) sse(res, { t: "done" });
   } catch (err) {
@@ -411,13 +428,63 @@ function serveFile(res, file) {
   });
 }
 
+// Lets this page (and only this page) run code from answers with the ▶ Run button.
+const RUN_TOKEN = crypto.randomBytes(18).toString("base64url");
+
+// Another website open in the same browser must not be able to drive Mnx
+// (chat, memory, notes, learning): only accept POSTs from Mnx's own page.
+function sameOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true; // not from a browser page (curl, tests)
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
+  if (req.method === "POST" && !sameOrigin(req)) {
+    res.writeHead(403, { "content-type": "application/json" });
+    return res.end(JSON.stringify({ error: "Cross-site requests are not allowed" }));
+  }
   if (req.method === "POST" && url.pathname === "/api/chat") return handleChat(req, res);
+  if (req.method === "POST" && url.pathname === "/api/feedback") {
+    try {
+      const b = await readJson(req, 100_000);
+      const r = saveFeedback(String(b.trace || ""), b.rating === "up" ? "up" : "down", typeof b.correction === "string" ? b.correction.slice(0, 20000) : "");
+      res.writeHead(r.ok ? 200 : 404, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ ...r, stats: learnStats() }));
+    } catch (e) {
+      res.writeHead(400, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+  if (req.method === "POST" && url.pathname === "/api/run") {
+    try {
+      const b = await readJson(req, 200_000);
+      const ok = typeof b.token === "string" && b.token.length === RUN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(b.token), Buffer.from(RUN_TOKEN));
+      if (!ok) {
+        res.writeHead(403, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ error: "Not allowed" }));
+      }
+      const out = await runSnippet(b.language, b.code);
+      res.writeHead(out.error ? 400 : 200, { "content-type": "application/json" });
+      return res.end(JSON.stringify(out));
+    } catch (e) {
+      res.writeHead(400, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+  if (req.method === "GET" && url.pathname === "/api/learn") {
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
+    return res.end(JSON.stringify(learnStats()));
+  }
   if (req.method === "POST" && url.pathname === "/api/approve") return handleApprove(req, res);
   if (req.method === "GET" && url.pathname === "/api/config") {
     res.writeHead(200, { "content-type": "application/json" });
-    return res.end(JSON.stringify({ models: allModels(), local: localAvailable() ? LOCAL_ID : null, hasKey: hasKey(), localStatus }));
+    return res.end(JSON.stringify({ models: allModels(), local: localAvailable() ? LOCAL_ID : null, hasKey: hasKey(), localStatus, toolLabels: MORE_LABELS, runToken: CODE_RUNNER ? RUN_TOKEN : null }));
   }
   if (req.method === "GET" && url.pathname === "/api/status") {
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });

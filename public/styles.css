@@ -886,3 +886,28 @@ a.place-name:hover { color: var(--accent-2); }
 .info-rows { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 16px 14px; font-size: 13.5px; }
 .info-rows dt { color: var(--fg-3, var(--fg-2)); font-style: italic; }
 .info-rows dd { margin: 0; word-break: break-word; }
+.info-title.mono, .info-rows.mono dd { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 16px; }
+.info-swatch { height: 56px; margin: 0 16px 12px; border-radius: 12px; border: 1px solid var(--line); }
+.info-pre { margin: 0 16px 12px; padding: 12px; border-radius: 12px; background: var(--code-bg, #0b0d16); border: 1px solid var(--line); font-size: 12.5px; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.timer-card .info-title { font-variant-numeric: tabular-nums; font-size: 34px; }
+.timer-bar { height: 6px; margin: 0 16px 16px; border-radius: 99px; background: var(--panel-2); overflow: hidden; }
+.timer-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent, #7c6cff), var(--accent-2, #4fc3f7)); transition: width .25s linear; }
+.timer-card.done { border-color: rgba(74, 222, 128, .5); }
+.timer-card.done .info-title { color: var(--ok); }
+
+/* Feedback (learning) */
+.msg-actions .fb { font-size: 15px; filter: grayscale(1); opacity: .7; }
+.msg-actions .fb.on { filter: none; opacity: 1; }
+.fix-box { margin: 8px 0 4px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-2); display: grid; gap: 8px; }
+.fix-box label { font-size: 13.5px; font-weight: 600; }
+.fix-box label span { font-weight: 400; color: var(--fg-2); }
+.fix-box textarea { width: 100%; resize: vertical; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-2, transparent); color: inherit; padding: 10px; font: inherit; font-size: 14px; }
+.fix-box .card-actions { padding: 0; }
+.hint { font-size: 12.5px; color: var(--fg-2); margin: -4px 0 8px; }
+
+/* ▶ Run on code blocks in answers */
+.md pre .run-code { right: 66px; opacity: 1; color: var(--accent-2); font-weight: 600; }
+.md pre .run-code:disabled { opacity: .6; }
+@media (hover: none) { .md pre .copy-code { opacity: 1; } }
+.snippet-run { margin: -4px 0 12px; }
+.md-stable > :last-child { margin-bottom: 0; }
