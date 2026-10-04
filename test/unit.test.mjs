@@ -136,6 +136,10 @@ describe("local model detection", () => {
     fs.writeFileSync(path.join(dir, "models", "mnx-q4_k_m.gguf"), Buffer.alloc(1_100_000));
     assert.match(localModelPath(dir), /mnx-q4_k_m\.gguf$/);
   });
+  test("keeps the higher-quality file off Android even when a Q4_0 copy exists", () => {
+    fs.writeFileSync(path.join(dir, "models", "mnx-q4_0.gguf"), Buffer.alloc(1_100_000));
+    assert.match(localModelPath(dir), /mnx-q4_k_m\.gguf$/);
+  });
   test("labels", () => {
     assert.equal(localModelLabel("/m/mnx-q4_k_m.gguf"), "Local (your model)");
     assert.equal(localModelLabel("/m/llama-3.2-1b-instruct.Q4_K_M.gguf"), "Local · Llama 3.2 1B");

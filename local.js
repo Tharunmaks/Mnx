@@ -40,7 +40,11 @@ export function localModelPath(baseDir) {
   } catch {
     /* no models folder */
   }
-  const pick = files.find((f) => /^mnx/i.test(f)) || files[0];
+  // Prefer your Mnx model; on phones prefer its Q4_0 copy, which ARM CPUs
+  // run much faster (see scripts/make-fast-model.sh).
+  const mnx = files.filter((f) => /^mnx/i.test(f));
+  const fast = mnx.find((f) => /q4_0/i.test(f));
+  const pick = (ON_ANDROID ? fast : mnx.find((f) => f !== fast)) || mnx[0] || files[0];
   return pick ? path.join(dir, pick) : null;
 }
 
@@ -182,7 +186,7 @@ async function ensureLlamaServer(file) {
         return `http://127.0.0.1:${port}`;
       }
     }
-    const args = ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || 8192), "-np", "1"];
+    const args = ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || (ON_ANDROID ? 4096 : 8192)), "-np", "1"];
     if (process.env.MNX_THREADS) args.push("-t", process.env.MNX_THREADS);
     else if (ON_ANDROID) args.push("-t", String(fastCores()));
     if (process.env.MNX_GPU_LAYERS) args.push("-ngl", process.env.MNX_GPU_LAYERS); // e.g. 99 on a GPU machine
@@ -267,7 +271,7 @@ export function fitHistory(history, prompt, ctx, tokensPerChar = 1 / 3) {
   return [system, ...(roomy.length ? roomy : trimTo(budget))];
 }
 
-let serverCtx = Number(process.env.MNX_CTX) || 8192;
+let serverCtx = Number(process.env.MNX_CTX) || (ON_ANDROID ? 4096 : 8192);
 async function generateViaServerOnce(file, history, prompt, onChunk, signal) {
   const url = await ensureLlamaServer(file);
   let res;
@@ -703,6 +707,7 @@ export async function warmUpLocal(file) {
 }
 
 const MAX_STEPS = 5;
+const TOOL_RESULT_CHARS = Number(process.env.MNX_TOOL_RESULT_CHARS) || (ON_ANDROID ? 1800 : 3500);
 
 // `runToolImpl` lets the evaluation harness supply fixed tool results.
 export async function handleLocalChat({ body, messages, file, send, isClosed, signal, requestApproval, runToolImpl = runTool }) {
@@ -868,7 +873,8 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
         if (isClosed()) return;
         send({ t: "tool_done", id: c.id, name: parsed.name, error: !!out.error, display: out.display });
         let json = JSON.stringify(out.error ? { error: out.error } : out.result);
-        if (json.length > 3500) json = `${json.slice(0, 3500)}…(truncated)`;
+        // Every character here is read by the model before it answers, which is slow on phones.
+        if (json.length > TOOL_RESULT_CHARS) json = `${json.slice(0, TOOL_RESULT_CHARS)}…(truncated)`;
         responses.push(json);
       }
       chat.push({

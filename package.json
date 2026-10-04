@@ -1,7 +1,7 @@
 {
   "name": "mnx",
   "version": "1.0.0",
-  "description": "Mnx — a live-streaming AI assistant web app",
+  "description": "Mnx \u2014 a live-streaming AI assistant web app",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -12,7 +12,8 @@
     "test:runtime": "MNX_RUNTIME_TESTS=1 node --test --test-timeout=9000000 test/runtime.test.mjs",
     "train:data": "node training/export_prompt.mjs && python3 training/generate.py && node training/validate.mjs",
     "eval": "node training/eval.mjs",
-    "soak": "node training/soak.mjs"
+    "soak": "node training/soak.mjs",
+    "fast-model": "bash scripts/make-fast-model.sh"
   },
   "repository": {
     "type": "git",

@@ -62,6 +62,17 @@ On Android, Mnx starts `llama-server` itself the first time you chat with the lo
 
 The online models still work from the phone if you set `ANTHROPIC_API_KEY`.
 
+### Make it faster on your phone
+
+A phone CPU runs a 3B model slowly, so every second counts. In order of impact:
+
+1. **Use the Q4_0 copy of your model:** `npm run fast-model`, then restart Mnx. Phone CPUs have fast paths for Q4_0, so Mnx reads your message several times faster and writes the answer a bit faster. Mnx picks `models/mnx-q4_0.gguf` automatically on Android. It needs about 1.8 GB more storage.
+2. **Battery: Unrestricted for Termux** (Settings → Apps → Termux → Battery). Otherwise Android slows Termux down while you're in the browser.
+3. **A smaller model.** In `training/mnx_train.ipynb`, set `BASE` to Qwen2.5-1.5B (about 2× faster) or 0.5B (about 5× faster, but weaker), then retrain.
+4. **Run the model on a computer and chat from your phone.** A laptop is many times faster than a phone, and a computer with a GPU (`MNX_GPU_LAYERS=99`) can be 20–50× faster. Start Mnx on the computer with `HOST=0.0.0.0 npm start` and open `http://<computer-ip>:3000` on your phone (only on a network you trust).
+
+Mnx already uses only the phone's fast CPU cores, a 4096-token context, cached instructions and shorter tool results on Android. The speed of each reply appears in Termux, e.g. `[local] reply: read 300 new tokens in 9.0s (33/s), wrote 120 tokens at 8.5/s`.
+
 ### Tools for your local model
 
 Your model can use tools on the phone. It writes a `<tool_call>` in Qwen2.5's native format, Mnx runs the tool, sends the result back as a `<tool_response>`, and the model writes the final answer. Every step shows up live in the chat:
