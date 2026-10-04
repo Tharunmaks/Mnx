@@ -26,7 +26,9 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import content as C  # noqa: E402
+import content_algos as A  # noqa: E402
 import content_code as CC  # noqa: E402
+import content_codegen as CG  # noqa: E402
 import content_docs as D  # noqa: E402
 import content_more as M  # noqa: E402
 import content_qa as Q  # noqa: E402
@@ -51,6 +53,12 @@ class Gen:
             self.animals, self.objects, self.settings = M.ANIMALS, M.OBJECTS, M.SETTINGS
             self.topics = {**C.DOC_TOPICS, **D.MORE_DOC_TOPICS}
             self.code = C.CODE_TASKS + CC.MORE_CODE_TASKS
+        self.algo_pairs = [(a, l) for a in A.ALGOS for l in A.LANGS if A.held_out(a, l) == held_out]
+        # Generated code families, grouped so no single family dominates.
+        self.code_families = {}
+        for t in CG.variants(held_out):
+            fam = t["filename"].rsplit(".", 1)[1] if not t["filename"].endswith("_api.py") and not t["filename"].endswith("_api.js") else "api"
+            self.code_families.setdefault(fam, []).append(t)
         self.styles = C.IMAGE_STYLES + M.MORE_IMAGE_STYLES
         self.place_kinds = C.PLACE_KINDS + M.MORE_PLACE_KINDS
         self.cuisines = C.CUISINES + M.MORE_CUISINES
@@ -390,16 +398,34 @@ class Gen:
         return self.conv(category, user, [("Planning the document", f"The user wants a {fmt} about {title.lower()}. I'll outline {n} {unit} and call create_document.", "create_document", args, result)],
                          ("Document ready", "The file was delivered; I'll summarize what's inside."), answer, expect, history=history)
 
-    def code_file(self):
-        task = self.pick(self.code)
-        user = self.pick(task["asks"])
+    def algo_task(self, algo, lang):
+        spec, (name, ext, aliases) = A.ALGOS[algo], A.LANGS[lang]
+        alias = self.pick(aliases)
+        asks = [x.replace("{L}", name).replace("{l}", alias) for x in spec["asks"]]
+        fn = A.filename(algo, lang)
+        how = A.RUN_HINT[lang].format(f=fn, cls=spec["cls"])
+        return {"asks": asks, "filename": fn, "desc": spec["desc"], "content": spec["impl"][lang], "lang": lang, "algo": algo,
+                "explain": f"Run it with `{how}`. It prints:\n\n```\n{spec['expected'].strip()}\n```"}
+
+    def pick_code_task(self):
+        r = self.r.random()
+        if r < 0.15:
+            return self.pick(self.code)
+        if r < 0.45:
+            return self.algo_task(*self.pick(self.algo_pairs))
+        return self.pick(self.code_families[self.pick(sorted(self.code_families))])
+
+    def code_file(self, task=None, user=None, history=None, category="code"):
+        task = task or self.pick_code_task()
+        user = user or self.pick(task["asks"])
         args = {"filename": task["filename"], "content": task["content"]}
         result = {"delivered": True, "filename": task["filename"], "bytes": len(task["content"].encode())}
-        answer = f"Here's **{task['filename']}**: {task['desc'][0].lower() + task['desc'][1:]}.\n\n{task['explain']}"
+        desc = task["desc"][0].lower() + task["desc"][1:]
+        answer = f"Here's **{task['filename']}**: {desc}.\n\n{task['explain']}"
         ext = task["filename"].rsplit(".", 1)[1]
-        expect = {"tool": "create_file", "args": {"filename": rf"\.{ext}$"}, "answer": [re.escape(task["filename"])]}
-        return self.conv("code", user, [("Writing the code", f"The user wants {task['desc'][0].lower() + task['desc'][1:]}. I'll write the full file with create_file.", "create_file", args, result)],
-                         ("File delivered", "I'll explain how to run it."), answer, expect)
+        expect = {"tool": "create_file", "args": {"filename": rf"\.{ext}$"}, "syntax": ext, "answer": [re.escape(task["filename"])]}
+        return self.conv(category, user, [("Writing the code", f"The user wants {desc}. I'll write the complete file and deliver it with create_file.", "create_file", args, result)],
+                         ("File delivered", "I'll explain how to run it."), answer, expect, history=history)
 
     def _program(self):
         """A (user, code, explanation) program whose output we compute by running it."""
@@ -680,7 +706,29 @@ class Gen:
                          ("No route", "The routing service found no route; I'll explain and suggest what to try."), answer, {"tool": "get_directions", "answer": ["couldn't|could not"]})
 
     def followup(self):
-        k = self.r.randrange(6)
+        k = self.r.randrange(8)
+        if k == 6:  # "now in Rust" → same program in another language
+            algo, lang1 = self.pick(self.algo_pairs)
+            options = [l for a, l in self.algo_pairs if a == algo and l != lang1]
+            if options:
+                lang2 = self.pick(options)
+                c1 = self.code_file(task=self.algo_task(algo, lang1))
+                name2 = A.LANGS[lang2][0]
+                user = self.pick([f"Now in {name2}", f"can you write the same in {self.pick(A.LANGS[lang2][2])}", f"Convert it to {name2}", f"same thing in {name2} pls"])
+                return self.code_file(task=self.algo_task(algo, lang2), user=user, history=self.history_of(c1), category="followup")
+        if k == 7:  # "run it" → run the program that was just written
+            pairs = [(a, l) for a, l in self.algo_pairs if l in ("python", "javascript")]
+            if pairs:
+                algo, lang = self.pick(pairs)
+                task = self.algo_task(algo, lang)
+                c1 = self.code_file(task=task)
+                out = A.ALGOS[algo]["expected"]
+                res = {"ran": True, "exit_code": 0, "timed_out": False, "stdout": out, "stderr": "", "images_shown_to_user": []}
+                return self.conv("followup", self.pick(["Run it", "run it pls", "Can you run it and show me the output?", "Test it"]),
+                                 [("Running the file", f"I'll run {task['filename']} with run_code so they can see the output.", "run_code", {"language": lang, "code": task["content"]}, res)],
+                                 ("It works", "The program ran successfully; I'll show the output."), f"It runs correctly. Output:\n\n```\n{out.strip()}\n```",
+                                 {"tool": "run_code", "args_eq": {"language": lang}, "answer": [re.escape(out.strip().splitlines()[0])]}, history=self.history_of(c1))
+            k = 0
         if k == 0:  # weather in another city
             c1 = self.weather()
             city2, _ = self.pick(self.cities)
@@ -760,8 +808,8 @@ class Gen:
 
 
 # Share of each category in the data.
-MIX = [("weather", 0.09), ("search", 0.14), ("location", 0.02), ("places", 0.08), ("directions", 0.05), ("image", 0.10),
-       ("document", 0.08), ("notes_slides", 0.02), ("code_file", 0.06), ("run_code", 0.10), ("chart", 0.03), ("multi", 0.03),
+MIX = [("weather", 0.09), ("search", 0.12), ("location", 0.02), ("places", 0.08), ("directions", 0.05), ("image", 0.09),
+       ("document", 0.08), ("notes_slides", 0.02), ("code_file", 0.09), ("run_code", 0.10), ("chart", 0.03), ("multi", 0.03),
        ("direct", 0.06), ("simple_math", 0.03), ("clarify", 0.02), ("unsupported", 0.02), ("followup", 0.05), ("tool_error", 0.02)]
 
 

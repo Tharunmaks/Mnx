@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { ThinkSplitter, ToolCallScanner, parseToolCall, localModelPath, localModelLabel } from "../local.js";
+import { ThinkSplitter, ToolCallScanner, parseToolCall, localModelPath, localModelLabel, normalizeToolCall as n } from "../local.js";
 import { runTool, parseDuckDuckGo, htmlToText, TOOLS } from "../tools.js";
 
 const hasPython = (() => {
@@ -262,5 +262,30 @@ describe("code runner safety", () => {
     assert.equal(r.result.stdout.trim(), "π ≈ 3.14159");
     assert.deepEqual(r.result.images_shown_to_user, ["dot.png"]);
     assert.match(r.display.images[0].src, /^data:image\/png;base64,/);
+  });
+});
+
+describe("tool-call normalization (smooth tool use)", () => {
+
+  test("maps near-miss tool names", () => {
+    for (const [alias, real] of [["web_search", "search_web"], ["generate_image", "create_image"], ["write_file", "create_file"], ["execute_code", "run_code"], ["weather", "get_weather"]])
+      assert.equal(n(alias, {}).name, real);
+    assert.equal(n("delete_everything", {}).name, "delete_everything"); // unknown stays unknown
+  });
+  test("maps near-miss argument names and keeps correct ones", () => {
+    assert.deepEqual(n("create_file", { file_name: "a.py", code: "x=1" }).input, { filename: "a.py", content: "x=1" });
+    assert.deepEqual(n("get_weather", { city: "Chennai" }).input, { location: "Chennai" });
+    assert.deepEqual(n("search_web", { query: "a", q: "b" }).input, { query: "a", q: "b" });
+  });
+  test("strips markdown fences around file contents and code", () => {
+    assert.equal(n("create_file", { filename: "a.js", content: "```js\nconsole.log(1)\n```" }).input.content, "console.log(1)\n");
+    assert.equal(n("run_code", { language: "py", code: "```python\nprint(1)\n```" }).input.code, "print(1)\n");
+  });
+  test("normalizes enums: language, travel mode, image aspect, document format", () => {
+    assert.equal(n("run_code", { lang: "node", code: "1" }).input.language, "javascript");
+    assert.equal(n("get_directions", { from: "a", to: "b", mode: "bike" }).input.mode, "cycling");
+    assert.equal(n("create_image", { prompt: "x", aspect: "16:9" }).input.aspect, "landscape");
+    assert.equal(n("create_document", { format: "PowerPoint", title: "t", slides: ["Intro"] }).input.format, "pptx");
+    assert.deepEqual(n("create_document", { format: "pptx", title: "t", slides: ["Intro"] }).input.slides, [{ title: "Intro", bullets: [] }]);
   });
 });

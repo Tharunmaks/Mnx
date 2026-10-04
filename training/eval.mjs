@@ -9,6 +9,8 @@
 // arguments, the permission step for code, and a final answer that uses the
 // tool result. Writes training/data/eval-report.json.
 import fs from "node:fs";
+import os from "node:os";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +30,54 @@ const file = model ? path.resolve(model) : localModelPath(path.join(here, ".."))
 if (!file || !fs.existsSync(file)) {
   console.error("No model found. Pass --model path/to/model.gguf");
   process.exit(2);
+}
+
+// Does the code the model wrote actually compile? Uses whatever compilers
+// are installed; a missing tool means "not checked" rather than a failure.
+const has = (cmd) => spawnSync("sh", ["-c", `command -v ${cmd}`]).status === 0;
+function syntaxError(ext, content) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mnx-eval-"));
+  try {
+    let file = path.join(dir, `main.${ext}`);
+    const java = ext === "java" && content.match(/public\s+class\s+(\w+)/);
+    if (java) file = path.join(dir, `${java[1]}.java`);
+    fs.writeFileSync(file, content);
+    const run = (cmd, args) => {
+      if (!has(cmd)) return null;
+      const r = spawnSync(cmd, args, { cwd: dir, encoding: "utf8", timeout: 60000 });
+      return r.status === 0 ? null : (r.stderr || r.stdout || "failed").trim().split("\n").slice(-3).join(" ");
+    };
+    switch (ext) {
+      case "py": return run("python3", ["-m", "py_compile", file]);
+      case "js": case "mjs": return run("node", ["--check", file]);
+      case "ts": return run("tsc", ["--noEmit", "--target", "es2020", file]);
+      case "c": return run("gcc", ["-fsyntax-only", file]);
+      case "cpp": return run("g++", ["-std=c++17", "-fsyntax-only", file]);
+      case "java": return run("javac", ["-d", dir, file]);
+      case "go": return run("gofmt", ["-e", file]) ;
+      case "rs": return run("rustc", ["--emit=metadata", "--crate-type=bin", "-o", path.join(dir, "out"), file]);
+      case "rb": return run("ruby", ["-c", file]);
+      case "php": return run("php", ["-l", file]);
+      case "sh": return run("bash", ["-n", file]);
+      case "json":
+        try {
+          JSON.parse(content);
+          return null;
+        } catch (e) {
+          return e.message;
+        }
+      case "sql": return run("python3", ["-c", "import sqlite3,sys; sqlite3.connect(':memory:').executescript(open(sys.argv[1]).read())", file]);
+      case "html": {
+        const js = [...content.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]).join("\n");
+        if (!js.trim()) return null;
+        fs.writeFileSync(path.join(dir, "inline.js"), js);
+        return run("node", ["--check", path.join(dir, "inline.js")]);
+      }
+      default: return null;
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function score(ex, run) {
@@ -51,6 +101,10 @@ function score(ex, run) {
     }
     if (e.then && !calls.slice(1).some((c) => c.name === e.then)) fails.push(`never called ${e.then}`);
     if (e.tool === "run_code" && !run.approvalAsked) fails.push("code ran without asking permission");
+    if (e.syntax && first.name === "create_file" && typeof first.input.content === "string") {
+      const err = syntaxError(e.syntax, first.input.content);
+      if (err) fails.push(`the ${e.syntax} file doesn't compile: ${err.slice(0, 160)}`);
+    }
   }
   if (run.unexpected.length) fails.push(`unexpected tools: ${run.unexpected.join(", ")}`);
   const answer = run.answer.trim();

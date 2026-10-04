@@ -439,6 +439,70 @@ export class ToolCallScanner {
   }
 }
 
+// Small models sometimes use a near-miss tool or argument name ("code" for
+// "content", "city" for "location", "web_search" for "search_web") or wrap
+// code in markdown fences. Map those to what the tools expect, so a call that
+// is clearly meant for a tool still works.
+const TOOL_ALIASES = {
+  web_search: "search_web", search: "search_web", google: "search_web", browse: "read_webpage", fetch_url: "read_webpage", open_url: "read_webpage",
+  weather: "get_weather", get_location: "get_user_location", location: "get_user_location", places: "find_places", search_places: "find_places",
+  directions: "get_directions", route: "get_directions", generate_image: "create_image", image: "create_image", draw: "create_image",
+  create_presentation: "create_document", make_slides: "create_document", create_pdf: "create_document", write_file: "create_file",
+  save_file: "create_file", python: "run_code", execute_code: "run_code", run_python: "run_code", code_interpreter: "run_code",
+};
+const ARG_ALIASES = {
+  search_web: { query: ["q", "search", "keywords", "text", "search_query"] },
+  read_webpage: { url: ["link", "href", "page", "website"] },
+  get_weather: { location: ["city", "place", "loc", "where"] },
+  find_places: { query: ["type", "what", "category", "keyword"], near: ["location", "city", "place", "area", "around"] },
+  get_directions: { origin: ["from", "start", "source"], destination: ["to", "end", "dest", "target"], mode: ["travel_mode", "by", "transport"] },
+  create_image: { prompt: ["description", "text", "image", "query", "subject"], aspect: ["orientation", "size", "aspect_ratio", "ratio"] },
+  create_document: { format: ["type", "file_type", "kind"], slides: ["pages"], sections: ["content", "body", "chapters"] },
+  create_file: { filename: ["file_name", "name", "path", "file", "filepath"], content: ["code", "text", "contents", "body", "source", "data"] },
+  run_code: { language: ["lang", "runtime"], code: ["content", "source", "script", "program"] },
+};
+const stripFences = (text) => {
+  const m = typeof text === "string" && text.trim().match(/^```[\w+#.-]*\n([\s\S]*?)\n?```$/);
+  return m ? `${m[1]}\n` : text;
+};
+
+export function normalizeToolCall(name, input) {
+  const tool = TOOL_ALIASES[name] || name;
+  const args = { ...(input || {}) };
+  for (const [key, aliases] of Object.entries(ARG_ALIASES[tool] || {})) {
+    if (args[key] !== undefined) continue;
+    const alias = aliases.find((a) => args[a] !== undefined);
+    if (alias) {
+      args[key] = args[alias];
+      delete args[alias];
+    }
+  }
+  if (tool === "create_file") args.content = stripFences(args.content);
+  if (tool === "run_code") {
+    args.code = stripFences(args.code);
+    const lang = String(args.language || "python").toLowerCase();
+    args.language = /^(js|javascript|node|nodejs)$/.test(lang) ? "javascript" : "python";
+  }
+  if (tool === "get_directions" && typeof args.mode === "string") {
+    const m = args.mode.toLowerCase();
+    args.mode = /walk|foot/.test(m) ? "walking" : /bike|bicycl|cycl/.test(m) ? "cycling" : "driving";
+  }
+  if (tool === "create_image" && typeof args.aspect === "string") {
+    const a = args.aspect.toLowerCase();
+    args.aspect = /land|wide|horiz|16:9|desktop|banner/.test(a) ? "landscape" : /port|tall|vert|9:16|phone|mobile/.test(a) ? "portrait" : "square";
+  }
+  if (tool === "create_document") {
+    const f = String(args.format || (name === "create_pdf" ? "pdf" : "pptx")).toLowerCase().replace(/^\./, "");
+    args.format = /ppt|slide|power|deck|present/.test(f) ? "pptx" : /doc|word/.test(f) ? "docx" : "pdf";
+    if (Array.isArray(args.slides))
+      args.slides = args.slides.map((sl) =>
+        typeof sl === "string" ? { title: sl, bullets: [] } : { ...sl, bullets: sl.bullets ?? sl.points ?? sl.items ?? (typeof sl.content === "string" ? sl.content.split(/\n+/).map((x) => x.replace(/^[-*•]\s*/, "")).filter(Boolean) : []) },
+      );
+    if (Array.isArray(args.sections)) args.sections = args.sections.map((sec) => (typeof sec === "string" ? { body: sec } : { ...sec, body: sec.body ?? sec.content ?? sec.text ?? "" }));
+  }
+  return { name: tool, input: args };
+}
+
 // Small models often put raw newlines/tabs inside JSON strings (e.g. code).
 function escapeControlCharsInStrings(json) {
   let out = "";
@@ -646,7 +710,8 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
       chat.push({ role: "assistant", content: `${thought.trim() ? `<think>${thought.trim()}</think>\n` : ""}${raw.trim()}` });
       const responses = [];
       for (const c of calls) {
-        const parsed = parseToolCall(c.json);
+        const raw = parseToolCall(c.json);
+        const parsed = raw && normalizeToolCall(raw.name, raw.input);
         if (!parsed) {
           if (c.index !== null) send({ t: "tool_done", id: c.id, name: c.json.match(/"name"\s*:\s*"([^"]+)"/)?.[1] || "tool", error: true });
           responses.push({ error: "Your tool call wasn't valid JSON. Use the exact <tool_call> format with properly escaped strings." });

@@ -20,7 +20,7 @@ test("training/system_prompt.json matches the app's prompt (run: node training/e
   assert.deepEqual(exported.tools, LOCAL_TOOLS.map((t) => t.function.name));
 });
 
-test("every hand-written code task compiles/runs", { skip: !hasPython && "python3 not installed" }, () => {
+test("every code task compiles/runs (hand-written, 10-language programs, generated families)", { skip: !hasPython && "python3 not installed", timeout: 900000 }, () => {
   const r = spawnSync("python3", [path.join(root, "training/check_code.py")], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stdout + r.stderr);
 });

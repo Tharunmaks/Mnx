@@ -90,7 +90,12 @@ A 3B model sometimes misses a tool or formats a call badly. Mnx repairs common J
    - Weather, location, places and directions in about 150 cities
    - Images: combinations of subjects, settings, times of day and 25 styles
    - Slides, PDF and Word on 26 topics, including turning your notes into slides
-   - 30 code files, all compiled or run by `training/check_code.py`
+   - **Code files: 772 checked programs.**
+     - 8 classic programs in 10 languages (Python, JavaScript, TypeScript, C, C++, Java, Go, Rust, Ruby, PHP). Each one is compiled and run, and must print exactly the expected output.
+     - Unit converters; data classes in Python, TypeScript and Java; SQL databases; web pages in different themes; Express and Flask REST APIs; JavaScript utilities; Bash scripts.
+     - 30 hand-written programs.
+     - `training/check_code.py` checks all of them.
+   - Code follow-ups: "now in Rust" (the same program in another language) and "run it" (writes the file, then runs it with the code runner).
    - Running code: about 20 kinds of problems, with outputs from actually running them; includes the user saying no and fixing a failed run
    - Charts
    - Follow-ups ("make it portrait", "add a slide…", "what about Delhi?", "directions to the first one")
@@ -100,6 +105,10 @@ A 3B model sometimes misses a tool or formats a call badly. Mnx repairs common J
    Every conversation is checked with Mnx's own parsers (`training/validate.mjs`). The 600 test cases use cities, topics and tasks that never appear in training. No other AI model wrote the data.
 2. **Train.** Open `training/mnx_train.ipynb` in Google Colab with a T4 GPU (free tier works) and run the cells. It does a LoRA fine-tune of Qwen2.5-3B-Instruct with Unsloth, learning only the reply to your latest message (not the system prompt, earlier turns or tool results). It saves progress to Google Drive so it can resume after a disconnect. The full 100,000 conversations take roughly 25–35 h on a free T4 (several sessions), 10–12 h on an L4, or 4–6 h on an A100; `USE = 20000` takes about 6 h on a T4. Afterwards it exports `mnx-q4_k_m.gguf` and the faster-on-phones `mnx-q4_0.gguf`, then uploads them to your Hugging Face repo.
 3. **Measure.** Run `npm run eval -- --model models/mnx-q4_k_m.gguf --target 98`. It runs 600 held-out cases (cities, topics and tasks never seen in training) through Mnx's real tool loop, including the permission step for code, and prints the success rate per category and overall. A case only passes if the right tool was called with valid arguments and the final answer uses the result. On a phone, add `--limit 100` to keep it short.
+
+For code, a test only passes if the file the model wrote actually compiles, using whichever compilers are installed.
+
+**Smooth tool use.** Mnx maps common near-misses from small models to the right tool or argument: `web_search` becomes `search_web`, `code` becomes `content`, `city` becomes `location`, `from`/`to` become `origin`/`destination`, and `ppt` becomes `pptx`. It also strips stray markdown fences around file contents.
 
 Permission for running code is enforced by Mnx itself, so it never depends on the model. Image quality comes from the image service. Speed depends on your phone; the Q4_0 file and shorter thinking help.
 
