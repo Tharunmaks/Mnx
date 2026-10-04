@@ -17,9 +17,13 @@ const MODELS = {
   "claude-sonnet-5-5": "Sonnet 5.5",
   "claude-fable-5-1": "Fable 5.1",
 };
-const LOCAL_FILE = localModelPath(here);
-const localAvailable = () => fs.existsSync(LOCAL_FILE);
-const allModels = () => (localAvailable() ? { ...MODELS, [LOCAL_ID]: localModelLabel(LOCAL_FILE) } : MODELS);
+// Re-checked on each request so a model dropped into models/ shows up without a restart.
+const localFile = () => localModelPath(here);
+const localAvailable = () => {
+  const f = localFile();
+  return !!f && fs.existsSync(f);
+};
+const allModels = () => (localAvailable() ? { ...MODELS, [LOCAL_ID]: localModelLabel(localFile()) } : MODELS);
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
 const client = new Anthropic();
@@ -310,7 +314,7 @@ async function handleLocal(req, res, body, messages) {
     await handleLocalChat({
       body,
       messages,
-      file: LOCAL_FILE,
+      file: localFile(),
       send: (p) => !closed && sse(res, p),
       isClosed: () => closed,
       signal: abort.signal,

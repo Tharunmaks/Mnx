@@ -35,18 +35,33 @@ npm start                              # → http://localhost:3000
 
 Set `PORT` to change the port. Node 18+ is required.
 
-## Use your own local model (Llama 3.2 1B GGUF)
+## Use your own local model
 
-Mnx can also run a GGUF model on your own machine with llama.cpp (through `node-llama-cpp`). It's private, it works offline, and it needs no API key.
+Mnx can run your own GGUF model, such as **mnx-q4_k_m.gguf** (your Qwen2.5-3B fine-tune), on your own device with llama.cpp. It's private, it works offline, and it needs no API key. Mnx uses the first `.gguf` in `models/` (preferring `mnx*`), or the file you set in `MNX_LOCAL_MODEL`. It appears in the model picker as **Mnx · Local (your model)**, and it's the default when no `ANTHROPIC_API_KEY` is set.
 
-1. Put the model file in `models/`. Either:
-   - download `llama-3.2-1b-instruct.Q4_K_M.gguf` from Google Drive in your browser and move it into `models/`, or
-   - share it as **Anyone with the link** and run `npm run get-model`. You can also pass another Drive link: `npm run get-model -- <drive-url> <name>.gguf`.
-2. Run `npm start`. **Mnx · Local · Llama 3.2 1B** appears in the model picker. If no `ANTHROPIC_API_KEY` is set, it becomes the default.
+Get the model into `models/` by one of these:
+- `HF_TOKEN=hf_... npm run get-model`. This downloads `tharunmakes/mnx-qwen2.5-3b-gguf/mnx-q4_k_m.gguf`. The repo is private, so you need a read token from https://huggingface.co/settings/tokens.
+- `npm run get-model -- <google-drive-link>`. The file must be shared as "Anyone with the link".
+- Copy the file in by hand.
 
-To use a different file, set `MNX_LOCAL_MODEL=path/to/model.gguf`. The model reasons inside `<think>…</think>` first, and that text streams live into the thinking area.
+### On your Android phone (Termux)
 
-What the local model can't do: a 1B model can't browse the web, use the weather, maps or file tools, or see images and PDFs. For those, switch to an online model in the picker. Chats can mix both kinds of model.
+1. Install **Termux** from F-Droid or GitHub. The Play Store version is outdated.
+2. In Termux:
+   ```bash
+   pkg install -y git
+   git clone https://github.com/Tharunmaks/Mnx && cd Mnx
+   git checkout claude/mnx-ai-web-interface-f75vu6   # until it's merged
+   bash scripts/termux-setup.sh
+   ```
+   The script installs Node.js and llama.cpp (`llama-server`), then installs Mnx. It finds `mnx*.gguf` in your phone's **Downloads** folder and links it (so the file isn't stored twice), or downloads it if `HF_TOKEN` is set.
+3. `npm start`, then open **http://localhost:3000** in your phone's browser.
+
+On Android, Mnx starts `llama-server` itself the first time you chat with the local model. Loading a 3B model takes a few seconds. `termux-wake-lock` stops Android from pausing it in the background. A 3B Q4 model needs roughly 2.5 GB of free RAM. If your phone is slow, set `MNX_THREADS` to its number of performance cores. For a shorter context, set `MNX_CTX=2048`. To use a llama-server you started yourself, set `MNX_LLAMA_SERVER=http://127.0.0.1:8080`.
+
+The online models still work from the phone if you set `ANTHROPIC_API_KEY`.
+
+What the local model can't do: it can't browse the web, use the weather, maps or file tools, or see images and PDFs. Switch to an online model for those. Chats can mix both.
 
 ## How it works
 
@@ -57,6 +72,6 @@ browser (public/)  ── POST /api/chat ──►  server.js  ── stream ─
 ```
 
 - `server.js` runs the agent loop. It streams Claude's events (thinking deltas, text deltas, tool-input deltas) to the browser, runs the tools, and loops until the answer is complete. Adaptive thinking is on with summarized display, so the reasoning can be shown live. Server-side refusal fallbacks are enabled.
-- `local.js` runs the local GGUF model and streams it with the same events.
+- `local.js` runs the local GGUF model, either in process (node-llama-cpp, desktop) or through `llama-server` (Termux), and streams it with the same events.
 - `tools.js` defines the tools and calls the free public APIs.
 - `public/app.js` renders the live timeline, cards and history. `public/docs.js` builds the PPTX, PDF and DOCX files.
