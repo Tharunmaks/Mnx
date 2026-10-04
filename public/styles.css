@@ -410,12 +410,12 @@ a { color: var(--accent-2); }
   border: 1px solid var(--line);
   padding: 10px 16px;
   border-radius: 18px 18px 4px 18px;
-  max-width: min(78%, 620px);
+  max-width: 100%;
   white-space: pre-wrap;
   word-wrap: break-word;
 }
 .msg.user .files { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-bottom: 6px; }
-.msg.user .col { display: flex; flex-direction: column; align-items: flex-end; max-width: 100%; }
+.msg.user .col { display: flex; flex-direction: column; align-items: flex-end; max-width: min(78%, 620px); }
 .mnx-badge {
   width: 34px;
   height: 34px;
@@ -861,7 +861,7 @@ a.place-name:hover { color: var(--accent-2); }
   .thread { padding: 8px 16px 20px; gap: 22px; }
   .composer { padding: 0 16px 8px; }
   .msg.assistant .mnx-badge { display: none; }
-  .msg.user .bubble { max-width: 88%; }
+  .msg.user .col { max-width: 88%; }
   .hero-logo { height: 130px; }
   .w-temp { font-size: 46px; }
   .w-icon { width: 72px; height: 72px; }
@@ -873,3 +873,7 @@ a.place-name:hover { color: var(--accent-2); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Local model getting ready */
+.ready-note { margin: 4px auto 14px; max-width: 420px; padding: 9px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); color: var(--fg-2); font-size: 13.5px; text-align: center; }
+.ready-note.err { color: var(--err); border-color: rgba(248, 113, 113, .45); }

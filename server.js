@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { TOOLS, runTool } from "./tools.js";
-import { LOCAL_ID, localModelPath, localModelLabel, handleLocalChat, warmUpLocal } from "./local.js";
+import { LOCAL_ID, localModelPath, localModelLabel, handleLocalChat, warmUpLocal, localStatus } from "./local.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -417,7 +417,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/approve") return handleApprove(req, res);
   if (req.method === "GET" && url.pathname === "/api/config") {
     res.writeHead(200, { "content-type": "application/json" });
-    return res.end(JSON.stringify({ models: allModels(), local: localAvailable() ? LOCAL_ID : null, hasKey: hasKey() }));
+    return res.end(JSON.stringify({ models: allModels(), local: localAvailable() ? LOCAL_ID : null, hasKey: hasKey(), localStatus }));
+  }
+  if (req.method === "GET" && url.pathname === "/api/status") {
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
+    return res.end(JSON.stringify(localStatus));
   }
   if (req.method !== "GET" && req.method !== "HEAD") {
     res.writeHead(405);

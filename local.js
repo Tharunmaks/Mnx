@@ -9,6 +9,7 @@
 //    MNX_LLAMA_SERVER is set or node-llama-cpp isn't installed). Mnx starts
 //    llama-server itself if it's on the PATH (Termux: `pkg install llama-cpp`).
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { CODE_RUNNER, runTool } from "./tools.js";
@@ -117,6 +118,42 @@ function findOnPath(name) {
   return null;
 }
 
+// What the local model is doing, so the page can say so instead of looking stuck.
+export const localStatus = { state: "idle", progress: 0, error: "" };
+function setStatus(state, progress = 0, error = "") {
+  const changed = state !== localStatus.state || Math.floor(progress / 10) !== Math.floor(localStatus.progress / 10);
+  Object.assign(localStatus, { state, progress, error });
+  if (changed && state === "warming") console.log(`[local] getting ready: ${progress}%`);
+}
+export function localStatusText() {
+  if (localStatus.state === "loading") return "Loading your model into memory";
+  if (localStatus.state === "warming") return `Getting Mnx ready · ${localStatus.progress}% (first start only)`;
+  return "";
+}
+
+// Phones mix fast and slow CPU cores; llama.cpp runs far faster on just the
+// fast ones. Count the cores that aren't in the slowest cluster.
+function fastCores() {
+  try {
+    const dir = "/sys/devices/system/cpu";
+    const freqs = fs.readdirSync(dir).filter((d) => /^cpu\d+$/.test(d)).map((d) => {
+      try {
+        return Number(fs.readFileSync(`${dir}/${d}/cpufreq/cpuinfo_max_freq`, "utf8"));
+      } catch {
+        return 0;
+      }
+    }).filter(Boolean);
+    if (freqs.length) {
+      const slowest = Math.min(...freqs);
+      const fast = freqs.filter((f) => f > slowest).length;
+      return fast || freqs.length;
+    }
+  } catch {
+    /* not Linux */
+  }
+  return Math.max(1, Math.floor((os.cpus().length || 4) / 2));
+}
+
 // "free" if nothing answers on the port, else the model path it serves (or "busy").
 async function probeLlamaServer(url) {
   try {
@@ -147,8 +184,10 @@ async function ensureLlamaServer(file) {
     }
     const args = ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || 8192), "-np", "1"];
     if (process.env.MNX_THREADS) args.push("-t", process.env.MNX_THREADS);
+    else if (ON_ANDROID) args.push("-t", String(fastCores()));
     if (process.env.MNX_GPU_LAYERS) args.push("-ngl", process.env.MNX_GPU_LAYERS); // e.g. 99 on a GPU machine
     console.log(`[local] starting ${bin} ${args.join(" ")}`);
+    setStatus("loading");
     const child = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
     serverChild = child;
     let log = "";
@@ -259,6 +298,7 @@ async function generateViaServerOnce(file, history, prompt, onChunk, signal) {
     if (messages.length <= 2) throw new Error("Your message is too long for the local model's memory. Try a shorter message, or start Mnx with a larger MNX_CTX.");
   }
   if (!res.ok || !res.body) throw new Error(`llama-server returned HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (localStatus.state !== "ready") setStatus("ready", 100);
   const dec = new TextDecoder();
   let buf = "";
   try {
@@ -633,16 +673,33 @@ export function parseToolCall(raw) {
 // first message doesn't wait for it. Used on the llama-server backend.
 export async function warmUpLocal(file) {
   if (!useServer || !file || !fs.existsSync(file)) return false;
-  const url = await ensureLlamaServer(file);
-  const t0 = Date.now();
-  const res = await fetch(`${url}/v1/chat/completions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ messages: [{ role: "system", content: systemPrompt("") }, { role: "user", content: "hi" }], max_tokens: 1, cache_prompt: true, stream: false }),
+  return exclusive(async () => {
+    const t0 = Date.now();
+    try {
+      setStatus("loading");
+      const url = await ensureLlamaServer(file);
+      setStatus("warming", 0);
+      const res = await fetch(`${url}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messages: [{ role: "system", content: systemPrompt("") }, { role: "user", content: "hi" }], max_tokens: 1, cache_prompt: true, stream: true, return_progress: true }),
+      });
+      if (!res.ok || !res.body) throw new Error(`llama-server returned HTTP ${res.status}`);
+      const dec = new TextDecoder();
+      for await (const chunk of res.body) {
+        for (const m of dec.decode(chunk, { stream: true }).matchAll(/"prompt_progress":\{"total":(\d+),"cache":(\d+),"processed":(\d+)/g)) {
+          const [total, cache, done] = m.slice(1).map(Number);
+          if (total > cache) setStatus("warming", Math.min(99, Math.round((100 * (done - cache)) / (total - cache))));
+        }
+      }
+      setStatus("ready", 100);
+      console.log(`[local] model ready (system prompt cached in ${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+      return true;
+    } catch (err) {
+      setStatus("error", 0, err.message);
+      throw err;
+    }
   });
-  await res.text();
-  console.log(`[local] model ready (system prompt cached in ${((Date.now() - t0) / 1000).toFixed(1)}s)`);
-  return true;
 }
 
 const MAX_STEPS = 5;
@@ -675,7 +732,14 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
 
   send({ t: "phase", phrases: ["Waking up your local model", "Loading Mnx into memory", "Warming up the neurons"] });
 
+  // While the model is still loading or warming up, say so (with progress)
+  // instead of showing a loader that looks stuck.
+  const waiting = setInterval(() => {
+    const text = localStatusText();
+    if (text) send({ t: "phase", phrases: [text] });
+  }, 1000);
   await exclusive(async () => {
+    clearInterval(waiting);
     const shown = []; // user-visible answer text across steps
 
     for (let it = 0; it < MAX_STEPS && !isClosed(); it++) {
@@ -818,4 +882,5 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
     send({ t: "assistant_turn", content: [{ type: "text", text: shown.join("\n\n") || "…" }], model: LOCAL_ID });
     send({ t: "done" });
   });
+  clearInterval(waiting);
 }

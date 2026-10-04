@@ -1560,6 +1560,20 @@
   fillModelSelects();
   applySettings();
   autosize();
+  // Loading a model on a phone can take minutes. Say so, with progress.
+  function watchLocalStatus(st) {
+    const note = $("#readyNote");
+    const show = (text, cls = "") => {
+      note.hidden = !text;
+      note.textContent = text;
+      note.className = `ready-note ${cls}`;
+    };
+    if (!st || st.state === "ready" || st.state === "idle") return show("");
+    if (st.state === "error") return show(`Your local model couldn't start: ${st.error}`, "err");
+    show(st.state === "loading" ? "Loading your model into memory… keep Termux open." : `Getting Mnx ready · ${st.progress}% — the first start takes a few minutes. Keep Termux open.`);
+    setTimeout(() => fetch("/api/status").then((r) => r.json()).then(watchLocalStatus, () => watchLocalStatus(st)), 1500);
+  }
+
   fetch("/api/config")
     .then((r) => r.json())
     .then((cfg) => {
@@ -1575,6 +1589,7 @@
         applySettings();
       }
       if (!cfg.hasKey && !cfg.local) toast("Heads up: the server has no ANTHROPIC_API_KEY set yet.", 6000);
+      if (cfg.local) watchLocalStatus(cfg.localStatus);
     })
     .catch(() => {});
   if (!settings.name) setTimeout(() => toast("Tip: tap your avatar to tell Mnx your name", 3500), 1200);
