@@ -239,7 +239,7 @@ async function generateViaServerOnce(file, history, prompt, onChunk, signal) {
       method: "POST",
       headers: { "content-type": "application/json" },
       signal,
-      body: JSON.stringify({ messages, stream: true, cache_prompt: true, max_tokens: 4096, ...SAMPLING }),
+      body: JSON.stringify({ messages, stream: true, cache_prompt: true, return_progress: true, max_tokens: 4096, ...SAMPLING }),
     });
     if (res.ok || res.status !== 400 || attempt >= 3) break;
     const text = await res.text();
@@ -276,6 +276,15 @@ async function generateViaServerOnce(file, history, prompt, onChunk, signal) {
           json = JSON.parse(data);
         } catch {
           continue;
+        }
+        // Prompt reading progress (slow on phones), then speed stats at the end.
+        if (json.prompt_progress) {
+          const { total, processed, cache } = json.prompt_progress;
+          if (total > (cache || 0)) onChunk(Math.round((100 * (processed - (cache || 0))) / (total - (cache || 0))), "progress");
+        }
+        if (json.timings?.predicted_n) {
+          const t = json.timings;
+          console.log(`[local] reply: read ${t.prompt_n} new tokens in ${(t.prompt_ms / 1000).toFixed(1)}s (${t.prompt_per_second?.toFixed(1)}/s), wrote ${t.predicted_n} tokens at ${t.predicted_per_second?.toFixed(1)}/s`);
         }
         const delta = json.choices?.[0]?.delta || {};
         // Reasoning models served with --reasoning-format put thoughts here.
@@ -747,6 +756,10 @@ export async function handleLocalChat({ body, messages, file, send, isClosed, si
         chat[chat.length - 1].content,
         (chunk, kind) => {
           if (isClosed()) return;
+          if (kind === "progress") {
+            if (chunk < 100) send({ t: "phase", phrases: [`Reading your message · ${chunk}%`] });
+            return;
+          }
           if (kind === "reasoning") {
             openThinking();
             send({ t: "thinking", it, i: index, text: chunk });

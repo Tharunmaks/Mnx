@@ -59,6 +59,7 @@ test("reuses a leftover llama-server that has the same model loaded", async () =
   const events = await ask(mod, modelA);
   assert.equal(events.filter((e) => e.t === "error").length, 0, JSON.stringify(events.find((e) => e.t === "error")));
   assert.ok(fs.existsSync(staleLog), "the existing server should have answered");
+  assert.ok(events.some((e) => e.t === "phase" && /Reading your message · 50%/.test(e.phrases[0])), "prompt progress is shown");
 });
 
 test("starts a new server on the next port if a different model is loaded", async () => {

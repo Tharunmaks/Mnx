@@ -87,6 +87,7 @@ http
       }
     }
     res.writeHead(200, { "content-type": "text/event-stream" });
+    if (json.return_progress) for (const processed of [0, 50, 100]) res.write(`data: ${JSON.stringify({ choices: [{ delta: {} }], prompt_progress: { total: 100, cache: 0, processed } })}\n\n`);
     let closed = false;
     res.on("close", () => (closed = true));
     for (const c of reply(json.messages).match(/[\s\S]{1,7}/g)) {
