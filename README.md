@@ -138,7 +138,7 @@ Online models (Opus, Sonnet, Fable) get the same everyday tools. A 3B model some
 
 `training/` fine-tunes your local model to use Mnx's tools reliably, then measures how reliable it is.
 
-1. **Data.** `npm run train:data` writes `training/data/train.jsonl` with **about 115,000 distinct conversations** (100,000 from `generate.py` plus 15,000 for the quick tools from `gen_quick.mjs`, whose results come from actually running the tools; ~700 MB, about a minute) in exactly the format Mnx uses at runtime (`<think>`, `<tool_call>`, `<tool_response>`):
+1. **Data.** `npm run train:data` writes `training/data/train.jsonl` with **about 115,000 distinct conversations** (100,000 from `generate.py` plus 15,000 for the quick tools from `gen_quick.mjs`, whose results come from actually running the tools; ~1.6 GB, a minute or two) in exactly the format Mnx uses at runtime (`<think>`, `<tool_call>`, `<tool_response>`):
    - Web search (prices, sports, launches, events, software versions, news, films; reading pages; retrying after errors)
    - Weather, location, places and directions in about 150 cities
    - Everyday tools: calculator, unit and currency conversion, world time, Wikipedia, dictionary, translation and QR codes (`training/content_tools.py`)
@@ -157,7 +157,7 @@ Online models (Opus, Sonnet, Fable) get the same everyday tools. A 3B model some
    - Messy phone typing (lowercase, "pls", "wether", "tmrw")
 
    Every conversation is checked with Mnx's own parsers (`training/validate.mjs`). The 600 test cases use cities, topics and tasks that never appear in training. No other AI model wrote the data.
-2. **Train.** Open `training/mnx_train.ipynb` in Google Colab with a T4 GPU (free tier works) and run the cells. It does a LoRA fine-tune of Qwen2.5-3B-Instruct with Unsloth, learning only the reply to your latest message (not the system prompt, earlier turns or tool results). It saves progress to Google Drive so it can resume after a disconnect. The full ~115,000 conversations take roughly 35–45 h on a free T4 (several sessions), 13–16 h on an L4, or 5–8 h on an A100; `USE = 25000` takes about 9 h on a T4. Your learned examples (see *Learning from your chats*) are added automatically. Afterwards it exports `mnx-q4_k_m.gguf` and the faster-on-phones `mnx-q4_0.gguf`, then uploads them to your Hugging Face repo.
+2. **Train.** Open `training/mnx_train.ipynb` in Google Colab with a GPU (a free T4 works) and run the cells, first with `PRESET = "smoke"`, then with `PRESET = "full"`. Both run `training/train.py`, a LoRA fine-tune of Qwen2.5-3B-Instruct with Unsloth that learns only the reply to your latest message (not the system prompt, earlier turns or tool results). The smoke run takes about 20–30 minutes: it trains 12 steps, stops and resumes from a checkpoint, writes a sample answer, exports both GGUF files and runs 20 eval cases, then prints how long the full run will take on that GPU. The full run saves progress to Google Drive every 250 steps, so it resumes after a disconnect. The data is ~355M tokens, so expect several free T4 sessions, about a day on an L4 or about half a day on an A100; `USE = 25000` is roughly a fifth of that. Your learned examples (see *Learning from your chats*) are added automatically. Afterwards it exports `mnx-q4_k_m.gguf` and the faster-on-phones `mnx-q4_0.gguf`, then uploads them to your Hugging Face repo.
 3. **Measure.** Run `npm run eval -- --model models/mnx-q4_k_m.gguf --target 98`. It runs 800 held-out cases (cities, topics and tasks never seen in training) through Mnx's real tool loop, including the permission step for code, and prints the success rate per category and overall. A case only passes if the right tool was called with valid arguments and the final answer uses the result. On a phone, add `--limit 100` to keep it short.
 
 For code, a test only passes if the file the model wrote actually compiles, using whichever compilers are installed.
@@ -165,6 +165,30 @@ For code, a test only passes if the file the model wrote actually compiles, usin
 **Smooth tool use.** Mnx maps common near-misses from small models to the right tool or argument: `web_search` becomes `search_web`, `code` becomes `content`, `city` becomes `location`, `from`/`to` become `origin`/`destination`, and `ppt` becomes `pptx`. It also strips stray markdown fences around file contents.
 
 Permission for running code is enforced by Mnx itself, so it never depends on the model. Image quality comes from the image service. Speed depends on your phone; the Q4_0 file and shorter thinking help.
+
+### Train on a rented GPU
+
+Any Linux GPU machine with 16 GB or more of GPU memory works (RunPod, Lambda, Vast.ai...). A 24 GB card such as an L4, A10 or RTX 4090 is plenty; an A100 or H100 is fastest. Pick a CUDA "devel" image (it has `nvcc`) so the eval also runs on the GPU. Then:
+
+```bash
+git clone -b claude/mnx-ai-web-interface-f75vu6 https://github.com/Tharunmaks/Mnx && cd Mnx
+bash training/gpu_setup.sh                       # Node.js, Unsloth, build tools, then the training data
+python3 training/train.py --preset smoke         # ~20-30 min: proves every step works, prints the full run's time
+MNX_LLAMA_SERVER_BIN=llama.cpp/build/bin/llama-server MNX_GPU_LAYERS=99 \
+  node training/eval.mjs --model mnx-training/smoke/mnx-q4_k_m.gguf --limit 20   # proves the eval runs
+```
+
+If the smoke test passes, start the real run inside `tmux` so it keeps going when you disconnect:
+
+```bash
+tmux new -s mnx
+python3 training/train.py --preset full          # add --use 25000 for a shorter run
+MNX_LLAMA_SERVER_BIN=llama.cpp/build/bin/llama-server MNX_GPU_LAYERS=99 \
+  node training/eval.mjs --model mnx-training/mnx-q4_k_m.gguf --target 98
+HF_TOKEN=hf_... hf upload tharunmakes/mnx-qwen2.5-3b-gguf mnx-training --include "mnx-q4*.gguf" --private
+```
+
+`tmux attach -t mnx` gets back to it. If the machine stops, run the same `train.py` command again: it resumes from the last checkpoint in `mnx-training/`. Copy the two `.gguf` files off the machine before you delete it. `python3 training/train.py --help` lists every option (base model, steps, batch size, LoRA rank).
 
 ## Testing
 
