@@ -28,6 +28,13 @@ The server prints an **access token** on start (also saved in `data/token.txt`, 
 `MNX_TOKEN`). Open http://localhost:8000, and enter the token when asked (or in Settings).
 Every API call and socket needs it, because the gateway can drive a browser and your phone.
 
+Tests (no model files or GPU needed; the virtual LPU is checked against an independent numpy transformer):
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests
+```
+
 For the Browser Bee, install Chromium once: `playwright install --with-deps chromium`
 (or point `MNX_CHROMIUM_PATH` at an existing Chrome/Chromium).
 
