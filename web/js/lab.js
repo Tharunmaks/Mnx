@@ -509,5 +509,7 @@ setInterval(() => {
 }, 2000);
 setInterval(() => { if (document.visibilityState === "visible") { loadSys(); loadSoon(); } }, 6000);
 
-showTab(["train", "runs", "models", "servers"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "train");
+const tabFromHash = () => (["train", "runs", "models", "servers"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "train");
+window.addEventListener("hashchange", () => showTab(tabFromHash()));
+showTab(tabFromHash());
 loadSys().then(load);

@@ -202,11 +202,18 @@ class Cell:
         self.container_state = "local" if mode == "local" else "missing"
         self.on_change = None  # set by the manager
         self._disk = (0.0, 0)
+        self._up_lock = asyncio.Lock()
 
     # ----- container -----
     async def ensure_up(self) -> None:
         if self.mode != "docker":
             return
+        # One starter at a time: a new Bee's boot and its first terminal can arrive together,
+        # and two `docker run`s with the same name make Docker refuse the second.
+        async with self._up_lock:
+            await self._ensure_up()
+
+    async def _ensure_up(self) -> None:
         code, out = await _run(["docker", "inspect", "-f", "{{.State.Running}}", self.container], 20)
         if code == 0 and out.strip() == "true":
             self.container_state = "running"

@@ -63,13 +63,14 @@ export function runCard(runId) {
       drawCharts(charts, r.metrics.map(({ step, loss }) => ({ step, loss })).filter((p) => p.loss != null));
       if (!r.metric_count) charts.replaceChildren();
     }
-    actions.replaceChildren(
+    actions.replaceChildren(...[
       active ? h("button", { class: "btn", type: "button", onclick: async (e) => {
         if (!confirm("Stop this training?")) return;
         e.target.disabled = true;
         try { await api(`/api/lab/runs/${runId}/stop`, { method: "POST" }); } catch (err) { toast(err.message, "error"); }
       } }, "Stop") : null,
-      h("a", { class: "btn", href: "lab.html#runs" }, "Full log in the Lab"));
+      h("a", { class: "btn", href: "lab.html#runs" }, "Full log in the Lab"),
+    ].filter(Boolean));
     if (r.model && modelShown !== r.model) {
       modelShown = r.model;
       modelSlot.replaceChildren(modelSection(r.model));
