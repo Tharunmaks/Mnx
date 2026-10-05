@@ -264,6 +264,34 @@ a bar, and the chat header keeps the running total. Counting is an estimate (`hi
 `countTokens` in `shared.js`) until Mnx's own tokenizer is connected. The level also sets how long a
 model's answer may be in the playgrounds (Run it): 200 tokens on Low up to 1,920 on Maxxxx.
 
+## A 500B model on a phone: layer-by-layer streaming
+
+A phone can't hold a big model, so the Hive streams it **one layer at a time**. `hive/layers.py` splits a
+saved model's safetensors into one file per transformer layer (no PyTorch needed on the server) and serves
+them at `/api/lab/models/<id>/layers/<layer>`; `stream.py` (fetched by the phone from `/stream.py`) runs the
+model with a single layer module in memory, loading layer 0's weights, running it, loading layer 1's weights
+into the same module, and so on. The KV cache stays small, so generation works token by token.
+
+**Training works the same way in reverse**: a forward pass saves each layer's input, the loss is taken at the
+head, then from the top layer down each layer is reloaded, recomputed, back-propagated through, updated
+(clipped SGD, no optimizer state to store) and **sent back to the Hive** (`PUT …/layers/<layer>`). At the end
+`POST …/layers/merge` writes the trained layers back into `model.safetensors`, so *Run it* uses them.
+
+How to use it:
+- Chat: **"run my stories model on my phone"**, **"train my stories model on my phone for 5 steps"**, or
+  `run the 1.28M model on my phone with prompt "The cat"`. The Phone Bee checks the phone, shows a plan card
+  with honest numbers, splits the model, starts the runner on the phone and reports progress here.
+- Phone page → **AI** tab: pick a model, see the plan, Run / Train / Stop, watch the log.
+- Anywhere with Python: `python stream.py --hive http://server:8000 --token T --model m-… run --prompt "…"`.
+- The phone needs `pip install torch transformers safetensors` in Termux (the drone then advertises
+  `stream_*` commands). It reports its RAM, free storage and cores so the plan is for *that* phone.
+
+The honest part (`layers.plan`): memory on the phone is one layer plus activations and the runtime; a 500B
+model in bf16 is 126 layers of about 7.9 GB, so it needs a 12–16 GB phone, and every generated token streams
+the whole 1 TB of weights, which is hours per token over Wi-Fi (minutes if the model fits on the phone's
+storage). A training step reads every layer twice and sends every layer back once. The plan card shows
+these numbers for the model and phone in front of you instead of pretending they are small.
+
 ## Event protocol
 
 Browser → gateway (WebSocket `/ws`):

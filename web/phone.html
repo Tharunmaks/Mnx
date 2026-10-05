@@ -79,6 +79,7 @@ adb connect localhost:&lt;port&gt;</pre>
                 <button class="tab" data-tab="screen" type="button">On screen</button>
                 <button class="tab" data-tab="device" type="button">Device</button>
                 <button class="tab" data-tab="messages" type="button">Messages</button>
+                <button class="tab" data-tab="ai" type="button">AI</button>
               </div>
 
               <div id="tab-apps" class="tab-body">
@@ -115,6 +116,15 @@ adb connect localhost:&lt;port&gt;</pre>
                 <pre class="result-box" id="devOut">Results show here.</pre>
               </div>
 
+              <div id="tab-ai" class="tab-body hidden">
+                <p class="hint">Run or train a Lab model on this phone <b>one layer at a time</b>: only one layer is ever in memory, the weights stream from the Hive, and trained layers go back to it.</p>
+                <p class="hint err hidden" id="aiNeeds">This phone can't run models yet. In Termux: <code>pip install torch transformers safetensors</code>, then restart the drone.</p>
+                <select class="input" id="aiModel" aria-label="Model"></select>
+                <p class="hint" id="aiPlan"></p>
+                <form class="row" id="aiRunForm"><input class="input" id="aiPrompt" placeholder="Prompt, e.g. Once upon a time" autocomplete="off"><button class="btn primary" type="submit">Run</button></form>
+                <form class="row" id="aiTrainForm"><input class="input" id="aiSteps" type="number" min="1" max="1000" value="5" style="max-width:90px" aria-label="Steps"><button class="btn" type="submit">Train steps</button><button class="btn danger" type="button" id="aiStop">Stop</button></form>
+                <pre class="result-box" id="aiOut">Nothing running on the phone.</pre>
+              </div>
               <div id="tab-messages" class="tab-body hidden">
                 <div class="row">
                   <button class="btn" data-cmd="notifications" data-out="msgOut" type="button">Notifications</button>

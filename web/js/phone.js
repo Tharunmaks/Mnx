@@ -156,7 +156,8 @@ $("typeForm").addEventListener("submit", (e) => {
 // ---------- tabs ----------
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === t));
-  for (const name of ["apps", "screen", "device", "messages"]) $(`tab-${name}`).classList.toggle("hidden", t.dataset.tab !== name);
+  for (const name of ["apps", "screen", "device", "messages", "ai"]) $(`tab-${name}`).classList.toggle("hidden", t.dataset.tab !== name);
+  if (t.dataset.tab === "ai") loadAi();
 }));
 
 // Apps
@@ -256,3 +257,59 @@ client.addEventListener("event", (e) => { if (e.detail.type === "phones_changed"
 client.connect();
 installTokenPrompt(() => { client.reconnectNow(); loadPhones(); });
 loadPhones();
+
+// ---------- AI on this phone: layer-by-layer streaming ----------
+let aiJob = null;
+let aiTimer = null;
+async function loadAi() {
+  $("aiNeeds").classList.toggle("hidden", can("stream_start"));
+  let models = [];
+  try { models = (await api("/api/lab")).models || []; } catch { models = []; }
+  models = models.filter((m) => m.kind === "llm" && m.result);
+  const sel = $("aiModel");
+  const prev = sel.value;
+  sel.replaceChildren(...models.map((m) => h("option", { value: m.id }, m.name)));
+  if (!models.length) sel.append(h("option", { value: "" }, "No trained model yet (create one in the chat)"));
+  if (prev) sel.value = prev;
+  showAiPlan();
+}
+async function showAiPlan() {
+  const mid = $("aiModel").value;
+  if (!mid || !phone) { $("aiPlan").textContent = ""; return; }
+  try {
+    const q = new URLSearchParams({ ram_gb: phone.ram_gb || 8, cores: phone.cores || 8 });
+    if (phone.storage_free_gb) q.set("storage_free_gb", phone.storage_free_gb);
+    const p = await api(`/api/lab/models/${encodeURIComponent(mid)}/layers/plan?${q}`);
+    $("aiPlan").textContent = p.text;
+    $("aiPlan").classList.toggle("err", !p.fits);
+  } catch (e) { $("aiPlan").textContent = e.message; }
+}
+$("aiModel").addEventListener("change", showAiPlan);
+async function aiStart(mode, extra) {
+  const mid = $("aiModel").value;
+  if (!mid) return toast("Pick a model first", "error");
+  try {
+    const r = await cmd("stream_start", { mode, model: mid, ...extra });
+    aiJob = r.job;
+    $("aiOut").textContent = `Started ${mode} on the phone (job ${r.job})…`;
+    clearInterval(aiTimer);
+    aiTimer = setInterval(aiPoll, 3000);
+  } catch { /* shown */ }
+}
+async function aiPoll() {
+  if (!aiJob) return;
+  let st;
+  try { st = await cmd("stream_status", { job: aiJob }, { quiet: true }); } catch { return; }
+  const m = st.metric || {};
+  const line = st.mode === "run"
+    ? (m.token ? `token ${m.token} · ${m.layers} layers streamed in ${m.seconds} s · ${m.fetched_mb} MB fetched` : "fetching the first layer…")
+    : (m.step ? `step ${m.step} · loss ${m.loss} · ${m.seconds} s per step · ${m.sent_mb} MB sent back` : "fetching the first layer…");
+  let out = `${st.running ? "Running" : `Finished (exit ${st.exit_code})`} · ${line}\n\n${st.tail || ""}`;
+  if (st.result && st.mode === "run") out += `\n\n→ ${st.result.text}`;
+  if (st.result && st.mode === "train") out += `\n\nTrained ${st.result.steps} steps, loss ${st.result.loss}; layers merged back into the Hive's model.`;
+  $("aiOut").textContent = out;
+  if (!st.running) { clearInterval(aiTimer); aiTimer = null; }
+}
+$("aiRunForm").addEventListener("submit", (e) => { e.preventDefault(); aiStart("run", { prompt: $("aiPrompt").value.trim() || "Once upon a time", max_new: 40 }); });
+$("aiTrainForm").addEventListener("submit", (e) => { e.preventDefault(); aiStart("train", { steps: Number($("aiSteps").value) || 5 }); });
+$("aiStop").addEventListener("click", async () => { if (aiJob) { try { await cmd("stream_stop", { job: aiJob }); } catch { /* shown */ } aiPoll(); } });

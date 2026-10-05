@@ -57,6 +57,8 @@ SYSTEM_APPS = (
 PKG_RE = re.compile(r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+$")
 NUMBER_RE = re.compile(r"^\+?[0-9 ]{3,20}$")
 SCREEN_CMDS = {"screenshot", "tap", "long_press", "swipe", "text", "key", "open_app", "apps", "ui_tree", "tap_text", "screen_size"}
+STREAM_CMDS = {"stream_start", "stream_status", "stream_stop", "stream_chat"}  # run/train a model layer by layer, on this phone
+STREAM_DIR = os.path.expanduser("~/.mnx_stream")
 API_CMDS = {
     "battery": "termux-battery-status", "notifications": "termux-notification-list", "sms_list": "termux-sms-list",
     "sms_send": "termux-sms-send", "call": "termux-telephony-call", "torch": "termux-torch", "volume": "termux-volume",
@@ -91,6 +93,7 @@ class Drone:
         self.serial = args.adb_serial
         self.capabilities: list[str] = []
         self.size = None  # real screen size (w, h)
+        self.jobs: dict[str, dict] = {}  # layer-streaming jobs: id → {proc, log, mode, model}
 
     # ----- setup -----
     async def detect(self) -> None:
@@ -117,8 +120,34 @@ class Drone:
         for cmd, binary in API_CMDS.items():
             if shutil.which(binary):
                 caps.add(cmd)
+        if await self._has_torch():
+            caps |= STREAM_CMDS
+        else:
+            print("[drone] Layer streaming unavailable: pip install torch transformers safetensors  (then restart the drone)")
         caps -= set(filter(None, self.args.deny.split(",")))
         self.capabilities = sorted(caps)
+
+    async def _has_torch(self) -> bool:
+        try:
+            await run([sys.executable, "-c", "import torch, transformers, safetensors"], 180)
+            return True
+        except (CmdError, FileNotFoundError):
+            return False
+
+    def resources(self) -> dict:
+        out = {}
+        try:
+            for line in open("/proc/meminfo"):
+                if line.startswith("MemTotal:"):
+                    out["ram_gb"] = round(int(line.split()[1]) / 1024 / 1024, 1)
+        except OSError:
+            pass
+        try:
+            out["storage_free_gb"] = round(shutil.disk_usage(os.path.expanduser("~")).free / 1e9, 1)
+        except OSError:
+            pass
+        out["cores"] = os.cpu_count() or 4
+        return out
 
     async def _first_adb_device(self) -> str | None:
         try:
@@ -152,6 +181,97 @@ class Drone:
         if not fn:
             raise CmdError(f"Unknown command {cmd}")
         return await fn(a)
+
+    # ----- a model far bigger than the phone: one layer at a time, weights streamed from the Hive -----
+    async def c_stream_start(self, a):
+        mode = str(a.get("mode") or "run")
+        if mode not in ("run", "train", "serve"):
+            raise CmdError("mode must be run, train or serve")
+        model = str(a.get("model") or "")
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,80}", model):
+            raise CmdError("bad model id")
+        os.makedirs(STREAM_DIR, exist_ok=True)
+        script = os.path.join(STREAM_DIR, "stream.py")
+        base = self.args.gateway.rstrip("/")
+        try:  # always take the Hive's current runner
+            req = __import__("urllib.request").request.Request(base + "/stream.py")
+            with __import__("urllib.request").request.urlopen(req, timeout=60) as r:
+                open(script, "wb").write(r.read())
+        except Exception as exc:
+            if not os.path.exists(script):
+                raise CmdError(f"couldn't fetch stream.py from the Hive: {exc}")
+        argv = [sys.executable, "-u", script, "--hive", base, "--token", self.args.token, "--model", model, mode]
+        if mode == "run":
+            argv += ["--prompt", str(a.get("prompt") or "Once upon a time")[:2000], "--max-new", str(int(a.get("max_new") or 40))]
+        elif mode == "train":
+            argv += ["--steps", str(int(a.get("steps") or 10)), "--lr", str(float(a.get("lr") or 1e-3)), "--seq-len", str(int(a.get("seq_len") or 256))]
+            if a.get("text_url"):
+                pass  # the runner fetches the Hive's demo text when no --text is given
+        else:
+            argv += ["--port", str(int(a.get("port") or 8765))]
+        job = uuid.uuid4().hex[:8]
+        log_path = os.path.join(STREAM_DIR, f"{job}.log")
+        logf = open(log_path, "wb")
+        proc = await asyncio.create_subprocess_exec(*argv, stdout=logf, stderr=asyncio.subprocess.STDOUT, cwd=STREAM_DIR)
+        self.jobs[job] = {"proc": proc, "log": log_path, "mode": mode, "model": model, "started": asyncio.get_event_loop().time()}
+        return {"job": job, "mode": mode, "model": model}
+
+    def _job(self, a) -> tuple[str, dict]:
+        job = str(a.get("job") or "")
+        if job not in self.jobs:
+            raise CmdError("no such job")
+        return job, self.jobs[job]
+
+    async def c_stream_status(self, a):
+        job, j = self._job(a)
+        proc = j["proc"]
+        try:
+            with open(j["log"], "rb") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                f.seek(max(0, size - 12000))
+                text = f.read().decode(errors="replace")
+        except OSError:
+            text = ""
+        metric = result = None
+        for line in text.splitlines():
+            if line.startswith("MNX_METRIC "):
+                try:
+                    metric = json.loads(line[11:])
+                except ValueError:
+                    pass
+            elif line.startswith("MNX_RESULT "):
+                try:
+                    result = json.loads(line[11:])
+                except ValueError:
+                    pass
+        plain = [l for l in text.splitlines() if not l.startswith("MNX_")]
+        return {"job": job, "mode": j["mode"], "model": j["model"], "running": proc.returncode is None,
+                "exit_code": proc.returncode, "metric": metric, "result": result, "tail": "\n".join(plain[-12:])}
+
+    async def c_stream_stop(self, a):
+        job, j = self._job(a)
+        if j["proc"].returncode is None:
+            j["proc"].terminate()
+            try:
+                await asyncio.wait_for(j["proc"].wait(), 10)
+            except asyncio.TimeoutError:
+                j["proc"].kill()
+        return {"job": job, "stopped": True}
+
+    async def c_stream_chat(self, a):
+        """Ask the model served on this phone (stream_start with mode=serve)."""
+        import urllib.request
+        body = json.dumps({"messages": [{"role": "user", "content": str(a.get("text") or "")[:4000]}],
+                           "max_tokens": int(a.get("max_new") or 40)}).encode()
+        req = urllib.request.Request(f"http://127.0.0.1:{int(a.get('port') or 8765)}/v1/chat/completions", data=body,
+                                     headers={"Content-Type": "application/json"})
+        loop = asyncio.get_event_loop()
+        try:
+            raw = await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=3600).read())
+        except Exception as exc:
+            raise CmdError(f"the phone's model server didn't answer: {exc}")
+        return json.loads(raw.decode())
 
     async def c_screen_size(self, a):
         out = (await self.shell("wm size")).decode()
@@ -332,7 +452,7 @@ class Drone:
                         "type": "hello", "device_id": self.args.device_id, "name": self.args.name,
                         "model": await getprop(self, "ro.product.model"),
                         "android": await getprop(self, "ro.build.version.release"),
-                        "backend": self.backend, "capabilities": self.capabilities,
+                        "backend": self.backend, "capabilities": self.capabilities, **self.resources(),
                     }))
                     print(f"[drone] Connected to {base} as '{self.args.name}' ({self.backend}); {len(self.capabilities)} commands")
                     delay = 1

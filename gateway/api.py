@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import shlex
 import shutil
 import uuid
@@ -609,14 +610,14 @@ async def phone_cmd(phone_id: str, body: PhoneCommand):
     if body.cmd in phone.RISKY and not body.confirmed:
         raise HTTPException(428, f"'{body.cmd}' needs your confirmation")
     try:
-        result = await p.call(body.cmd, body.args, timeout=60 if body.cmd in ("location", "ui_tree", "tap_text") else 25)
+        result = await p.call(body.cmd, body.args, timeout=phone.SLOW.get(body.cmd, 25))
     except asyncio.TimeoutError as exc:
         raise HTTPException(504, "The phone didn't answer in time") from exc
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(400, str(exc)) from exc
     if body.cmd == "apps" and isinstance(result, list):
         p.apps = [{**a, "phone": p.id} for a in result]
-    if body.cmd not in ("screenshot", "ui_tree", "apps", "battery", "screen_size"):
+    if body.cmd not in ("screenshot", "ui_tree", "apps", "battery", "screen_size", "stream_status"):
         log("Phone", body.cmd, json.dumps(body.args)[:200] if body.args else "")
     return {"result": result}
 
@@ -957,6 +958,126 @@ def lab_secret(body: SecretBody):
     return {"secrets": lab.secret_names()}
 
 
+# ---------- layer-by-layer streaming: a model served one layer at a time ----------
+def _model_dirs(mid: str) -> tuple[dict, Path, Path]:
+    from hive.lab import MODELS
+    m = lab.models.get(mid)
+    if not m:
+        raise HTTPException(404, "No such model")
+    model_dir = MODELS / mid / "files" / "model"
+    if not model_dir.is_dir() or not list(model_dir.glob("*.safetensors")):
+        raise HTTPException(400, "This model has no saved weights yet (a blueprint must be created and trained first)")
+    return m, model_dir, MODELS / mid / "layers"
+
+
+@api.get("/lab/models/{mid}/layers")
+async def layers_manifest(mid: str):
+    """Split the model into one file per layer (first call) and describe them."""
+    from hive import layers
+    m, model_dir, layers_dir = _model_dirs(mid)
+    try:
+        manifest = await asyncio.to_thread(layers.split, model_dir, layers_dir)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {**manifest, "model": mid, "name": m["name"]}
+
+
+@api.get("/lab/models/{mid}/layers/plan")
+def layers_plan(mid: str, ram_gb: float = 8, storage_free_gb: float | None = None, mb_s: float = 40, cores: int = 8):
+    """What running / training this model layer by layer costs on a device with that much memory."""
+    from hive import architect, layers
+    m = lab.models.get(mid)
+    if not m:
+        raise HTTPException(404, "No such model")
+    arch = m.get("arch") or {}
+    res = m.get("result") or {}
+    params = res.get("params") or arch.get("params") or 0
+    n_layers = arch.get("layers") or 0
+    hidden = arch.get("hidden") or 0
+    if not (n_layers and hidden):
+        from hive.lab import MODELS
+        cfg = MODELS / mid / "files" / "model" / "config.json"
+        if cfg.exists():
+            c = json.loads(cfg.read_text())
+            n_layers, hidden = c.get("num_hidden_layers", n_layers), c.get("hidden_size", hidden)
+    if not params:
+        raise HTTPException(400, "Unknown model size")
+    p = layers.plan(params, n_layers or 1, hidden or 1, ram_gb=ram_gb, storage_free_gb=storage_free_gb, link_mb_s=mb_s, cores=cores)
+    return {**p, "model": mid, "name": m["name"], "params": params, "params_text": architect.fmt_params(params), "text": layers.plan_text(p, m["name"])}
+
+
+@api.get("/lab/models/{mid}/layers/{name}")
+def layers_file(mid: str, name: str):
+    from hive import layers
+    _, _, layers_dir = _model_dirs(mid)
+    if not (layers_dir / "manifest.json").exists():
+        raise HTTPException(409, "Ask for the manifest first")
+    if name in layers.SMALL_FILES and (layers_dir / name).exists():
+        return FileResponse(layers_dir / name)
+    if re.fullmatch(r"(layer_\d{4}|shared)", name) and (layers_dir / f"{name}.safetensors").exists():
+        return FileResponse(layers_dir / f"{name}.safetensors", media_type="application/octet-stream")
+    raise HTTPException(404, "No such layer")
+
+
+@api.put("/lab/models/{mid}/layers/{name}")
+async def layers_put(mid: str, name: str, request: Request):
+    """A trained layer comes back from the phone and replaces the Hive's copy."""
+    from hive import layers
+    _, _, layers_dir = _model_dirs(mid)
+    if not re.fullmatch(r"(layer_\d{4}|shared)", name) or not (layers_dir / f"{name}.safetensors").exists():
+        raise HTTPException(404, "No such layer")
+    tmp = layers_dir / f"{name}.upload"
+    size = 0
+    try:
+        with open(tmp, "wb") as f:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > 64 * 1024**3:
+                    raise HTTPException(413, "Layer too big")
+                f.write(chunk)
+        await asyncio.to_thread(layers.check_layer_file, tmp, layers.expected_tensors(layers_dir, name))
+        tmp.replace(layers_dir / f"{name}.safetensors")
+    except ValueError as exc:
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(400, str(exc)) from exc
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return {"ok": True, "bytes": size}
+
+
+class MergeBody(BaseModel):
+    steps: int = 0
+    loss: float | None = None
+
+
+@api.post("/lab/models/{mid}/layers/merge")
+async def layers_merge(mid: str, body: MergeBody):
+    """Write the (retrained) layers back into model.safetensors so Run it uses them."""
+    from hive import layers
+    from hive.lab import MODELS, _write
+    m, model_dir, layers_dir = _model_dirs(mid)
+    if not (layers_dir / "manifest.json").exists():
+        raise HTTPException(409, "Nothing to merge")
+    size = await asyncio.to_thread(layers.merge, layers_dir, model_dir)
+    manifest = json.loads((layers_dir / "manifest.json").read_text())
+    manifest["trained_steps"] = int(manifest.get("trained_steps") or 0) + max(0, body.steps)
+    manifest["last_loss"] = body.loss
+    (layers_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    m["stream_trained"] = {"steps": manifest["trained_steps"], "loss": body.loss, "at": int(time.time())}
+    _write(MODELS / mid / "model.json", m)
+    lab._changed()
+    log("Phone", "merged", f"{m['name']}: {body.steps} layer-streamed steps")
+    return {"ok": True, "bytes": size, "trained_steps": manifest["trained_steps"]}
+
+
+@api.get("/lab/stream/sample", response_class=PlainTextResponse)
+def stream_sample():
+    """Demo text a phone can train on when it has no file of its own."""
+    from hive.lab import RECIPES
+    return (RECIPES / "llm-pretrain" / "sample.txt").read_text()
+
+
 @api.get("/effort")
 def effort_levels():
     """The five effort levels (low, med, high, ultra, maxxxx) and their token budgets."""
@@ -1116,6 +1237,12 @@ async def run_task(task: Task) -> None:
 def drone_script():
     """The Termux agent, so the phone can download it with curl."""
     return FileResponse(ROOT / "drone" / "drone.py", media_type="text/x-python")
+
+
+@app.get("/stream.py")
+def stream_script():
+    """The layer-by-layer runner the phone fetches before a streaming job."""
+    return FileResponse(ROOT / "hive" / "recipes" / "llm-pretrain" / "stream.py", media_type="text/x-python")
 
 
 @app.get("/")

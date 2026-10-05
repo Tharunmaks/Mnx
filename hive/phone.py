@@ -23,14 +23,17 @@ COMMANDS = {
     # Termux:API
     "battery", "notifications", "sms_list", "sms_send", "call", "torch", "volume", "clipboard_get", "clipboard_set",
     "tts", "vibrate", "location", "toast", "open_url", "wifi",
+    # layer-by-layer streaming: run / train a model on the phone one layer at a time
+    "stream_start", "stream_status", "stream_stop", "stream_chat",
 }
+SLOW = {"stream_chat": 3600, "stream_start": 120, "location": 60, "ui_tree": 60, "tap_text": 60}  # seconds the gateway waits
 
 
 class Phone:
     def __init__(self, ws: WebSocket, hello: dict):
         self.ws = ws
         self.id = str(hello.get("device_id") or "phone")[:64]
-        self.info = {k: hello.get(k) for k in ("name", "model", "android", "backend")}
+        self.info = {k: hello.get(k) for k in ("name", "model", "android", "backend", "ram_gb", "storage_free_gb", "cores")}
         self.capabilities: list[str] = [c for c in hello.get("capabilities", []) if c in COMMANDS]
         self.connected_at = int(time.time())
         self.apps: list[dict] = []
