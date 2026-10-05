@@ -281,9 +281,8 @@ def cmd_run(st: Streamer, a) -> None:
     log(text)
 
 
-def run_lpu(st: Streamer, a) -> tuple[str, dict]:
-    """Generate on the virtual LPU (the Hive's hive/lpu.py, fetched to sit next to this file): each streamed layer's weights
-    are cut to the chips' shards and the compiled schedule runs cycle by cycle, with real multiplies."""
+def _lpu(a):
+    """The Hive's hive/lpu.py (the virtual chip), fetched to sit next to this file and imported."""
     import importlib.util
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lpu.py")
     try:
@@ -297,13 +296,23 @@ def run_lpu(st: Streamer, a) -> tuple[str, dict]:
     lpu = importlib.util.module_from_spec(spec)
     sys.modules["lpu"] = lpu  # dataclasses resolve their annotations through sys.modules
     spec.loader.exec_module(lpu)
+    return lpu
 
+
+def _lpu_loaders(st: Streamer, lpu):
     def load_layer(i: int) -> dict:
         return lpu.strip_layer_prefix({k: v.float().numpy() for k, v in st.store.layer(f"layer_{i:04d}").items()}, i)
 
     def shared() -> dict:
         return {k: v.float().numpy() for k, v in st.store.layer("shared").items()}
+    return load_layer, shared
 
+
+def run_lpu(st: Streamer, a) -> tuple[str, dict]:
+    """Generate on the virtual LPU: each streamed layer's weights are cut to the chips' shards and the compiled schedule
+    runs cycle by cycle, with real multiplies."""
+    lpu = _lpu(a)
+    load_layer, shared = _lpu_loaders(st, lpu)
     ids = st.tok(a.prompt, add_special_tokens=False)["input_ids"] or [st.tok.bos_token_id or 0]
     m = lpu.Model(st.config.to_dict(), load_layer, shared, seq=len(ids) + a.max_new, chips=a.chips)
     P = m.plan
@@ -329,7 +338,47 @@ def read_text(st: Streamer, a) -> str:
         return r.read().decode()
 
 
+def train_lpu(st: Streamer, a) -> None:
+    """Train on the virtual LPU: every step is one compiled SGD step on the chips (forward, backward, update); the trained
+    layers go back to the Hive like the torch path's, and the Hive merges them."""
+    lpu = _lpu(a)
+    load_layer, shared = _lpu_loaders(st, lpu)
+    text = read_text(st, a)
+    ids = st.tok(text, add_special_tokens=False)["input_ids"]
+    S = max(8, min(a.seq_len, 128))
+    if len(ids) < S + 1:
+        raise SystemExit(f"the text has {len(ids)} tokens; at least {S + 1} are needed")
+    m = lpu.Model(st.config.to_dict(), load_layer, shared, seq=S, spec=lpu.ChipSpec(word_bytes=4), chips=a.chips, train=True, lr=a.lr)
+    P = m.plan
+    log(f"Virtual LPU: {P.chips} chip(s), {P.cycles_per_token:,} cycles per step of {S} tokens, weights {'resident' if P.resident else 'streamed every step'}")
+    loss = None
+    for step in range(a.steps):
+        t0 = time.time()
+        start = (step * S) % (len(ids) - S - 1)
+        loss = m.train_step(ids[start:start + S], ids[start + 1:start + S + 1])
+        metric(step=step + 1, loss=round(loss, 4), seconds=round(time.time() - t0, 2), sent_mb=round(st.store.sent / 1e6, 1),
+               cycles=P.cycles_per_token, chip_us=round(P.cycles_per_token / m.spec.clock_hz * 1e6, 1))
+    m.pull_weights()
+    for i in range(st.n_layers):
+        orig = st.store.layer(f"layer_{i:04d}")
+        prefix = next(k for k in orig if ".layers." in k).split(".layers.")[0] + f".layers.{i}."
+        st.store.put_layer(f"layer_{i:04d}", {prefix + k: torch.from_numpy(np.ascontiguousarray(v)).reshape(orig[prefix + k].shape).to(st._stored_dtype)
+                                              for k, v in m.weights[i].items()})
+    orig = st.store.layer("shared")
+    st.store.put_layer("shared", {k: torch.from_numpy(np.ascontiguousarray(m.shared().get(k, v.float().numpy()))).reshape(v.shape).to(st._stored_dtype)
+                                  for k, v in orig.items()})
+    res = st.store.merge(a.steps, loss)
+    s = m.step_stats()
+    log("MNX_RESULT " + json.dumps({"steps": a.steps, "loss": loss, "sent_mb": round(st.store.sent / 1e6, 1), "merged": res, "engine": "lpu",
+                                    "chips": P.chips, "cycles_per_step": P.cycles_per_token, "tokens_per_second": round(s["tokens_per_second"], 1),
+                                    "sim_seconds_per_step": round(s["sim_seconds_per_step"], 2), "losses": [round(x, 4) for x in s["losses"]]}))
+
+
 def cmd_train(st: Streamer, a) -> None:
+    if getattr(a, "engine", "torch") == "lpu":
+        import numpy as np  # noqa: F401  (used by train_lpu through the module globals)
+        globals()["np"] = np
+        return train_lpu(st, a)
     text = read_text(st, a)
     ids = st.tok(text, return_tensors="pt", add_special_tokens=False)["input_ids"][0]
     seq = min(a.seq_len, int(getattr(st.config, "max_position_embeddings", 2048)))
@@ -396,6 +445,8 @@ def main() -> None:
     r.add_argument("--chips", type=int, default=1, help="virtual LPU chips (with --engine lpu)")
     t = sub.add_parser("train"); t.add_argument("--text"); t.add_argument("--sample", action="store_true")
     t.add_argument("--steps", type=int, default=10); t.add_argument("--lr", type=float, default=1e-3); t.add_argument("--seq-len", type=int, default=256)
+    t.add_argument("--engine", default="torch", choices=["torch", "lpu"], help="lpu: train on the virtual chip simulator (window capped at 128 tokens)")
+    t.add_argument("--chips", type=int, default=1)
     s = sub.add_parser("serve"); s.add_argument("--port", type=int, default=8765)
     a = ap.parse_args()
     device = "cuda" if torch.cuda.is_available() else "cpu"

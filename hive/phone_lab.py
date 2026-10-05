@@ -83,9 +83,9 @@ async def on_phone(task: Task, mode: str, query: str, prompt: str = "", steps: i
                    ["Memory on the phone", f"{plan['memory_needed']} (one layer at a time)"],
                    ["Weights streamed from", plan["source"]],
                    ["Per generated token", plan["per_token"]] if mode == "run" else ["Per training step", f"{plan['per_step']} ({plan['train_tokens']:,} tokens)"]]
-        if mode == "run" and engine == "lpu":
+        if engine == "lpu":
             details.append(["Engine", "the virtual LPU on the phone: every streamed layer is compiled and simulated cycle by cycle "
-                                      "(slower than the phone's own CPU; the chip's cycle counts come back with the text)"])
+                                      "(slower than the phone's own CPU; the chip's cycle counts come back with the result)"])
         if mode == "run":
             details.append(["Prompt", prompt or "Once upon a time"])
         else:
@@ -114,6 +114,8 @@ async def on_phone(task: Task, mode: str, query: str, prompt: str = "", steps: i
             return
         await task.finish_step(s, text=f"{manifest['layers']} layers + shared embeddings, {architect.fmt_bytes(manifest['bytes'])} in total")
         args = {"mode": mode, "model": model["id"], "prompt": prompt or "Once upon a time", "max_new": 40, "steps": steps, "engine": engine or "torch"}
+        if engine == "lpu" and mode == "train":
+            args.update(lr=3e-2, seq_len=64)  # the chip's plain SGD on 64-token windows
         s = await task.step("running", f"Starting on the phone: {'generating' if mode == 'run' else 'training'} layer by layer", bee=PHONE, parent=bee)
         try:
             job = await p.call("stream_start", args, timeout=120)
@@ -140,6 +142,8 @@ async def on_phone(task: Task, mode: str, query: str, prompt: str = "", steps: i
                             f"{m.get('fetched_mb')} MB fetched so far")
                 elif mode == "run":
                     text = f"Token {m.get('token')} · {m.get('layers')} layers streamed in {m.get('seconds')} s · {m.get('fetched_mb')} MB fetched so far"
+                elif m.get("cycles"):
+                    text = f"Step {m.get('step')}/{steps} · loss {m.get('loss')} · {m.get('cycles'):,} chip cycles ({m.get('chip_us')} µs on the LPU) · simulated in {m.get('seconds')} s"
                 else:
                     text = f"Step {m.get('step')}/{steps} · loss {m.get('loss')} · {m.get('seconds')} s per step · {m.get('sent_mb')} MB of trained layers sent back"
                 await task.emit("running", text, bee=PHONE, id=prog)

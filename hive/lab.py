@@ -783,6 +783,22 @@ class Lab:
         self._changed()
         return model
 
+    # ---------- layer-by-layer training: trained layer files go back into the model ----------
+    def merge_layers(self, mid: str, steps: int, loss: float | None) -> dict:
+        """Write the (retrained) layer files back into model.safetensors and record it, so Run it uses them."""
+        from . import layers
+        m = self.models[mid]
+        model_dir, layers_dir = MODELS / mid / "files" / "model", MODELS / mid / "layers"
+        size = layers.merge(layers_dir, model_dir)
+        manifest = json.loads((layers_dir / "manifest.json").read_text())
+        manifest["trained_steps"] = int(manifest.get("trained_steps") or 0) + max(0, steps)
+        manifest["last_loss"] = loss
+        (layers_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        m["stream_trained"] = {"steps": manifest["trained_steps"], "loss": loss, "at": int(time.time())}
+        _write(MODELS / mid / "model.json", m)
+        self._changed()
+        return {"ok": True, "bytes": size, "trained_steps": manifest["trained_steps"]}
+
     # ---------- rented cloud GPUs ----------
     def _save_pods(self) -> None:
         _write(LAB / "pods.json", self.pods)

@@ -207,6 +207,8 @@ class Drone:
                 argv += ["--engine", "lpu", "--chips", str(max(1, min(int(a.get("chips") or 1), 16)))]
         elif mode == "train":
             argv += ["--steps", str(int(a.get("steps") or 10)), "--lr", str(float(a.get("lr") or 1e-3)), "--seq-len", str(int(a.get("seq_len") or 256))]
+            if a.get("engine") == "lpu":
+                argv += ["--engine", "lpu", "--chips", str(max(1, min(int(a.get("chips") or 1), 16)))]
             if a.get("text_url"):
                 pass  # the runner fetches the Hive's demo text when no --text is given
         else:

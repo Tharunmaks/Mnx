@@ -1007,15 +1007,16 @@ def layers_plan(mid: str, ram_gb: float = 8, storage_free_gb: float | None = Non
 
 
 @api.get("/lab/models/{mid}/lpu/plan")
-def lpu_plan(mid: str, chips: int = 1, seq: int = 64):
-    """What running this model on `chips` virtual LPUs costs: exact compiled cycles, SRAM, resident or streamed weights."""
+def lpu_plan(mid: str, chips: int = 1, seq: int = 64, train: bool = False):
+    """What running (or one training step of) this model on `chips` virtual LPUs costs: exact compiled cycles, SRAM, resident or streamed weights."""
     from hive import architect, lpu
     m, model_dir, _ = _model_dirs(mid)
     if not (model_dir / "config.json").exists():
         raise HTTPException(400, "This model has no config.json to compile from")
     cfg = json.loads((model_dir / "config.json").read_text())
     params = (m.get("result") or {}).get("params") or (m.get("arch") or {}).get("params") or 0
-    p = lpu.plan(cfg, params, seq=max(8, min(int(seq), 2048)), chips=max(1, min(int(chips), 65536)))
+    p = lpu.plan(cfg, params, seq=max(8, min(int(seq), 2048)), chips=max(1, min(int(chips), 65536)), train=train,
+                 spec=lpu.ChipSpec(word_bytes=4) if train else None, lr=3e-2)
     return {**p, "model": mid, "name": m["name"], "params": params, "params_text": architect.fmt_params(params), "text": lpu.plan_text(p, m["name"])}
 
 
@@ -1067,21 +1068,12 @@ class MergeBody(BaseModel):
 @api.post("/lab/models/{mid}/layers/merge")
 async def layers_merge(mid: str, body: MergeBody):
     """Write the (retrained) layers back into model.safetensors so Run it uses them."""
-    from hive import layers
-    from hive.lab import MODELS, _write
-    m, model_dir, layers_dir = _model_dirs(mid)
+    m, _, layers_dir = _model_dirs(mid)
     if not (layers_dir / "manifest.json").exists():
         raise HTTPException(409, "Nothing to merge")
-    size = await asyncio.to_thread(layers.merge, layers_dir, model_dir)
-    manifest = json.loads((layers_dir / "manifest.json").read_text())
-    manifest["trained_steps"] = int(manifest.get("trained_steps") or 0) + max(0, body.steps)
-    manifest["last_loss"] = body.loss
-    (layers_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    m["stream_trained"] = {"steps": manifest["trained_steps"], "loss": body.loss, "at": int(time.time())}
-    _write(MODELS / mid / "model.json", m)
-    lab._changed()
+    res = await asyncio.to_thread(lab.merge_layers, mid, body.steps, body.loss)
     log("Phone", "merged", f"{m['name']}: {body.steps} layer-streamed steps")
-    return {"ok": True, "bytes": size, "trained_steps": manifest["trained_steps"]}
+    return res
 
 
 @api.get("/lab/stream/sample", response_class=PlainTextResponse)

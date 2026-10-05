@@ -306,14 +306,20 @@ async function aiPoll() {
   const line = st.mode === "run"
     ? (m.token && m.cycles ? `token ${m.token} · ${m.cycles.toLocaleString()} chip cycles (${m.chip_us} µs on the LPU) simulated in ${m.seconds} s · ${m.fetched_mb} MB fetched`
        : m.token ? `token ${m.token} · ${m.layers} layers streamed in ${m.seconds} s · ${m.fetched_mb} MB fetched` : "fetching the first layer…")
-    : (m.step ? `step ${m.step} · loss ${m.loss} · ${m.seconds} s per step · ${m.sent_mb} MB sent back` : "fetching the first layer…");
+    : (m.step && m.cycles ? `step ${m.step} · loss ${m.loss} · ${m.cycles.toLocaleString()} chip cycles (${m.chip_us} µs on the LPU) simulated in ${m.seconds} s`
+       : m.step ? `step ${m.step} · loss ${m.loss} · ${m.seconds} s per step · ${m.sent_mb} MB sent back` : "fetching the first layer…");
   let out = `${st.running ? "Running" : `Finished (exit ${st.exit_code})`} · ${line}\n\n${st.tail || ""}`;
   if (st.result && st.mode === "run") out += `\n\n→ ${st.result.text}`;
   if (st.result && st.result.cycles_per_token) out += `\n\nVirtual LPU: ${st.result.chips} chip(s), ${st.result.cycles_per_token.toLocaleString()} cycles per token → ${st.result.chip_tokens_per_second} tokens/s on the chip (${st.result.sim_seconds_per_token} s per token to simulate).`;
   if (st.result && st.mode === "train") out += `\n\nTrained ${st.result.steps} steps, loss ${st.result.loss}; layers merged back into the Hive's model.`;
+  if (st.result && st.result.cycles_per_step) out += `\nVirtual LPU: ${st.result.chips} chip(s), ${st.result.cycles_per_step.toLocaleString()} cycles per step → ${st.result.tokens_per_second.toLocaleString()} training tokens/s on the chip.`;
   $("aiOut").textContent = out;
   if (!st.running) { clearInterval(aiTimer); aiTimer = null; }
 }
 $("aiRunForm").addEventListener("submit", (e) => { e.preventDefault(); aiStart("run", { prompt: $("aiPrompt").value.trim() || "Once upon a time", max_new: 40, engine: $("aiEngine").value, chips: 1 }); });
-$("aiTrainForm").addEventListener("submit", (e) => { e.preventDefault(); aiStart("train", { steps: Number($("aiSteps").value) || 5 }); });
+$("aiTrainForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const lpu = $("aiEngine").value === "lpu";
+  aiStart("train", { steps: Number($("aiSteps").value) || 5, engine: $("aiEngine").value, chips: 1, ...(lpu ? { lr: 0.03, seq_len: 64 } : {}) });
+});
 $("aiStop").addEventListener("click", async () => { if (aiJob) { try { await cmd("stream_stop", { job: aiJob }); } catch { /* shown */ } aiPoll(); } });

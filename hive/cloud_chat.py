@@ -51,6 +51,7 @@ class Intent:
     purpose: str = ""
     test_prompts: int | None = None
     engine: str = ""  # "lpu": the phone runs the streamed layers on the virtual chip
+    steps: int | None = None
 
 
 def parse(text: str) -> Intent | None:
@@ -73,11 +74,13 @@ def parse(text: str) -> Intent | None:
         mode = "train" if re.search(r"\b(train|teach|fine[\s-]?tune)\b", t, re.I) else "run"
         cm = re.search(r"(\d+)\s*(?:lpu\s+|virtual\s+)?chips?\b", t, re.I)
         chips = int(lm.group(1) or (cm.group(1) if cm else 1))
+        sm = re.search(r"(\d+)\s*steps?\b", t, re.I)
         pr = re.search(r"(?:prompt|say|with|starting with)\s*[:\"“]\s*(.+?)[\"”]?$", t[lm.end():], re.I)
         rest = re.sub(r"^.*?\b(?:run|train|teach|start|test|chat with|generate with|serve|simulate|fine[\s-]?tune)\b", "", t[:lm.start()], flags=re.I)
-        rest = re.sub(r"\d+\s*(?:lpu\s+|virtual\s+)?chips?\b", "", rest, flags=re.I)
+        rest = re.sub(r"\d+\s*(?:lpu\s+|virtual\s+)?chips?\b|\d+\s*steps?\b|\bfor\b", "", rest, flags=re.I)
         query = " ".join(FILLER.sub(" ", rest).split())
-        return Intent("on_lpu", model_query=query, purpose=mode, dataset=(pr.group(1).strip() if pr else ""), size_b=float(chips))
+        return Intent("on_lpu", model_query=query, purpose=mode, dataset=(pr.group(1).strip() if pr else ""), size_b=float(chips),
+                      steps=int(sm.group(1)) if sm else None)
     if RENT_STOP.search(t):
         return Intent("rent_stop")
     if STOP.search(t):
@@ -164,7 +167,8 @@ async def handle(task: Task) -> bool:
                                      steps=int(intent.size_b) if intent.size_b else 10, engine=intent.engine)
         elif intent.kind == "on_lpu":
             from . import lpu_lab
-            await lpu_lab.on_lpu(task, intent.model_query, prompt=intent.dataset, chips=int(intent.size_b or 1), mode=intent.purpose)
+            await lpu_lab.on_lpu(task, intent.model_query, prompt=intent.dataset, chips=int(intent.size_b or 1), mode=intent.purpose,
+                                 steps=intent.steps or 10)
     except asyncio.TimeoutError:
         await task.answer("I waited a long time for an answer, so I stopped here. Ask again whenever you're ready.")
     return True

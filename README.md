@@ -326,10 +326,20 @@ How to use it:
   (cycles per token, time on the chip, tokens/s, SRAM, resident or streamed, what the simulation costs here),
   then simulates token by token and reports the chip's numbers next to the answer (instructions, unit
   utilisation, bytes over the host link and the chip links, SRAM peak).
-- API: `GET /api/lab/models/<id>/lpu/plan?chips=8&seq=64` gives the same plan as JSON.
-- Phone: in the Phone page's AI tab choose **Virtual LPU** as the engine, or say **"run my stories model on my
-  phone on the lpu"**: the phone streams each layer from the Hive and runs it on the simulated chip
-  (`stream.py run --engine lpu`, which fetches `/lpu.py` from the Hive). Only numpy is needed for the chip itself.
+- Training: **"train my stories model on the lpu for 20 steps"** (or on 2 lpu chips). The compiler schedules a whole
+  SGD step: the forward pass keeps each layer's input, cross-entropy at the head, then from the top layer down each
+  layer is recomputed, back-propagated through (attention, RoPE, RMSNorm, SwiGLU, all as matrix- and vector-unit
+  instructions), and every weight shard is updated in place; replicated-input gradients are all-reduced over the
+  group, the gradient goes back down the pipeline over the links, and the embedding gradient goes to the host.
+  Training uses 32-bit SRAM words (exact master weights) and plain SGD (lr 0.03, no optimizer state on the chip).
+  Afterwards the trained layers are written back in the model's own dtype and merged, exactly like the phone's.
+  Checked against an independent float64 numpy backward pass (itself checked by finite differences): the updated
+  weights match to 1e-7 on 1 to 8 chips, resident or streamed.
+- API: `GET /api/lab/models/<id>/lpu/plan?chips=8&seq=64` gives the same plan as JSON (`&train=1` for a training step).
+- Phone: in the Phone page's AI tab choose **Virtual LPU** as the engine (Run and Train both use it), or say
+  **"run my stories model on my phone on the lpu"** / **"train … on my phone on the lpu"**: the phone streams each
+  layer from the Hive and runs it on the simulated chip (`stream.py run|train --engine lpu`, which fetches `/lpu.py`
+  from the Hive). Only numpy is needed for the chip itself.
 - Anywhere with Python: `lpu.plan(config, params, seq, chips)` for the numbers, `lpu.Model(...)` to run.
 
 The honest part: the plan card is computed by compiling, not guessing. A 1.3B model does not fit one chip (a
@@ -337,8 +347,9 @@ layer's 134 MB plus activations is more than the SRAM) but fits 2 chips per laye
 about 94 tokens/s on the chips, 8 chips stream it at about 21 tokens/s. A 500B model needs 64 chips per layer
 just to stream (2 tokens/s) and 8,064 chips to be resident. Simulating is slow because every multiply really
 runs in numpy: well under a second per token for the tiny models the Hive trains, 8 seconds per token for a
-1.3B, 46 minutes per token for a 500B. The compiler schedules the forward pass only: the virtual chip runs
-models, training stays on the phone or a GPU.
+1.3B, 46 minutes per token for a 500B. Training on the chip is for models the simulator can hold: the Hive's own
+small models train in a fraction of a second per step; a big model's training plan is exact, its simulation is not
+something to wait for.
 
 ## Event protocol
 
