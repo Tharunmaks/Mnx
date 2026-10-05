@@ -255,7 +255,7 @@ class Streamer:
         for t in self.shared.values():
             t.grad = None
         self.norm.weight.grad = None
-        return float(loss)
+        return float(loss.detach())
 
     @staticmethod
     def _sgd(params, lr: float) -> None:

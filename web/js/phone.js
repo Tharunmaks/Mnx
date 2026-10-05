@@ -62,12 +62,14 @@ function select(p) {
   $("phonePick").value = p.id;
 
   const info = $("info");
-  info.replaceChildren(
+  info.replaceChildren(...[
     h("span", { class: "chip" }, p.name || "Phone"),
     p.model ? h("span", { class: "chip" }, p.model) : null,
     p.android ? h("span", { class: "chip" }, `Android ${p.android}`) : null,
+    p.ram_gb ? h("span", { class: "chip" }, `${p.ram_gb} GB RAM · ${p.cores || "?"} cores`) : null,
     h("span", { class: `chip ${p.backend === "none" ? "ask" : ""}` }, p.backend === "none" ? "No screen control" : `Screen: ${p.backend}`),
-    can("battery") ? h("span", { class: "chip", id: "batt" }, "Battery …") : null);
+    can("stream_start") ? h("span", { class: "chip" }, "Can run models (layer streaming)") : null,
+    can("battery") ? h("span", { class: "chip", id: "batt" }, "Battery …") : null].filter(Boolean));
   if (battery) showBattery(battery);
 
   const screen = can("screenshot");

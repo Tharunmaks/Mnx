@@ -24,7 +24,14 @@ POLL = 3
 
 
 def _model_for(query: str) -> dict | None:
-    from .swarm import _find_model
+    """The trained model the words name; None when they name only a blueprint (or nothing matches and a blueprint does)."""
+    from .swarm import _find_model, find_blueprint
+    q = (query or "").lower().split()
+    trained = [m for m in lab.models.values() if m.get("kind") == "llm" and (MODELS / m["id"] / "files" / "model").is_dir()]
+    if q and not any(all(w in m["name"].lower() for w in q) for m in trained):
+        bp = find_blueprint(query)
+        if bp and all(w in bp["name"].lower() for w in q):
+            return None
     return _find_model(query)
 
 
