@@ -2,27 +2,150 @@
   "id": "llm-pretrain",
   "order": 0,
   "title": "Create a model from scratch",
-  "summary": "Design and train a brand-new language model at any size, from 1M to 2T parameters. Tiny ones train on a CPU in minutes; big ones need GPUs (the plan tells you how many).",
+  "summary": "Design and train a brand-new language model at any size from 1M to 500B parameters. Tiny ones train on a CPU in minutes; big ones need GPUs (the plan tells you how many).",
   "kind": "llm",
   "playground": "chat",
   "gpu": "optional",
   "image": "python:3.12-slim",
-  "helpers": ["architect.py"],
-  "dataset": {"required": false, "accept": ".txt,.md,.jsonl,.csv", "hint": "Text to learn from: .txt/.md/.jsonl/.csv files, and/or a Hugging Face dataset below. More text makes a better model."},
+  "helpers": [
+    "architect.py"
+  ],
+  "dataset": {
+    "required": false,
+    "accept": ".txt,.md,.jsonl,.csv",
+    "hint": "Text to learn from: .txt/.md/.jsonl/.csv files, and/or Hugging Face datasets below. More text makes a better model."
+  },
   "sample": "sample.txt",
   "params": [
-    {"name": "size", "label": "Size (parameters)", "type": "select", "default": "10M",
-     "options": ["1M", "5M", "10M", "25M", "50M", "125M", "350M", "1B", "3B", "7B", "13B", "30B", "70B", "175B", "400B", "1T", "2T", "custom"]},
-    {"name": "custom_params", "label": "Custom size (exact parameter count)", "type": "int", "default": 0, "min": 0, "max": 5000000000000, "help": "Used when Size is 'custom'."},
-    {"name": "tokenizer", "label": "Tokenizer", "type": "text", "default": "own", "help": "'own' trains a tokenizer on your data; or a Hugging Face id like Qwen/Qwen2.5-0.5B."},
-    {"name": "hf_dataset", "label": "Hugging Face dataset (optional)", "type": "text", "default": "", "help": "e.g. roneneldan/TinyStories or wikitext"},
-    {"name": "hf_config", "label": "Dataset config (optional)", "type": "text", "default": "", "help": "e.g. wikitext-103-raw-v1"},
-    {"name": "max_examples", "label": "Use up to N rows", "type": "int", "default": 20000, "min": 100, "max": 100000000},
-    {"name": "tokens", "label": "Training tokens (0 = auto, 20 per parameter)", "type": "int", "default": 0, "min": 0, "max": 100000000000000},
-    {"name": "epochs_max", "label": "Max passes over the data", "type": "float", "default": 3, "min": 0.1, "max": 100},
-    {"name": "seq_len", "label": "Context length (0 = auto)", "type": "int", "default": 0, "min": 0, "max": 32768},
-    {"name": "learning_rate", "label": "Learning rate (0 = auto)", "type": "float", "default": 0, "min": 0, "max": 0.1},
-    {"name": "init_from", "label": "Continue from a saved model folder (optional)", "type": "text", "default": ""},
-    {"name": "sample_prompts", "label": "Sample prompts to try at the end (| separated)", "type": "text", "default": "Once upon a time|The"}
+    {
+      "name": "size",
+      "label": "Size (parameters)",
+      "type": "select",
+      "default": "10M",
+      "options": [
+        "1M",
+        "5M",
+        "10M",
+        "25M",
+        "50M",
+        "125M",
+        "350M",
+        "1B",
+        "3B",
+        "7B",
+        "13B",
+        "30B",
+        "70B",
+        "175B",
+        "300B",
+        "500B",
+        "custom"
+      ]
+    },
+    {
+      "name": "custom_params",
+      "label": "Custom size (exact parameter count)",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "max": 500000000000,
+      "help": "Used when Size is 'custom'. Maximum 500B."
+    },
+    {
+      "name": "tokenizer",
+      "label": "Tokenizer",
+      "type": "text",
+      "default": "own",
+      "help": "'own' trains a tokenizer on your data; or a Hugging Face id like Qwen/Qwen2.5-0.5B."
+    },
+    {
+      "name": "hf_dataset",
+      "label": "Hugging Face dataset (optional)",
+      "type": "text",
+      "default": "",
+      "help": "e.g. roneneldan/TinyStories or wikitext"
+    },
+    {
+      "name": "hf_config",
+      "label": "Dataset config (optional)",
+      "type": "text",
+      "default": "",
+      "help": "e.g. wikitext-103-raw-v1"
+    },
+    {
+      "name": "text_column",
+      "label": "Text column of the dataset (optional)",
+      "type": "text",
+      "default": "",
+      "help": "Leave empty to auto-detect (text / content / messages)."
+    },
+    {
+      "name": "hf_datasets",
+      "label": "More datasets (JSON list, optional)",
+      "type": "text",
+      "default": "",
+      "help": "[{\"name\": \"bigcode/the-stack-smol\", \"data_dir\": \"data/python\", \"column\": \"content\"}]"
+    },
+    {
+      "name": "max_examples",
+      "label": "Use up to N rows per dataset",
+      "type": "int",
+      "default": 20000,
+      "min": 100,
+      "max": 100000000
+    },
+    {
+      "name": "tokens",
+      "label": "Training tokens (0 = auto, 20 per parameter)",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "max": 100000000000000
+    },
+    {
+      "name": "epochs_max",
+      "label": "Max passes over the data",
+      "type": "float",
+      "default": 3,
+      "min": 0.1,
+      "max": 100
+    },
+    {
+      "name": "seq_len",
+      "label": "Context length (0 = auto)",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "max": 32768
+    },
+    {
+      "name": "learning_rate",
+      "label": "Learning rate (0 = auto)",
+      "type": "float",
+      "default": 0,
+      "min": 0,
+      "max": 0.1
+    },
+    {
+      "name": "test_prompts",
+      "label": "Test with N prompts at the end",
+      "type": "int",
+      "default": 1000,
+      "min": 0,
+      "max": 1000000,
+      "help": "Held-out prompts the model must continue; reports accuracy and perplexity."
+    },
+    {
+      "name": "init_from",
+      "label": "Continue from a saved model folder (optional)",
+      "type": "text",
+      "default": ""
+    },
+    {
+      "name": "sample_prompts",
+      "label": "Sample prompts to try at the end (| separated)",
+      "type": "text",
+      "default": "Once upon a time|The"
+    }
   ]
 }

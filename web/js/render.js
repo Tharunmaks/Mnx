@@ -3,14 +3,14 @@
 // The renderer is a pure function of the event list, so saved chats re-render exactly.
 
 import { ICONS, h, logoSVG, toast, uploadFile } from "./shared.js";
-import { modelCard, runCard } from "./labcard.js";
+import { filesCard, modelCard, runCard } from "./labcard.js";
 
 const STEP_TYPES = new Set([
   "step", "thinking", "planning", "searching", "reading", "web", "opening",
   "fetching", "writing", "running", "booking", "waiting", "memory", "done", "error",
 ]);
-const CARD_TYPES = new Set(["connect", "clarify", "confirm", "result", "lab_run", "lab_model"]);
-const LIVE_CARDS = new Set(["result", "lab_run", "lab_model"]); // show information; nothing to answer
+const CARD_TYPES = new Set(["connect", "clarify", "confirm", "result", "lab_run", "lab_model", "lab_files"]);
+const LIVE_CARDS = new Set(["result", "lab_run", "lab_model", "lab_files"]); // show information; nothing to answer
 
 // ---------- events → model ----------
 export function buildModel(events) {
@@ -168,6 +168,7 @@ function buildCard(c, act) {
     case "result": return resultCard(c);
     case "lab_run": return runCard(c.run);
     case "lab_model": return modelCard(c.model);
+    case "lab_files": return filesCard(c);
   }
   return h("div");
 }

@@ -15,8 +15,9 @@ import re
 SIZES = [
     ("1M", 1e6), ("5M", 5e6), ("10M", 1e7), ("25M", 2.5e7), ("50M", 5e7), ("125M", 1.25e8),
     ("350M", 3.5e8), ("1B", 1e9), ("3B", 3e9), ("7B", 7e9), ("13B", 1.3e10), ("30B", 3e10),
-    ("70B", 7e10), ("175B", 1.75e11), ("400B", 4e11), ("1T", 1e12), ("2T", 2e12),
+    ("70B", 7e10), ("175B", 1.75e11), ("300B", 3e11), ("500B", 5e11),
 ]
+MAX_PARAMS = 5e11  # the biggest model the Hive will design and train
 
 # Depth anchors (params → layers), log-interpolated. Based on published model shapes.
 _LAYER_ANCHORS = [
@@ -50,6 +51,16 @@ def parse_size(text: str) -> float | None:
     if not m:
         return None
     return float(m.group(1).replace(",", ".")) * _UNIT[m.group(2).lower()]
+
+
+def clamp_size(n: float) -> tuple[float, bool]:
+    """(size to use, was it capped). Sizes above 500B are brought down to 500B."""
+    return (MAX_PARAMS, True) if n > MAX_PARAMS else (max(2e5, n), False)
+
+
+def gpus_needed(n_params: float, gpu_memory_gb: float = 80) -> int:
+    """How many GPUs of that memory hold a training run (weights, grads, optimizer; activations extra)."""
+    return max(1, math.ceil(TRAIN_BYTES_PER_PARAM_GPU * n_params / (gpu_memory_gb * 1e9 * 0.85)))
 
 
 def fmt_params(n: float) -> str:

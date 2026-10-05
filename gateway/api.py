@@ -25,7 +25,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from gateway import auth
-from hive import phone, queen
+from hive import phone, queen, status
 from hive.browser import BrowserError, stop_playwright
 from hive.cells import cells
 from hive.connectors import LANES, LAYERS, hub
@@ -44,6 +44,12 @@ DEFAULT_BEES = [
     {"id": "browser", "name": "Browser", "skill": "Uses any website like a person, in its own Chromium", "tools": ["browser"], "approval": True, "builtin": True},
     {"id": "phone", "name": "Phone", "skill": "Taps, types and opens apps on your paired phone", "tools": ["phone"], "approval": True, "builtin": True},
     {"id": "cloud", "name": "Cloud", "skill": "Trains AI models, keeps them and runs them as APIs, here or on any GPU server", "tools": ["lab"], "approval": True, "builtin": True},
+    {"id": "reader", "name": "Reader", "skill": "Reads your request and works out what you want", "tools": [], "approval": False, "builtin": True},
+    {"id": "architect", "name": "Architect", "skill": "Designs transformers for any size and estimates what training takes", "tools": ["lab"], "approval": False, "builtin": True},
+    {"id": "data", "name": "Data", "skill": "Gathers training text: datasets, your files, web pages", "tools": ["browser", "lab"], "approval": False, "builtin": True},
+    {"id": "gpu", "name": "GPU", "skill": "Opens cloud Docker and GPUs: your servers, clusters, or rented machines", "tools": ["lab"], "approval": True, "builtin": True},
+    {"id": "coding", "name": "Coding", "skill": "Writes the files for a training run (train.py, serve.py, config)", "tools": ["lab"], "approval": False, "builtin": True},
+    {"id": "eval", "name": "Eval", "skill": "Tests finished models with held-out prompts and reports back", "tools": ["lab"], "approval": False, "builtin": True},
 ]
 
 
@@ -71,9 +77,9 @@ TASKS: dict[str, tuple[Task, asyncio.Task]] = {}
 
 def bee_view(b: dict) -> dict:
     training = b["id"] == "cloud" and any(r["status"] in ("queued", "preparing", "running") for r in lab.runs.values())
-    status = BEE_STATUS.get(b["id"]) or ("busy" if training else None) or cells.busy(b["id"]) or ("scheduled" if b.get("schedule") else "idle")
+    st = BEE_STATUS.get(b["id"]) or status.busy.get(b["id"]) or ("busy" if training else None) or cells.busy(b["id"]) or ("scheduled" if b.get("schedule") else "idle")
     cell = cells.cells.get(b["id"])
-    return {**b, "status": status, "cell": cell.view() if cell else None}
+    return {**b, "status": st, "cell": cell.view() if cell else None}
 
 
 async def broadcast(event: dict) -> None:
@@ -95,6 +101,8 @@ async def lifespan(app: FastAPI):
     cells.on_change = lambda cell: loop.create_task(broadcast({"type": "bees_changed", "bee": cell.id}))
     await cells.start(BEES)
     lab.on_change = lambda kind: loop.create_task(broadcast({"type": "lab_changed"}))
+    lab.on_finish = lambda run: loop.create_task(_report(run))
+    status.on_change = lambda: loop.create_task(broadcast({"type": "bees_changed"}))
     await lab.start()
     prepull = asyncio.create_task(_prepull_images())
     yield
@@ -103,6 +111,65 @@ async def lifespan(app: FastAPI):
     await lab.shutdown()
     await cells.shutdown()
     await stop_playwright()
+
+
+async def _report(run: dict) -> None:
+    """When a run started from the chat ends, the Eval Bee posts the final report into that chat."""
+    chat = run.get("chat") or {}
+    status.clear("cloud", "eval")
+    if not chat.get("task"):
+        return
+    parent = chat.get("eval_parent")
+    task_id = chat["task"]
+    st = run.get("stages") or {}
+    fmt = __import__("hive.architect", fromlist=["fmt_time"]).fmt_time
+
+    def took(a: str, b: str) -> str | None:
+        if a in st and b in st and st[b] >= st[a]:
+            return fmt(st[b] - st[a])
+        return None
+
+    events: list[dict] = []
+
+    def ev(type: str, text: str | None = None, bee: str | None = None, **f):
+        e = {"task": task_id, "id": f"rp{uuid.uuid4().hex[:8]}", "type": type, "at": now(), **f}
+        if text is not None:
+            e["text"] = text
+        if bee:
+            e["bee"] = bee
+        if parent:
+            e["parent"] = parent
+        events.append(e)
+
+    res = run.get("result") or {}
+    if run["status"] == "succeeded":
+        d = took("data", "training")
+        t = took("training", "saving") or took("training", "testing") or took("training", "end")
+        x = took("testing", "end")
+        if d:
+            ev("done", f"Adding data to the model took {d}", bee="Data", status="done")
+        if t:
+            ev("done", f"Training took {t} · {res.get('tokens', 0):,} tokens", bee="Cloud", status="done")
+        if res.get("test_prompts"):
+            ev("done", f"Tested with {res['test_prompts']:,} prompts" + (f" in {x}" if x else "")
+               + f": next-token accuracy {res.get('test_accuracy')}%, perplexity {res.get('perplexity')}", bee="Eval", status="done")
+        details = [["Parameters", f"{res.get('params_text', '?')} ({res.get('params', 0):,})"],
+                   ["Tokens trained", f"{res.get('tokens', 0):,}"], ["Training time", t or "—"]]
+        if res.get("test_prompts"):
+            details += [["Test prompts", f"{res['test_prompts']:,}"], ["Accuracy", f"{res.get('test_accuracy')}%"],
+                        ["Perplexity", str(res.get("perplexity"))]]
+        if run.get("nodes"):
+            details.append(["Trained on", f"a cluster of {len(run['nodes'])} machines"])
+        ev("result", service="Eval", title=f"Your model is ready: {res.get('params_text', '?')} parameters", badge="Ready",
+           details=details, text="Press Run it on the training card above to talk to it; it also appears in the Lab's Models tab.")
+        ev("done", "Stabilizing network · turning off Bees", bee="Queen", status="done")
+    else:
+        ev("error", f"Training {run['status']}: {run.get('error') or 'see the log in the Lab'}", bee="Cloud", status="error")
+        ev("done", "Turning off Bees", bee="Queen", status="done")
+    for e in events:
+        EVENT_LOG.append(e)
+        await broadcast(e)
+    await broadcast({"type": "bees_changed"})
 
 
 async def _prepull_images() -> None:
@@ -612,6 +679,7 @@ class NewRun(BaseModel):
     name: str = Field(default="", max_length=80)
     params: dict[str, Any] = Field(default_factory=dict)
     target: str = Field(default="local", max_length=64)
+    nodes: list[str] | None = Field(default=None, max_length=64)
     uploads: list[str] = Field(default_factory=list, max_length=50)
     use_sample: bool = False
     gpu: bool = False
@@ -624,7 +692,7 @@ async def lab_new_run(body: NewRun):
     files = [_upload_path(u) for u in body.uploads]
     try:
         run = lab.create_run(body.recipe, body.name, body.params, body.target, files,
-                             body.use_sample, body.gpu, body.cpus, body.memory_gb)
+                             body.use_sample, body.gpu, body.cpus, body.memory_gb, nodes=body.nodes)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     finally:
@@ -651,6 +719,21 @@ def lab_run_log(rid: str, since: int = 0):
     _run_or_404(rid)
     data, size = lab.log_tail(rid, since)
     return Response(data, media_type="text/plain; charset=utf-8", headers={"X-Log-Size": str(size)})
+
+
+@api.get("/lab/runs/{rid}/files")
+def lab_run_files(rid: str):
+    _run_or_404(rid)
+    return lab.list_job_files(rid)
+
+
+@api.get("/lab/runs/{rid}/file", response_class=PlainTextResponse)
+def lab_run_file(rid: str, path: str):
+    _run_or_404(rid)
+    try:
+        return lab.read_job_file(rid, path)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @api.post("/lab/runs/{rid}/stop")

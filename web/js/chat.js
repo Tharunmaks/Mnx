@@ -153,9 +153,11 @@ function renderAll() {
   $("welcome").classList.toggle("hidden", !!hasTurns);
   $("scroll").classList.toggle("hidden", !hasTurns);
   $("bottomSlot").classList.toggle("hidden", !hasTurns);
+  // The composer lives in one place at a time: the welcome screen (no turns) or the bottom bar. Move it from wherever it is.
   const composer = $("composerHome");
   composer.classList.remove("hidden");
-  (hasTurns ? $("bottomSlot") : $("welcomeSlot")).append(...composer.childNodes);
+  const slot = hasTurns ? $("bottomSlot") : $("welcomeSlot");
+  slot.append(...composer.childNodes, ...[...$("welcomeSlot").childNodes, ...$("bottomSlot").childNodes].filter((n) => n.parentNode !== slot));
 
   $("chatTitle").textContent = chat ? chat.title : "New chat";
   document.title = chat ? `${chat.title} · Mnx Hive` : "Mnx Hive";

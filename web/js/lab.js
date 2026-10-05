@@ -124,11 +124,14 @@ function renderTargetPick() {
   const keep = pick.value;
   pick.replaceChildren(...data.targets.map((t) => h("option", { value: t.id, disabled: t.kind === "ssh" && t.status !== "ok" },
     `${t.name}${t.gpu ? " · GPU" : ""}${t.kind === "ssh" && t.status !== "ok" ? " (not reachable)" : ""}`)));
+  const sshOk = data.targets.filter((t) => t.kind === "ssh" && t.status === "ok");
+  if (sshOk.length >= 2) pick.append(h("option", { value: "__cluster__" }, `Cluster: all ${sshOk.length} connected servers together`));
   if (keep && data.targets.some((t) => t.id === keep)) pick.value = keep;
   syncGpu();
 }
 function syncGpu() {
-  const t = data?.targets.find((x) => x.id === $("targetPick").value);
+  const v = $("targetPick").value;
+  const t = v === "__cluster__" ? { gpu: data?.targets.some((x) => x.kind === "ssh" && x.gpu) } : data?.targets.find((x) => x.id === v);
   const box = $("gpuBox");
   box.disabled = !t?.gpu;
   box.checked = !!t?.gpu && recipe?.gpu !== "no";
@@ -181,7 +184,10 @@ $("trainForm").addEventListener("submit", async (e) => {
     const run = await api("/api/lab/runs", {
       method: "POST",
       body: {
-        recipe: recipe.id, name: f.name.value.trim(), params, target: f.target.value, uploads,
+        recipe: recipe.id, name: f.name.value.trim(), params,
+        target: f.target.value === "__cluster__" ? "local" : f.target.value,
+        nodes: f.target.value === "__cluster__" ? data.targets.filter((t) => t.kind === "ssh" && t.status === "ok").map((t) => t.id) : null,
+        uploads,
         use_sample: f.use_sample.checked, gpu: $("gpuBox").checked,
         cpus: f.cpus.value ? Number(f.cpus.value) : null, memory_gb: f.memory_gb.value ? Number(f.memory_gb.value) : null,
       },
@@ -222,7 +228,7 @@ function renderRuns() {
     const head = h("div", { class: "card-head" },
       h("div", { style: "min-width:0;flex:1" },
         h("div", {}, r.name),
-        h("div", { class: "hint" }, `${recipeTitle(r.recipe)} · ${targetName(r.target)}${r.gpu ? " · GPU" : ""} · ${active ? `running ${since(r.started)}` : r.ended ? `took ${fmtDuration(r.ended - r.started)}` : ""}`)),
+        h("div", { class: "hint" }, `${recipeTitle(r.recipe)} · ${r.nodes ? `cluster of ${r.nodes.length}: ${r.nodes.map(targetName).join(", ")}` : targetName(r.target)}${r.gpu ? " · GPU" : ""} · ${active ? `running ${since(r.started)}` : r.ended ? `took ${fmtDuration(r.ended - r.started)}` : ""}`)),
       h("span", { class: `status ${STATUS_CLASS[r.status] ?? ""}` }, label));
     const summary = r.result ? h("div", { class: "metric-chips" }, Object.entries(r.result)
       .filter(([, v]) => typeof v === "number" || typeof v === "string").slice(0, 6)

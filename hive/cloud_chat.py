@@ -45,6 +45,7 @@ class Intent:
     dataset: str = ""
     params: float | None = None  # exact parameter count for "create"
     purpose: str = ""
+    test_prompts: int | None = None
 
 
 def parse(text: str) -> Intent | None:
@@ -59,10 +60,16 @@ def parse(text: str) -> Intent | None:
         return Intent("add_data", model_query=(mq.group(1) if mq else "").strip(), purpose=(pm.group(1) if pm else "").strip())
     n_params = architect.parse_size(t) if re.search(r"param|\bparams\b|\b\d+(?:\.\d+)?\s*[kmbt]\b", t, re.I) else None
     if CREATE.search(t) and (n_params or re.search(r"from scratch|new (?:ai|model|llm)|\b(create|build|design|invent)\b", t, re.I)):
+        tm = re.search(r"test\w*\s+(?:it\s+)?(?:with|on)\s+(\d+(?:[.,]\d+)?)\s*(k|m|thousand|million)?\s*prompts?", t, re.I)
+        n_test = None
+        if tm:
+            n_test = float(tm.group(1).replace(",", ".")) * {"k": 1e3, "thousand": 1e3, "m": 1e6, "million": 1e6}.get((tm.group(2) or "").lower(), 1)
+            t = t[:tm.start()] + t[tm.end():]
         pm = PURPOSE.search(t)
         purpose = (pm.group(1) if pm else "").strip()
         purpose = re.sub(r"^(?:a|an|the)\s+", "", purpose)
-        return Intent("create", params=n_params, purpose=purpose[:120])
+        purpose = re.sub(r"\s*(?:,|and)?\s*$", "", purpose)
+        return Intent("create", params=n_params, purpose=purpose[:120], test_prompts=int(n_test) if n_test else None)
     if STATUS.search(t) and not TRAIN.match(t):
         return Intent("status")
     m = TRAIN.search(t)
@@ -106,7 +113,7 @@ async def handle(task: Task) -> bool:
             if not bp:
                 await task.answer("I don't have a blueprint by that name. Say “create a 1B model” to design one.")
             else:
-                await swarm.create_model(task, bp["arch"]["params"], bp.get("purpose") or "")
+                await swarm.create_model(task, bp["arch"]["params"], bp.get("purpose") or "", intent.test_prompts)
         elif intent.kind == "train":
             await train(task, intent)
         elif intent.kind == "status":
@@ -117,7 +124,7 @@ async def handle(task: Task) -> bool:
             await run_model(task, intent)
         elif intent.kind == "create":
             from . import swarm
-            await swarm.create_model(task, intent.params, intent.purpose)
+            await swarm.create_model(task, intent.params, intent.purpose, intent.test_prompts)
         elif intent.kind == "add_data":
             from . import swarm
             await swarm.add_data(task, intent.model_query, intent.purpose)

@@ -628,3 +628,9 @@ body.embed .page { padding-top: 10px; }
 .eval-head { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .sample { font-size: 13px; color: var(--text-2); padding: 6px 8px; border-left: 2px solid var(--honey); background: var(--surface); border-radius: 0 8px 8px 0; white-space: pre-wrap; word-break: break-word; }
 .sample b { color: var(--honey-2); }
+
+/* ---------- Coding Bee file cards ---------- */
+.job-files { display: flex; flex-direction: column; gap: 4px; }
+.job-file { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 6px 8px; border: 1px solid var(--line-soft); border-radius: 9px; font-size: 13px; }
+.job-file .btn { padding: 4px 10px; font-size: 13px; }
+.job-files .result-box { max-height: 340px; font-size: 12px; }

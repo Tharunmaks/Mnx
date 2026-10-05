@@ -40,6 +40,7 @@ PIP_CACHE = "mnx-pip-cache"
 HF_CACHE = "mnx-hf-cache"  # downloaded models and datasets, shared between runs
 LLAMA_IMAGE = os.getenv("MNX_LLAMA_IMAGE", "ghcr.io/ggml-org/llama.cpp:server")
 MAX_POINTS = 3000
+CLUSTER_PORT = int(os.getenv("MNX_CLUSTER_PORT", "29400"))  # torchrun rendezvous port on the master node
 ID_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 SSH_HOST_RE = re.compile(r"^[A-Za-z0-9.\-:\[\]]{1,255}$")
 SSH_USER_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -192,6 +193,7 @@ class Lab:
         self._logs: dict[str, Any] = {}
         self._dirty: set[str] = set()
         self.on_change = None
+        self.on_finish = None  # called with the run when it ends (the chat posts the final report)
         self.gpu_local = False
         self._tasks: list[asyncio.Task] = []
 
@@ -336,10 +338,17 @@ class Lab:
 
     def create_run(self, recipe_id: str, name: str, params: dict, target: str, files: list[Path],
                    use_sample: bool, gpu: bool, cpus: float | None, memory_gb: float | None,
-                   base_model_id: str | None = None) -> dict:
+                   base_model_id: str | None = None, nodes: list[str] | None = None,
+                   chat: dict | None = None, extra_files: dict[str, str] | None = None,
+                   blueprint: str | None = None) -> dict:
+        """Start a training run. `nodes` = several SSH servers trained together as one cluster."""
         recipe = self.recipes.get(recipe_id)
         if not recipe:
             raise ValueError("Unknown recipe")
+        if nodes:
+            if len(nodes) < 2 or any(n not in self.targets for n in nodes):
+                raise ValueError("A cluster needs two or more connected SSH servers")
+            target = nodes[0]
         if target != "local" and target not in self.targets:
             raise ValueError("Unknown server")
         params = coerce_params(recipe, params)
@@ -380,6 +389,10 @@ class Lab:
         if recipe["dataset"].get("required") and not any((job / "data").iterdir()):
             shutil.rmtree(self.run_dir(rid), ignore_errors=True)
             raise ValueError("Add a dataset file (or tick 'use sample data')")
+        for fname, content in (extra_files or {}).items():
+            fname = re.sub(r"[^A-Za-z0-9._-]", "_", Path(fname).name)[:80]
+            if fname and not fname.startswith("."):
+                (job / fname).write_text(content)
         (job / "params.json").write_text(json.dumps(params, indent=2))
         (job / "run.sh").write_text(RUN_SH)
         (job / "launch.sh").write_text(LAUNCH_SH)
@@ -393,7 +406,8 @@ class Lab:
             "status": "queued", "stage": None, "created": int(time.time()), "started": None, "ended": None,
             "exit": None, "metrics": [], "result": None, "model": None, "error": None,
             "data_files": sorted(p.name for p in (job / "data").iterdir()), "remote_offset": 0,
-            "base_model": base_model_id, "mount_models": mount_models,
+            "base_model": base_model_id, "mount_models": mount_models, "nodes": nodes or None,
+            "chat": chat, "stages": {}, "blueprint": blueprint,
         }
         self.runs[rid] = run
         self._save_run(run)
@@ -453,9 +467,34 @@ class Lab:
             run["last_line"] = s[:200]
         if s.startswith("MNX_STAGE "):
             run["stage"] = s[10:].strip()
+            run.setdefault("stages", {})[run["stage"]] = time.time()  # run.sh says "training" early; train.py repeats it when the loop starts
             if run["status"] == "preparing" and run["stage"] == "training":
                 run["status"] = "running"
         self._mark(run)
+
+    def list_job_files(self, rid: str) -> list[dict]:
+        """The files the Coding Bee wrote for a run (no secrets, no shipped base weights)."""
+        job = self.run_dir(rid) / "job"
+        out = []
+        for p in sorted(job.rglob("*")):
+            rel = p.relative_to(job)
+            if not p.is_file() or p.name.startswith(".") or rel.parts[0] in ("base", ".venv"):
+                continue
+            out.append({"path": str(rel), "size": p.stat().st_size})
+            if len(out) >= 200:
+                break
+        return out
+
+    def read_job_file(self, rid: str, rel: str) -> str:
+        job = (self.run_dir(rid) / "job").resolve()
+        p = (job / rel).resolve()
+        if job not in p.parents or p.name.startswith(".") or not p.is_file():
+            raise ValueError("No such file")
+        data = p.read_bytes()
+        if b"\0" in data[:4000]:
+            return f"(binary file, {p.stat().st_size:,} bytes)"
+        text = data[:300_000].decode(errors="replace")
+        return text + ("\n… (truncated)" if len(data) > 300_000 else "")
 
     def log_tail(self, rid: str, since: int = 0) -> tuple[bytes, int]:
         path = self.run_dir(rid) / "log.txt"
@@ -549,27 +588,42 @@ class Lab:
         wd = t.get("workdir") or "mnx-runs"
         return f"{wd.rstrip('/')}/{run['id']}"
 
+    @staticmethod
+    def _q(rdir: str) -> str:
+        return shlex.quote(rdir) if not rdir.startswith("~/") else "~/" + shlex.quote(rdir[2:])
+
     async def _start_ssh(self, run: dict) -> None:
-        t = self.targets[run["target"]]
-        rdir = self._remote_dir(run, t)
-        q = shlex.quote(rdir) if not rdir.startswith("~/") else "~/" + shlex.quote(rdir[2:])
+        """Upload and launch on one SSH server, or on every server of a cluster (node 0 is the master)."""
+        nodes = run.get("nodes") or [run["target"]]
         job = self.run_dir(run["id"]) / "job"
         self._log_reset(run)
-        self._line(run, f"Copying files to {t['name']} ({t['user']}@{t['host']}) …")
         tar = await _run(["tar", "-C", str(job), "-czf", "-", "."], 300)
         if tar[0] != 0:
             raise RuntimeError("Couldn't pack the run files")
-        code, out = await self.ssh(t, f"mkdir -p {q} && tar -C {q} -xzf -", 900, tar[1])
-        if code != 0:
-            raise RuntimeError(f"Upload to {t['name']} failed: {out.decode(errors='replace').strip()[-300:]}")
-        run["remote_dir"], run["remote_offset"] = rdir, 0
+        master = self.targets[nodes[0]]
+        run["node_dirs"] = {}
+        for i, tid in enumerate(nodes):
+            t = self.targets[tid]
+            rdir = self._remote_dir(run, t)
+            q = self._q(rdir)
+            self._line(run, f"Copying files to {t['name']} ({t['user']}@{t['host']}) …")
+            code, out = await self.ssh(t, f"mkdir -p {q} && tar -C {q} -xzf -", 900, tar[1])
+            if code != 0:
+                raise RuntimeError(f"Upload to {t['name']} failed: {out.decode(errors='replace').strip()[-300:]}")
+            run["node_dirs"][tid] = rdir
+            env = "MNX_VENV=1"
+            if len(nodes) > 1:
+                env += (f" MNX_NNODES={len(nodes)} MNX_NODE_RANK={i} MNX_MASTER_ADDR={shlex.quote(master['host'])} "
+                        f"MNX_MASTER_PORT={CLUSTER_PORT}")
+            # The ( … &) subshell exits at once, so ssh doesn't wait on the run's output pipes.
+            launch = f"cd {q} && ({env} setsid nohup sh launch.sh > log.txt 2>&1 < /dev/null &) && sleep 1 && cat .pid"
+            code, out = await self.ssh(t, launch, 60)
+            if code != 0:
+                raise RuntimeError(f"Couldn't start the run on {t['name']}: {out.decode(errors='replace').strip()[-300:]}")
+            self._line(run, f"Started on {t['name']} in {rdir}" + (f" as node {i} of {len(nodes)}" if len(nodes) > 1 else "")
+                       + "; it keeps running if the connection drops")
+        run["remote_dir"], run["remote_offset"] = run["node_dirs"][nodes[0]], 0
         self._mark(run)
-        # The ( … &) subshell exits at once, so ssh doesn't wait on the run's output pipes.
-        launch = f"cd {q} && (MNX_VENV=1 setsid nohup sh launch.sh > log.txt 2>&1 < /dev/null &) && sleep 1 && cat .pid"
-        code, out = await self.ssh(t, launch, 60)
-        if code != 0:
-            raise RuntimeError(f"Couldn't start the run on {t['name']}: {out.decode(errors='replace').strip()[-300:]}")
-        self._line(run, f"Started on {t['name']} in {rdir}; it keeps running if the connection drops")
 
     async def _follow_ssh(self, run: dict) -> None:
         t = self.targets.get(run["target"])
@@ -605,10 +659,24 @@ class Lab:
                 if partial:
                     self._line(run, partial)
                 exit_code = int(exit_s) if exit_s.lstrip("-").isdigit() else -1
+                if exit_code != 0 and len(run.get("nodes") or []) > 1:
+                    await self._other_node_tails(run)
                 if not run.get("stop_requested"):
                     await self._fetch_output(run, t, q)
                 return self._finish(run, exit_code, None if exit_s != "-" else "The run stopped without an exit code")
             await asyncio.sleep(3)
+
+    async def _other_node_tails(self, run: dict) -> None:
+        """When a cluster run fails, show what the other machines said."""
+        for tid in (run.get("nodes") or [])[1:]:
+            t = self.targets.get(tid)
+            rdir = (run.get("node_dirs") or {}).get(tid)
+            if not t or not rdir:
+                continue
+            code, out = await self.ssh(t, f"tail -n 15 {self._q(rdir)}/log.txt 2>/dev/null", 30)
+            self._line(run, f"--- last lines from {t['name']} ---")
+            for line in out.decode(errors="replace").splitlines():
+                self._line(run, "  " + line)
 
     async def _fetch_output(self, run: dict, t: dict, q: str) -> None:
         job = self.run_dir(run["id"]) / "job"
@@ -626,11 +694,11 @@ class Lab:
         if run["target"] == "local":
             await _run(["docker", "stop", "-t", "15", f"mnx-run-{rid}"], 60)
         else:
-            t = self.targets.get(run["target"])
-            rdir = run.get("remote_dir")
-            if t and rdir:
-                q = shlex.quote(rdir) if not rdir.startswith("~/") else "~/" + shlex.quote(rdir[2:])
-                await self.ssh(t, f"kill -TERM -$(cat {q}/.pid) 2>/dev/null; true", 30)
+            dirs = run.get("node_dirs") or {run["target"]: run.get("remote_dir")}
+            for tid, rdir in dirs.items():
+                t = self.targets.get(tid)
+                if t and rdir:
+                    await self.ssh(t, f"kill -TERM -$(cat {self._q(rdir)}/.pid) 2>/dev/null; true", 30)
         self._mark(run)
 
     def _finish(self, run: dict, exit_code: int, error: str | None = None) -> None:
@@ -651,9 +719,14 @@ class Lab:
         if error:
             self._line(run, f"[{error}]")
         self._line(run, f"=== {run['status']} (exit {exit_code})")
+        run.setdefault("stages", {})["end"] = time.time()
         if run["status"] == "succeeded":
             try:
-                self.register_model(run)
+                model = self.register_model(run)
+                bp = self.models.get(run.get("blueprint") or "")
+                if bp and bp.get("kind") == "blueprint":
+                    bp["trained_model"] = model["id"]
+                    _write(MODELS / bp["id"] / "model.json", bp)
             except Exception as exc:
                 self._line(run, f"[Couldn't add the model to the registry: {exc}]")
         fh = self._logs.pop(run["id"], None)
@@ -662,6 +735,11 @@ class Lab:
         self.watchers.pop(run["id"], None)
         self._save_run(run)
         self._changed()
+        if self.on_finish:
+            try:
+                self.on_finish(run)
+            except Exception:
+                pass
 
     async def delete_run(self, rid: str) -> None:
         run = self.runs[rid]

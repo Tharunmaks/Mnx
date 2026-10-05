@@ -101,29 +101,36 @@ its CPU, memory and disk. Watch the Storage chip on each Cell; on the Oracle fre
 
 ## Create a model from scratch, in the chat, with a swarm of Bees
 
-Say **“create a 50M parameter model for stories”** (any size from 1M to 2T) and the Queen hands the
-job to four Bees, each posting its own steps in the conversation:
+Say **“create a 101.3 billion parameter model AI”** (any size from 1M up to **500B**, the maximum the Hive
+will build; bigger requests are capped at 500B) and the Queen hands the job to a swarm of Bees, each
+posting its own steps in the conversation:
 
 | Bee | What it does |
 | --- | --- |
-| **Architect** | Designs a real Qwen2-style transformer for that size (layers, width, heads, vocabulary, context) and says what it takes: weights, training memory, a sensible token budget, time on your hardware, and the GPUs/time/cost of a proper setup. |
-| **Data** | Asks what to learn from: a public Hugging Face dataset (suggested from the purpose: stories, code, chat, Tamil Wikipedia…), your own file, web pages (it asks the **Browser Bee** to read them), or built-in demo text. Reports how many tokens that is. |
-| **Cloud** | Picks where to train: this server, an SSH server, or **rents a GPU on RunPod** from inside the chat (shows the price, asks first). Checks the model fits; if not, offers the largest size that does, or saves a **blueprint**. Then starts the run and posts the live card. |
-| **Eval** | When training ends, the card shows the held-out perplexity and sample text the model wrote. |
+| **Reader** | Identifies the request. If you didn't say what the AI is for, it asks: *“That's a big one — I'll try. Reason and what should the AI do?”* (e.g. “a maximum coding AI”). Also reads how many prompts to test with (“test it with 1 million prompts”). |
+| **Architect** | Designs a real Qwen2-style transformer for that size (layers, width, heads, vocabulary, context) and what it takes: weights, training memory, token budget, time on your hardware, the GPUs/time/cost of a proper setup. The blueprint is **always saved** in the Lab's Models tab, so nothing is lost if training waits. |
+| **Browser** | Searches for data about the purpose: for a coding AI it picks The Stack and lists the code languages to add (editable), for Tamil a Tamil Wikipedia dump, for stories TinyStories… Reads web pages when you give links. |
+| **Data** | Gathers the text: public Hugging Face datasets (one per code language), your own file, web pages, or built-in demo text, and reports how many tokens that is. |
+| **GPU** | Opens cloud Docker and GPUs. Offers this server, every connected SSH server, **all connected servers together as one cluster** (multi-node torchrun), connecting another server, or **renting GPUs on RunPod** from the chat. If nothing holds the model yet it never just stops at the blueprint: it asks to connect more servers, rent, make it smaller, or keep the blueprint for later (“train the 100B blueprint” picks it up). |
+| **Coding** | Writes the files of the run (train.py, serve.py, params.json, README.md, run scripts) and posts a **Files** card: press *Show* on any file to read it in the chat. |
+| **Cloud** | Trains it on the live card: stages (fetching data → tokenizing → training → saving → testing with prompts), loss and tokens/s charts. Training keeps going when you close the app. |
+| **Eval** | When training ends it tests the model with N held-out prompts (default 1,000) and posts the report in the same chat: how long adding data, training and testing took, next-token accuracy, perplexity, then **“Your model is ready”** and *“Stabilizing network · turning off Bees”*. |
 
 Then say **“add data to my model”** (or “feed these pages into my stories model”) and the Data Bee gathers
-more text while the Cloud Bee continues training the existing model on it (lower learning rate; saved as a
-new version). “stop renting” stops rented GPUs.
+more text while the GPU Bee finds hardware and the Cloud Bee continues training the existing model on it
+(lower learning rate; saved as a new version). “stop renting” stops rented GPUs.
 
-Honest limits: the Architect designs any size, and the training recipe handles one GPU, several GPUs on
-one machine (torchrun with DDP/FSDP) or CPU. Tiny models (1M–50M) train on a CPU in minutes. A 7B model needs
-about 125 GB of GPU memory; a 2T model needs ~4 TB of weights and hundreds of thousands of GPU-months, so the
-Cloud Bee will tell you that and save the blueprint instead of pretending. Training across several
-machines at once isn't built yet.
+Honest limits: the Architect designs any size up to 500B, and the training recipe handles a CPU, one GPU,
+several GPUs on one machine (torchrun with DDP/FSDP) and **several machines at once** (the GPU Bee's
+“all connected servers together” option; the first server is the rendezvous master on port 29400, which the
+others must reach). Tiny models (1M–50M) train on a CPU in minutes. A 7B model needs about 125 GB of GPU
+memory; a 100B model needs about 1.8 TB (23 × 80 GB GPUs, three machines of eight) and weeks on them; the
+GPU Bee tells you the numbers and waits for the hardware rather than pretending.
 
 The recipe behind it is `hive/recipes/llm-pretrain/` (also on the Lab's Train tab as “Create a model from
 scratch”): it trains its own tokenizer on your data, builds the model from `hive/architect.py`, streams
-Hugging Face datasets, holds out 2% for evaluation and writes `eval.json` with perplexity and samples.
+Hugging Face datasets (several at once, one folder per code language), holds out 2% for evaluation, tests
+with the requested number of prompts and writes `eval.json` with accuracy, perplexity and samples.
 
 ## Train and run models from the chat
 
@@ -161,7 +168,7 @@ Open **Cloud Bee · Lab** in the left rail.
    | --- | --- | --- | --- |
    | Text classifier | Sort text into labels (mood, spam, intent) | CSV `text,label` | `POST /predict {"text": …}` |
    | Spreadsheet predictor | Predict a column (price, yes/no) | CSV | `POST /predict {"row": {…}}` |
-   | Create a model from scratch | A brand-new language model at any size (1M–2T); trains its own tokenizer | text files and/or a Hugging Face dataset | OpenAI-compatible `/v1/chat/completions` |
+   | Create a model from scratch | A brand-new language model at any size (1M–500B); trains its own tokenizer | text files and/or a Hugging Face dataset | OpenAI-compatible `/v1/chat/completions` |
 | Chat model fine-tune (LoRA) | Your style and knowledge, on any Hugging Face base, **including your own Mnx** | JSONL chats | OpenAI-compatible `/v1/chat/completions` |
    | Your own script | Anything | your `train.py` (+ `requirements.txt`, `serve.py`) | your `serve.py` |
 

@@ -1,13 +1,19 @@
-"""Create a language model from scratch (or keep training an existing one) at any size.
+"""Create a language model from scratch (or keep training an existing one) at any size up to 500B.
 
-Mnx Lab protocol: params.json + data/ in, output/ out, MNX_METRIC / MNX_RESULT lines.
+Mnx Lab protocol: params.json + data/ in, output/ out, MNX_METRIC / MNX_RESULT / MNX_STAGE lines.
 - Designs a Qwen2-style transformer for the requested parameter count (architect.py),
   or loads an existing model when `init_from` is set (continued training / "add data").
 - Trains its own byte-level BPE tokenizer on the data (no download needed), or uses a
   Hugging Face tokenizer when `tokenizer` is a repo id.
-- Data: text/markdown/jsonl/csv files in data/, and/or a Hugging Face dataset (streamed).
-- One GPU, several GPUs (torchrun + DDP/FSDP), or CPU. bf16 on GPU, fp32 on CPU.
-- Holds out 2% for evaluation, reports perplexity and sample generations at the end.
+- Data: text/markdown/jsonl/csv files in data/, and/or Hugging Face datasets (streamed).
+- One GPU, several GPUs on one machine, or several machines (torchrun; DDP for small
+  models, FSDP for big ones), or CPU. bf16 on GPU, fp32 on CPU.
+- Holds out 2% of the documents, then tests the model on N held-out prompts (next-token
+  accuracy and perplexity) and writes sample generations.
+
+Cluster runs: the Lab sets MNX_NNODES, MNX_NODE_RANK, MNX_MASTER_ADDR and MNX_MASTER_PORT on
+every machine; this script re-launches itself with torchrun and the machines rendezvous on
+the master's port (it must be reachable from the other nodes).
 """
 
 from __future__ import annotations
@@ -39,28 +45,50 @@ def metric(**kw) -> None:
     log("MNX_METRIC " + json.dumps(kw))
 
 
-# ---------- multi-GPU: re-launch under torchrun when there are several GPUs ----------
+def stage(name: str) -> None:
+    log(f"MNX_STAGE {name}")
+
+
+# ---------- multi-GPU / multi-machine: re-launch under torchrun ----------
 import torch  # noqa: E402
 
-if "RANK" not in os.environ and torch.cuda.is_available() and torch.cuda.device_count() > 1 and not P.get("single_gpu"):
-    n = torch.cuda.device_count()
-    print(f"{n} GPUs found: launching with torchrun", flush=True)
-    sys.exit(subprocess.call([sys.executable, "-m", "torch.distributed.run", "--standalone", f"--nproc_per_node={n}", *sys.argv]))
+NNODES = int(os.environ.get("MNX_NNODES", "1") or 1)
+if "RANK" not in os.environ and not P.get("single_gpu"):
+    nproc = torch.cuda.device_count() if torch.cuda.is_available() else 1
+    if NNODES > 1 or nproc > 1:
+        args = [sys.executable, "-m", "torch.distributed.run", f"--nnodes={NNODES}", f"--nproc_per_node={nproc}"]
+        if NNODES > 1:
+            args += [f"--node_rank={os.environ.get('MNX_NODE_RANK', '0')}", "--rdzv_backend=c10d",
+                     f"--rdzv_endpoint={os.environ.get('MNX_MASTER_ADDR', '127.0.0.1')}:{os.environ.get('MNX_MASTER_PORT', '29400')}",
+                     "--rdzv_id=mnx", "--max_restarts=0"]
+            print(f"Node {os.environ.get('MNX_NODE_RANK', '0')} of {NNODES}: joining the cluster through "
+                  f"{os.environ.get('MNX_MASTER_ADDR')}:{os.environ.get('MNX_MASTER_PORT', '29400')} with {nproc} process(es)", flush=True)
+        else:
+            args += ["--standalone"]
+            print(f"{nproc} GPUs found: launching with torchrun", flush=True)
+        sys.exit(subprocess.call(args + sys.argv))
 
 if WORLD > 1:
     import torch.distributed as dist
     dist.init_process_group("nccl" if torch.cuda.is_available() else "gloo")
-    torch.cuda.set_device(RANK % max(1, torch.cuda.device_count()))
+    if torch.cuda.is_available():
+        torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
 
-DEVICE = torch.device("cuda", RANK % max(1, torch.cuda.device_count())) if torch.cuda.is_available() else torch.device("cpu")
+LOCAL = int(os.environ.get("LOCAL_RANK", "0"))
+DEVICE = torch.device("cuda", LOCAL) if torch.cuda.is_available() else torch.device("cpu")
 DTYPE = torch.bfloat16 if DEVICE.type == "cuda" else torch.float32
 torch.manual_seed(42)
 random.seed(42)
+if WORLD > 1:
+    log(f"Distributed: {WORLD} processes on {NNODES} machine(s), backend {'nccl' if DEVICE.type == 'cuda' else 'gloo'}")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import architect  # noqa: E402  (copied next to this script by the Lab)
 
 # ---------- data ----------
+stage("data")
+
+
 def read_text_files() -> list[str]:
     docs: list[str] = []
     col = P.get("text_column") or "text"
@@ -93,17 +121,32 @@ def read_text_files() -> list[str]:
     return docs
 
 
-def read_hf_dataset() -> list[str]:
-    name = (P.get("hf_dataset") or "").strip()
-    if not name:
-        return []
+def dataset_sources() -> list[dict]:
+    sources = []
+    if (P.get("hf_dataset") or "").strip():
+        sources.append({"name": P["hf_dataset"].strip(), "config": (P.get("hf_config") or "").strip() or None,
+                        "column": (P.get("text_column") or "").strip(), "max_examples": int(P.get("max_examples") or 20000)})
+    extra = (P.get("hf_datasets") or "").strip()
+    if extra:
+        try:
+            for s in json.loads(extra):
+                if isinstance(s, dict) and s.get("name"):
+                    sources.append({"name": s["name"], "config": s.get("config") or None, "data_dir": s.get("data_dir") or None,
+                                    "column": s.get("column") or "", "max_examples": int(s.get("max_examples") or P.get("max_examples") or 20000),
+                                    "split": s.get("split") or "train"})
+        except (ValueError, TypeError) as exc:
+            sys.exit(f"hf_datasets isn't a valid JSON list: {exc}")
+    return sources
+
+
+def read_hf_dataset(src: dict) -> list[str]:
     from datasets import load_dataset
-    cfg = (P.get("hf_config") or "").strip() or None
-    split = P.get("hf_split") or "train"
-    n_max = int(P.get("max_examples") or 20000)
-    log(f"Streaming dataset {name}{' (' + cfg + ')' if cfg else ''}, up to {n_max:,} rows …")
-    ds = load_dataset(name, cfg, split=split, streaming=True, token=os.getenv("HF_TOKEN") or None)
-    col = P.get("text_column") or ""
+    name, cfg, n_max = src["name"], src.get("config"), src["max_examples"]
+    where = f"{name}{' (' + cfg + ')' if cfg else ''}{' ' + src['data_dir'] if src.get('data_dir') else ''}"
+    log(f"Streaming dataset {where}, up to {n_max:,} rows …")
+    ds = load_dataset(name, cfg, split=src.get("split") or P.get("hf_split") or "train", streaming=True,
+                      data_dir=src.get("data_dir"), token=os.getenv("HF_TOKEN") or None)
+    col = src.get("column") or ""
     docs = []
     for i, row in enumerate(ds):
         if i >= n_max:
@@ -119,10 +162,13 @@ def read_hf_dataset() -> list[str]:
             docs.append(v)
         if i and i % 5000 == 0:
             log(f"  {i:,} rows …")
+    log(f"  {len(docs):,} documents from {where}")
     return docs
 
 
-docs = read_text_files() + read_hf_dataset()
+docs = read_text_files()
+for src in dataset_sources():
+    docs += read_hf_dataset(src)
 if not docs:
     sys.exit("No training text found: upload .txt/.md/.jsonl/.csv files or set a Hugging Face dataset")
 random.shuffle(docs)
@@ -142,6 +188,7 @@ if init_from:
     log(f"Continuing from {init_from}")
 else:
     target = float(P.get("custom_params") or 0) or architect.parse_size(str(P.get("size") or "50M")) or 5e7
+    target = min(target, architect.MAX_PARAMS)
     tok_id = (P.get("tokenizer") or "own").strip()
     vocab = None
     if tok_id.lower() not in ("own", "auto", ""):
@@ -175,6 +222,7 @@ if tok.pad_token_id is None:
 SEQ = int(arch["seq_len"])
 
 # ---------- tokenize ----------
+stage("tokenizing")
 log("Tokenizing …")
 ids: list[int] = []
 eos = tok.eos_token_id if tok.eos_token_id is not None else 0
@@ -211,6 +259,7 @@ log(f"Budget: {budget:,} tokens in {steps_total:,} steps of {batch_tokens:,} tok
 # ---------- model ----------
 from transformers import AutoModelForCausalLM, Qwen2Config  # noqa: E402
 
+hf_cfg = None
 if init_from:
     model = AutoModelForCausalLM.from_pretrained(init_from, torch_dtype=torch.float32)
 else:
@@ -224,7 +273,7 @@ if n_params >= 4e8 or P.get("grad_checkpoint"):
     model.gradient_checkpointing_enable()
 model.to(DEVICE)
 
-use_fsdp = WORLD > 1 and n_params >= 8e8
+use_fsdp = WORLD > 1 and n_params >= 8e8 and DEVICE.type == "cuda"
 if WORLD > 1:
     if use_fsdp:
         from functools import partial
@@ -238,7 +287,7 @@ if WORLD > 1:
     else:
         from torch.nn.parallel import DistributedDataParallel as DDP
         model = DDP(model, device_ids=[DEVICE.index] if DEVICE.type == "cuda" else None)
-        log(f"Using DDP across {WORLD} GPUs")
+        log(f"Using DDP across {WORLD} processes")
 
 # micro-batch: sequences per forward pass on each device
 mb = int(P.get("micro_batch") or 0) or (16 if n_params < 5e7 else 8 if n_params < 5e8 else 4 if n_params < 3e9 else 1)
@@ -261,8 +310,9 @@ def lr_at(step: int) -> float:
 rng = np.random.default_rng(42 + RANK)
 
 
-def batch(arr: np.ndarray, n: int):
-    starts = rng.integers(0, len(arr) - SEQ - 1, size=n)
+def batch(arr: np.ndarray, n: int, starts=None):
+    if starts is None:
+        starts = rng.integers(0, len(arr) - SEQ - 1, size=n)
     x = torch.stack([torch.from_numpy(arr[s:s + SEQ]) for s in starts]).to(DEVICE)
     y = torch.stack([torch.from_numpy(arr[s + 1:s + SEQ + 1]) for s in starts]).to(DEVICE)
     return x, y
@@ -285,7 +335,7 @@ def evaluate(n_batches: int = 8) -> float:
 
 
 # ---------- train ----------
-log("MNX_STAGE training")
+stage("training")
 model.train()
 t0 = time.time()
 tokens_seen = 0
@@ -316,17 +366,18 @@ for step in range(steps_total):
         if (step + 1) % eval_every == 0 or step == steps_total - 1:
             m["eval_loss"] = round(evaluate(), 4)
         metric(**m)
+train_seconds = time.time() - t0
 
 # ---------- save ----------
+stage("saving")
 log("Saving …")
 if use_fsdp:
     from torch.distributed.fsdp import FullStateDictConfig, StateDictType
     with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, FullStateDictConfig(offload_to_cpu=True, rank0_only=True)):
         state = model.state_dict()
     if MAIN:
-        base = AutoModelForCausalLM.from_config(model.module.config) if hasattr(model, "module") else None
-        if base is None:
-            base = AutoModelForCausalLM.from_config(Qwen2Config(**{k: v for k, v in hf_cfg.items() if k != "architectures"}))
+        base = AutoModelForCausalLM.from_pretrained(init_from, torch_dtype=torch.float32) if init_from else \
+            AutoModelForCausalLM.from_config(Qwen2Config(**{k: v for k, v in hf_cfg.items() if k != "architectures"}))
         base.load_state_dict(state)
         base.save_pretrained(f"{OUT}/model", safe_serialization=True)
 elif MAIN:
@@ -334,13 +385,45 @@ elif MAIN:
 if MAIN:
     tok.save_pretrained(f"{OUT}/model")
 
-# ---------- evaluate + samples ----------
+# ---------- test with held-out prompts + samples ----------
 result = {"params": n_params, "params_text": arch["params_text"], "tokens": tokens_seen, "steps": steps_total,
-          "minutes": round((time.time() - t0) / 60, 1), "from_scratch": not init_from}
+          "minutes": round(train_seconds / 60, 1), "from_scratch": not init_from}
 if MAIN:
-    final_loss = evaluate(16)
-    result["eval_loss"] = round(final_loss, 4)
-    result["perplexity"] = round(math.exp(min(final_loss, 20)), 2)
+    stage("testing")
+    n_test = int(P.get("test_prompts") or 0)
+    pool = hold_arr if len(hold_arr) > SEQ + 2 else train_arr
+    t1 = time.time()
+    if n_test > 0:
+        log(f"Testing with {n_test:,} held-out prompts …")
+        model.eval()
+        correct = total_tok = 0
+        loss_sum = 0.0
+        done = 0
+        test_rng = np.random.default_rng(7)
+        tb = min(mb, 8)
+        with torch.no_grad():
+            while done < n_test:
+                n = min(tb, n_test - done)
+                starts = test_rng.integers(0, len(pool) - SEQ - 1, size=n)
+                x, y = batch(pool, n, starts)
+                with torch.autocast(device_type=DEVICE.type, dtype=DTYPE, enabled=DEVICE.type == "cuda"):
+                    out = model(input_ids=x)
+                logits = out.logits.float()
+                loss_sum += torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1)).item() * n
+                correct += (logits.argmax(-1) == y).sum().item()
+                total_tok += y.numel()
+                done += n
+                if done % max(tb * 25, 1) == 0 or done == n_test:
+                    log(f"  tested {done:,}/{n_test:,} prompts")
+        test_loss = loss_sum / max(n_test, 1)
+        result.update({"test_prompts": n_test, "test_accuracy": round(100 * correct / max(total_tok, 1), 2),
+                       "perplexity": round(math.exp(min(test_loss, 20)), 2), "eval_loss": round(test_loss, 4),
+                       "test_minutes": round((time.time() - t1) / 60, 1)})
+        log(f"Tested with {n_test:,} prompts: next-token accuracy {result['test_accuracy']}%, perplexity {result['perplexity']}")
+    else:
+        final_loss = evaluate(16)
+        result["eval_loss"] = round(final_loss, 4)
+        result["perplexity"] = round(math.exp(min(final_loss, 20)), 2)
     samples = []
     prompts = [p for p in str(P.get("sample_prompts") or "Once upon a time|The|def ").split("|") if p.strip()][:4]
     try:
@@ -356,8 +439,8 @@ if MAIN:
         del gen_model
     except Exception as exc:
         log(f"(Couldn't generate samples: {exc})")
-    json.dump({"eval_loss": final_loss, "perplexity": result["perplexity"], "samples": samples, "arch": arch,
-               "tokens": tokens_seen}, open(f"{OUT}/eval.json", "w"), indent=2)
+    json.dump({"result": result, "samples": samples, "arch": arch, "tokens": tokens_seen},
+              open(f"{OUT}/eval.json", "w"), indent=2)
     json.dump({"base_model": init_from or "from scratch", "merged": True, "from_scratch": not init_from, "arch": arch},
               open(f"{OUT}/mnx_model.json", "w"))
     result["samples"] = [{"prompt": s["prompt"], "text": s["text"][:160]} for s in samples[:3]]

@@ -2,11 +2,12 @@
 // trained model you can start and talk to right in the conversation.
 // They read live state from the server, so they stay correct after a reload.
 
-import { api, fmtDuration, h, toast } from "./shared.js";
+import { api, fmtDuration, fmtSize, gatewayBase, getSettings, h, toast } from "./shared.js";
 import { drawCharts, playgroundFor } from "./labui.js";
 
 const ACTIVE = new Set(["queued", "preparing", "running"]);
-const STAGE = { preparing: "Getting the server ready", installing: "Installing PyTorch and friends", training: "Training" };
+const STAGE = { preparing: "Getting the server ready", installing: "Installing PyTorch and friends", data: "Fetching the data",
+  tokenizing: "Tokenizing", training: "Training", saving: "Saving the model", testing: "Testing with prompts" };
 
 // Poll while the card is on screen; stop once it's gone for good.
 function poll(el, fn, every) {
@@ -50,7 +51,10 @@ export function runCard(runId) {
       const detail = r.stage !== "training" && r.last_line ? ` · ${r.last_line.slice(0, 90)}` : "";
       line.textContent = `${STAGE[r.stage] || "Starting"}${prog ? ` · ${prog}` : ""}${detail} · ${took}`;
     } else if (r.status === "succeeded") {
-      line.textContent = `Done in ${took}.${r.result?.examples ? ` Learned from ${r.result.examples} examples.` : ""}`;
+      const res = r.result || {};
+      line.textContent = `Done in ${took}.${res.examples ? ` Learned from ${res.examples} examples.` : ""}`
+        + (res.test_prompts ? ` Tested with ${res.test_prompts.toLocaleString()} prompts: accuracy ${res.test_accuracy}%, perplexity ${res.perplexity}.` : "")
+        + (r.nodes ? ` Trained on a cluster of ${r.nodes.length} machines.` : "");
       if (r.result && (r.result.perplexity != null || r.result.samples) && !card.querySelector(".eval-box")) {
         card.insertBefore(evalBox(r.result), actions);
       }
@@ -93,6 +97,31 @@ function evalBox(res) {
 function fmtTokens(n) {
   if (!n) return "0";
   return n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}K` : String(n);
+}
+
+// Coding Bee's files for a run: click Show to read any of them.
+export function filesCard(ev) {
+  const list = h("div", { class: "job-files" });
+  for (const f of ev.files || []) {
+    const pre = h("pre", { class: "result-box hidden" });
+    const btn = h("button", { class: "btn", type: "button", onclick: async () => {
+      if (!pre.classList.contains("hidden")) { pre.classList.add("hidden"); btn.textContent = "Show"; return; }
+      btn.disabled = true;
+      try {
+        const res = await fetch(`${gatewayBase()}/api/lab/runs/${ev.run}/file?path=${encodeURIComponent(f.path)}`,
+          { headers: { Authorization: `Bearer ${getSettings().token}` } });
+        pre.textContent = res.ok ? await res.text() : `Couldn't read ${f.path}`;
+        pre.classList.remove("hidden");
+        btn.textContent = "Hide";
+      } catch (e) { toast(e.message, "error"); }
+      btn.disabled = false;
+    } }, "Show");
+    list.append(h("div", { class: "job-file" }, h("span", { class: "mono" }, f.path), h("span", { class: "hint" }, fmtSize(f.size)), btn), pre);
+  }
+  return h("div", { class: "card lab-card" },
+    h("div", { class: "card-head" }, h("span", { class: "svc" }, "{ }"), h("span", { style: "flex:1" }, `Files for this run (${(ev.files || []).length})`),
+      h("a", { class: "hint", href: "lab.html#runs" }, "Lab")),
+    list);
 }
 
 export function modelCard(modelId) {
