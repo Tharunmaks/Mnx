@@ -1006,6 +1006,19 @@ def layers_plan(mid: str, ram_gb: float = 8, storage_free_gb: float | None = Non
     return {**p, "model": mid, "name": m["name"], "params": params, "params_text": architect.fmt_params(params), "text": layers.plan_text(p, m["name"])}
 
 
+@api.get("/lab/models/{mid}/lpu/plan")
+def lpu_plan(mid: str, chips: int = 1, seq: int = 64):
+    """What running this model on `chips` virtual LPUs costs: exact compiled cycles, SRAM, resident or streamed weights."""
+    from hive import architect, lpu
+    m, model_dir, _ = _model_dirs(mid)
+    if not (model_dir / "config.json").exists():
+        raise HTTPException(400, "This model has no config.json to compile from")
+    cfg = json.loads((model_dir / "config.json").read_text())
+    params = (m.get("result") or {}).get("params") or (m.get("arch") or {}).get("params") or 0
+    p = lpu.plan(cfg, params, seq=max(8, min(int(seq), 2048)), chips=max(1, min(int(chips), 65536)))
+    return {**p, "model": mid, "name": m["name"], "params": params, "params_text": architect.fmt_params(params), "text": lpu.plan_text(p, m["name"])}
+
+
 @api.get("/lab/models/{mid}/layers/{name}")
 def layers_file(mid: str, name: str):
     from hive import layers
@@ -1243,6 +1256,12 @@ def drone_script():
 def stream_script():
     """The layer-by-layer runner the phone fetches before a streaming job."""
     return FileResponse(ROOT / "hive" / "recipes" / "llm-pretrain" / "stream.py", media_type="text/x-python")
+
+
+@app.get("/lpu.py")
+def lpu_script():
+    """The virtual LPU (simulator + compiler), so a phone can run streamed layers on it: stream.py run --engine lpu."""
+    return FileResponse(ROOT / "hive" / "lpu.py", media_type="text/x-python")
 
 
 @app.get("/")

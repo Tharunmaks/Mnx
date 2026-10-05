@@ -121,7 +121,7 @@ adb connect localhost:&lt;port&gt;</pre>
                 <p class="hint err hidden" id="aiNeeds">This phone can't run models yet. In Termux: <code>pip install torch transformers safetensors</code>, then restart the drone.</p>
                 <select class="input" id="aiModel" aria-label="Model"></select>
                 <p class="hint" id="aiPlan"></p>
-                <form class="row" id="aiRunForm"><input class="input" id="aiPrompt" placeholder="Prompt, e.g. Once upon a time" autocomplete="off"><button class="btn primary" type="submit">Run</button></form>
+                <form class="row" id="aiRunForm"><input class="input" id="aiPrompt" placeholder="Prompt, e.g. Once upon a time" autocomplete="off"><select class="input" id="aiEngine" aria-label="Engine" style="max-width:190px"><option value="torch">Phone CPU (PyTorch)</option><option value="lpu">Virtual LPU (cycle-accurate)</option></select><button class="btn primary" type="submit">Run</button></form>
                 <form class="row" id="aiTrainForm"><input class="input" id="aiSteps" type="number" min="1" max="1000" value="5" style="max-width:90px" aria-label="Steps"><button class="btn" type="submit">Train steps</button><button class="btn danger" type="button" id="aiStop">Stop</button></form>
                 <pre class="result-box" id="aiOut">Nothing running on the phone.</pre>
               </div>

@@ -271,10 +271,54 @@ class Streamer:
 # ---------- commands ----------
 def cmd_run(st: Streamer, a) -> None:
     t0 = time.time()
-    text = st.generate(a.prompt, a.max_new, a.temperature)
+    extra = {}
+    if getattr(a, "engine", "torch") == "lpu":
+        text, extra = run_lpu(st, a)
+    else:
+        text = st.generate(a.prompt, a.max_new, a.temperature)
     log("MNX_RESULT " + json.dumps({"prompt": a.prompt, "text": text, "seconds": round(time.time() - t0, 1),
-                                    "fetched_mb": round(st.store.fetched / 1e6, 1), "layers": st.n_layers}))
+                                    "fetched_mb": round(st.store.fetched / 1e6, 1), "layers": st.n_layers, **extra}))
     log(text)
+
+
+def run_lpu(st: Streamer, a) -> tuple[str, dict]:
+    """Generate on the virtual LPU (the Hive's hive/lpu.py, fetched to sit next to this file): each streamed layer's weights
+    are cut to the chips' shards and the compiled schedule runs cycle by cycle, with real multiplies."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lpu.py")
+    try:
+        req = urllib.request.Request(a.hive.rstrip("/") + "/lpu.py", headers={"Authorization": f"Bearer {a.token}"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            open(path, "wb").write(r.read())
+    except Exception as exc:
+        if not os.path.exists(path):
+            raise SystemExit(f"couldn't fetch lpu.py from the Hive: {exc}")
+    spec = importlib.util.spec_from_file_location("lpu", path)
+    lpu = importlib.util.module_from_spec(spec)
+    sys.modules["lpu"] = lpu  # dataclasses resolve their annotations through sys.modules
+    spec.loader.exec_module(lpu)
+
+    def load_layer(i: int) -> dict:
+        return lpu.strip_layer_prefix({k: v.float().numpy() for k, v in st.store.layer(f"layer_{i:04d}").items()}, i)
+
+    def shared() -> dict:
+        return {k: v.float().numpy() for k, v in st.store.layer("shared").items()}
+
+    ids = st.tok(a.prompt, add_special_tokens=False)["input_ids"] or [st.tok.bos_token_id or 0]
+    m = lpu.Model(st.config.to_dict(), load_layer, shared, seq=len(ids) + a.max_new, chips=a.chips)
+    P = m.plan
+    log(f"Virtual LPU: {P.chips} chip(s), {P.cycles_per_token:,} cycles per token, weights {'resident' if P.resident else 'streamed every token'}, "
+        f"{P.instructions_per_token} instructions per token")
+
+    def on_token(n, _t, s):
+        metric(token=n, layers=st.n_layers, seconds=round(s["sim_seconds_per_token"], 2), fetched_mb=round(st.store.fetched / 1e6, 1),
+               cycles=s["cycles_per_token"], chip_us=round(s["chip_seconds_per_token"] * 1e6, 1))
+
+    out = m.generate(ids, a.max_new, a.temperature, eos=st.tok.eos_token_id, on_token=on_token)
+    s = m.token_stats()
+    return st.tok.decode(out, skip_special_tokens=True), {"engine": "lpu", "chips": P.chips, "cycles_per_token": P.cycles_per_token,
+                                                            "chip_tokens_per_second": round(s["chip_tokens_per_second"], 1),
+                                                            "sim_seconds_per_token": round(s["sim_seconds_per_token"], 2)}
 
 
 def read_text(st: Streamer, a) -> str:
@@ -348,6 +392,8 @@ def main() -> None:
     sub = ap.add_subparsers(dest="mode", required=True)
     r = sub.add_parser("run"); r.add_argument("--prompt", default="Once upon a time"); r.add_argument("--max-new", type=int, default=40)
     r.add_argument("--temperature", type=float, default=0.7)
+    r.add_argument("--engine", default="torch", choices=["torch", "lpu"], help="lpu: run the layers on the virtual chip simulator")
+    r.add_argument("--chips", type=int, default=1, help="virtual LPU chips (with --engine lpu)")
     t = sub.add_parser("train"); t.add_argument("--text"); t.add_argument("--sample", action="store_true")
     t.add_argument("--steps", type=int, default=10); t.add_argument("--lr", type=float, default=1e-3); t.add_argument("--seq-len", type=int, default=256)
     s = sub.add_parser("serve"); s.add_argument("--port", type=int, default=8765)

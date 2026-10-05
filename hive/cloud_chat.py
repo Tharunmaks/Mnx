@@ -31,6 +31,9 @@ ADD_DATA = re.compile(r"\b(add|feed|give|load|put|upload)\b.*\b(data|dataset|kno
 PURPOSE = re.compile(r"\b(?:for|about|that (?:writes|knows|speaks|does|can)|which|to write|on)\s+(.+)$", re.I)
 RENT_STOP = re.compile(r"\b(stop|end|cancel|kill)\b.*\b(rent\w*|pod|gpu machine|cloud machine)\b", re.I)
 ON_PHONE = re.compile(r"\b(?:on|to|in|using)\s+(?:my\s+|the\s+)?(?:phone|mobile|android|termux)\b", re.I)
+ON_LPU = re.compile(r"\b(?:on|to|in|using|with)\s+(?:my\s+|the\s+|an?\s+)?(?:(\d+)\s+)?(?:virtual\s+)?"
+                    r"(?:lpus?(?:\s+chips?)?|groq(?:\s+chips?)?|virtual\s+(?:chips?|silicon)|chip\s+simulator)\b", re.I)
+ACT = r"\b(run|train|teach|start|test|chat|generate|serve|simulate|fine[\s-]?tune)\b"
 RUN = re.compile(r"\b(run|start|deploy|serve|launch|chat with|talk to)\b.*\b(model|mnx|qwen|llama|gemma|phi|smollm|mistral|deepseek)\w*\b", re.I)
 SIZE_IN_TEXT = re.compile(r"\b(\d+(?:\.\d+)?)\s*([bm])\b", re.I)
 HF_ID = re.compile(r"\b([A-Za-z0-9][\w.-]*/[\w.-]+)\b")
@@ -47,20 +50,34 @@ class Intent:
     params: float | None = None  # exact parameter count for "create"
     purpose: str = ""
     test_prompts: int | None = None
+    engine: str = ""  # "lpu": the phone runs the streamed layers on the virtual chip
 
 
 def parse(text: str) -> Intent | None:
     t = " ".join(text.strip().split())
     pm = ON_PHONE.search(t)
-    if pm and re.search(r"\b(run|train|teach|start|test|chat|generate|serve|fine[\s-]?tune)\b", t, re.I):
+    lm = ON_LPU.search(t)
+    if pm and re.search(ACT, t, re.I):
         mode = "train" if re.search(r"\b(train|teach|fine[\s-]?tune)\b", t, re.I) else "run"
         rest = t[:pm.start()]
         sm = re.search(r"(\d+)\s*steps?", t, re.I)
         pr = re.search(r"(?:prompt|say|with|starting with)\s*[:\"“]\s*(.+?)[\"”]?$", t[pm.end():], re.I)
         rest = re.sub(r"^.*?\b(?:run|train|teach|start|test|chat with|generate with|serve|fine[\s-]?tune)\b", "", rest, flags=re.I)
         rest = re.sub(r"\d+\s*steps?", "", rest, flags=re.I)
+        if lm and lm.start() < pm.start():
+            rest = rest[:lm.start()]
+        query = " ".join(FILLER.sub(" ", ON_LPU.sub(" ", rest)).split())
+        return Intent("on_phone", model_query=query, purpose=mode, dataset=(pr.group(1).strip() if pr else ""),
+                      size_b=float(sm.group(1)) if sm else None, engine="lpu" if lm else "")
+    if lm and re.search(ACT, t, re.I):
+        mode = "train" if re.search(r"\b(train|teach|fine[\s-]?tune)\b", t, re.I) else "run"
+        cm = re.search(r"(\d+)\s*(?:lpu\s+|virtual\s+)?chips?\b", t, re.I)
+        chips = int(lm.group(1) or (cm.group(1) if cm else 1))
+        pr = re.search(r"(?:prompt|say|with|starting with)\s*[:\"“]\s*(.+?)[\"”]?$", t[lm.end():], re.I)
+        rest = re.sub(r"^.*?\b(?:run|train|teach|start|test|chat with|generate with|serve|simulate|fine[\s-]?tune)\b", "", t[:lm.start()], flags=re.I)
+        rest = re.sub(r"\d+\s*(?:lpu\s+|virtual\s+)?chips?\b", "", rest, flags=re.I)
         query = " ".join(FILLER.sub(" ", rest).split())
-        return Intent("on_phone", model_query=query, purpose=mode, dataset=(pr.group(1).strip() if pr else ""), size_b=float(sm.group(1)) if sm else None)
+        return Intent("on_lpu", model_query=query, purpose=mode, dataset=(pr.group(1).strip() if pr else ""), size_b=float(chips))
     if RENT_STOP.search(t):
         return Intent("rent_stop")
     if STOP.search(t):
@@ -144,7 +161,10 @@ async def handle(task: Task) -> bool:
         elif intent.kind == "on_phone":
             from . import phone_lab
             await phone_lab.on_phone(task, intent.purpose, intent.model_query, prompt=intent.dataset,
-                                     steps=int(intent.size_b) if intent.size_b else 10)
+                                     steps=int(intent.size_b) if intent.size_b else 10, engine=intent.engine)
+        elif intent.kind == "on_lpu":
+            from . import lpu_lab
+            await lpu_lab.on_lpu(task, intent.model_query, prompt=intent.dataset, chips=int(intent.size_b or 1), mode=intent.purpose)
     except asyncio.TimeoutError:
         await task.answer("I waited a long time for an answer, so I stopped here. Ask again whenever you're ready.")
     return True

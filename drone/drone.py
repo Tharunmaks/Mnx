@@ -203,6 +203,8 @@ class Drone:
         argv = [sys.executable, "-u", script, "--hive", base, "--token", self.args.token, "--model", model, mode]
         if mode == "run":
             argv += ["--prompt", str(a.get("prompt") or "Once upon a time")[:2000], "--max-new", str(int(a.get("max_new") or 40))]
+            if a.get("engine") == "lpu":
+                argv += ["--engine", "lpu", "--chips", str(max(1, min(int(a.get("chips") or 1), 16)))]
         elif mode == "train":
             argv += ["--steps", str(int(a.get("steps") or 10)), "--lr", str(float(a.get("lr") or 1e-3)), "--seq-len", str(int(a.get("seq_len") or 256))]
             if a.get("text_url"):

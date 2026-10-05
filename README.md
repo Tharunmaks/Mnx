@@ -267,6 +267,8 @@ model's answer may be in the playgrounds (Run it): 200 tokens on Low up to 1,920
 ## A 500B model on a phone: layer-by-layer streaming
 
 A phone can't hold a big model, so the Hive streams it **one layer at a time**. `hive/layers.py` splits a
+hive/lpu.py       Virtual LPU: cycle-accurate chip simulator (SRAM, matrix/vector units, links) + deterministic compiler + chip mesh
+hive/lpu_lab.py   "run my model on the lpu / on 8 lpu chips": plan card with compiled cycles, simulation, chip statistics
 saved model's safetensors into one file per transformer layer (no PyTorch needed on the server) and serves
 them at `/api/lab/models/<id>/layers/<layer>`; `stream.py` (fetched by the phone from `/stream.py`) runs the
 model with a single layer module in memory, loading layer 0's weights, running it, loading layer 1's weights
@@ -291,6 +293,52 @@ model in bf16 is 126 layers of about 7.9 GB, so it needs a 12–16 GB phone, and
 the whole 1 TB of weights, which is hours per token over Wi-Fi (minutes if the model fits on the phone's
 storage). A training step reads every layer twice and sends every layer back once. The plan card shows
 these numbers for the model and phone in front of you instead of pretending they are small.
+
+## A virtual LPU: cycle-accurate chip + deterministic compiler
+
+`hive/lpu.py` is a Groq-style Language Processing Unit written as software, and the compiler that schedules a
+transformer onto it. Nothing in it is a guess at runtime:
+
+- **Virtual silicon** (`Chip`): the only memory is SRAM, a banks × words 2-D array (230 MB of 16-bit words per
+  chip, like the model's own bf16 weights; the units compute in 32-bit). No caches: every access takes a fixed number of cycles.
+  Functional units are 2 matrix units (320×320 systolic arrays, weights stationary: fill, stream the rows through,
+  drain), 4 vector units (320 lanes), one move port per unit (SRAM → the unit's input), a host link (32 GB/s)
+  and chip-to-chip links (100 GB/s, fixed 450-cycle latency). A master tick loop advances one clock cycle per
+  iteration: instructions that end write their result into SRAM, instructions that start check their inputs are
+  there and their unit is free; if not, it stops with a `ScheduleError` (a compiler bug, never a stall). The loop
+  can skip idle cycles; the state after every cycle is identical either way.
+- **The brain** (`compile_model`): takes the model's shapes (Qwen2 / Llama decoder layers) and plans everything
+  up front: which SRAM address holds which tensor from which cycle (a static allocator with time, so a region is
+  reused only after its last reader has finished), and when every load, move, matmul, vector op, store, send and
+  receive starts and ends, on which unit. Weights that fit stay **resident** (loaded once); otherwise they
+  **stream** from the host every token, like the phone. The compiled program is replayed for every token.
+- **Virtual network** (`Network`): chips step in lockstep on one global clock and talk over fixed-latency
+  queues (no switches). A layer too big for one chip is spread over a group (whole heads and MLP rows per chip,
+  partial sums combined with a ring all-reduce over the links); groups form pipeline stages. The layout uses the
+  chip budget you give: `run my model on 8 lpu chips`.
+
+It runs the real weights: the simulated chips produce the same text as the model (bit-exact on one chip against a
+plain numpy forward pass before bf16 rounding; across chips the partial sums round differently, as on real hardware).
+
+How to use it:
+- Chat: **"run my stories model on the lpu"**, **"run stories on 8 lpu chips"**, or
+  `run the 1.28M model on 4 lpu chips with prompt "The cat"`. The LPU Bee compiles the model and shows the plan
+  (cycles per token, time on the chip, tokens/s, SRAM, resident or streamed, what the simulation costs here),
+  then simulates token by token and reports the chip's numbers next to the answer (instructions, unit
+  utilisation, bytes over the host link and the chip links, SRAM peak).
+- API: `GET /api/lab/models/<id>/lpu/plan?chips=8&seq=64` gives the same plan as JSON.
+- Phone: in the Phone page's AI tab choose **Virtual LPU** as the engine, or say **"run my stories model on my
+  phone on the lpu"**: the phone streams each layer from the Hive and runs it on the simulated chip
+  (`stream.py run --engine lpu`, which fetches `/lpu.py` from the Hive). Only numpy is needed for the chip itself.
+- Anywhere with Python: `lpu.plan(config, params, seq, chips)` for the numbers, `lpu.Model(...)` to run.
+
+The honest part: the plan card is computed by compiling, not guessing. A 1.3B model does not fit one chip (a
+layer's 134 MB plus activations is more than the SRAM) but fits 2 chips per layer; 24 chips keep it resident at
+about 94 tokens/s on the chips, 8 chips stream it at about 21 tokens/s. A 500B model needs 64 chips per layer
+just to stream (2 tokens/s) and 8,064 chips to be resident. Simulating is slow because every multiply really
+runs in numpy: well under a second per token for the tiny models the Hive trains, 8 seconds per token for a
+1.3B, 46 minutes per token for a 500B. The compiler schedules the forward pass only: the virtual chip runs
+models, training stays on the phone or a GPU.
 
 ## Event protocol
 

@@ -48,7 +48,7 @@ def _dims(model: dict) -> tuple[float, int, int]:
     return params, int(n_layers or 1), int(hidden or 1)
 
 
-async def on_phone(task: Task, mode: str, query: str, prompt: str = "", steps: int = 10) -> None:
+async def on_phone(task: Task, mode: str, query: str, prompt: str = "", steps: int = 10, engine: str = "") -> None:
     status.set_busy("phone", "cloud")
     try:
         bee = await task.emit("bee_created", bee=PHONE, text="is checking your phone")
@@ -83,6 +83,9 @@ async def on_phone(task: Task, mode: str, query: str, prompt: str = "", steps: i
                    ["Memory on the phone", f"{plan['memory_needed']} (one layer at a time)"],
                    ["Weights streamed from", plan["source"]],
                    ["Per generated token", plan["per_token"]] if mode == "run" else ["Per training step", f"{plan['per_step']} ({plan['train_tokens']:,} tokens)"]]
+        if mode == "run" and engine == "lpu":
+            details.append(["Engine", "the virtual LPU on the phone: every streamed layer is compiled and simulated cycle by cycle "
+                                      "(slower than the phone's own CPU; the chip's cycle counts come back with the text)"])
         if mode == "run":
             details.append(["Prompt", prompt or "Once upon a time"])
         else:
@@ -110,7 +113,7 @@ async def on_phone(task: Task, mode: str, query: str, prompt: str = "", steps: i
             await task.answer("This model has no weights I can split. Train it first.")
             return
         await task.finish_step(s, text=f"{manifest['layers']} layers + shared embeddings, {architect.fmt_bytes(manifest['bytes'])} in total")
-        args = {"mode": mode, "model": model["id"], "prompt": prompt or "Once upon a time", "max_new": 40, "steps": steps}
+        args = {"mode": mode, "model": model["id"], "prompt": prompt or "Once upon a time", "max_new": 40, "steps": steps, "engine": engine or "torch"}
         s = await task.step("running", f"Starting on the phone: {'generating' if mode == 'run' else 'training'} layer by layer", bee=PHONE, parent=bee)
         try:
             job = await p.call("stream_start", args, timeout=120)
@@ -132,7 +135,10 @@ async def on_phone(task: Task, mode: str, query: str, prompt: str = "", steps: i
             m = st.get("metric") or {}
             if m and m != last:
                 last = m
-                if mode == "run":
+                if mode == "run" and m.get("cycles"):
+                    text = (f"Token {m.get('token')} · {m.get('cycles'):,} chip cycles ({m.get('chip_us')} µs on the LPU) · simulated in {m.get('seconds')} s · "
+                            f"{m.get('fetched_mb')} MB fetched so far")
+                elif mode == "run":
                     text = f"Token {m.get('token')} · {m.get('layers')} layers streamed in {m.get('seconds')} s · {m.get('fetched_mb')} MB fetched so far"
                 else:
                     text = f"Step {m.get('step')}/{steps} · loss {m.get('loss')} · {m.get('seconds')} s per step · {m.get('sent_mb')} MB of trained layers sent back"
@@ -147,10 +153,12 @@ async def on_phone(task: Task, mode: str, query: str, prompt: str = "", steps: i
         if mode == "run":
             await task.finish_step(prog, text=f"Generated {len(res.get('text', '').split())} words in {res.get('seconds')} s "
                                               f"with {res.get('fetched_mb')} MB streamed")
-            await task.emit("result", parent=bee, service=PHONE, title=f"{model['name']} ran on your phone, layer by layer", badge="Done",
-                            details=[["Prompt", res.get("prompt", "")], ["Layers streamed per token", str(res.get("layers"))],
-                                     ["Time", f"{res.get('seconds')} s"], ["Data fetched", f"{res.get('fetched_mb')} MB"]],
-                            text=res.get("text", ""))
+            rows = [["Prompt", res.get("prompt", "")], ["Layers streamed per token", str(res.get("layers"))],
+                    ["Time", f"{res.get('seconds')} s"], ["Data fetched", f"{res.get('fetched_mb')} MB"]]
+            if res.get("cycles_per_token"):
+                rows += [["On the virtual LPU", f"{res['cycles_per_token']:,} cycles per token → {res.get('chip_tokens_per_second', 0):,.0f} tokens/s on the chip"]]
+            await task.emit("result", parent=bee, service=PHONE, title=f"{model['name']} ran on your phone, layer by layer"
+                            + (" on the virtual LPU" if res.get("cycles_per_token") else ""), badge="Done", details=rows, text=res.get("text", ""))
             await task.answer(res.get("text") or "(the model wrote nothing)")
         else:
             await task.finish_step(prog, text=f"Trained {steps} steps on the phone · final loss {res.get('loss'):.3f} · "
