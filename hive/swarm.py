@@ -228,8 +228,13 @@ async def gather_data(task: Task, parent: str, purpose: str, arch_params: float 
     if arch_params:
         want = architect.TOKENS_PER_PARAM * arch_params
         passes = want / max(tokens, 1)
-        note += (f" · a {architect.fmt_params(arch_params)} model would like ~{architect.fmt_params(want)} tokens, "
-                 + (f"so it will make {passes:.0f} passes over this data (3 max)" if passes > 1 else "so one pass is plenty"))
+        note += f" · a {architect.fmt_params(arch_params)} model would like ~{architect.fmt_params(want)} tokens, "
+        if passes > 3:
+            note += f"so it will make 3 passes over this data and would learn more from {architect.fmt_params(passes)}× as much text"
+        elif passes > 1:
+            note += f"so it will make {passes:.0f} passes over this data"
+        else:
+            note += "so one pass is plenty"
     await task.step("done", f"Data ready: {out['label']}. {note}", bee=DATA, parent=parent)
     return out
 
