@@ -36,4 +36,4 @@ async def handle(task: Task) -> None:
     #   plan = await brain.ask(planning_prompt(task.text, bees))
     #   for step in plan: await bee.run(task, step)
     #   await task.answer(merged_answer)
-    await task.answer(await brain.ask(task.text))
+    await task.answer(await brain.ask(task.text, task.effort))

@@ -634,3 +634,20 @@ body.embed .page { padding-top: 10px; }
 .job-file { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 6px 8px; border: 1px solid var(--line-soft); border-radius: 9px; font-size: 13px; }
 .job-file .btn { padding: 4px 10px; font-size: 13px; }
 .job-files .result-box { max-height: 340px; font-size: 12px; }
+
+/* Effort pill + token reading */
+.effort-pill {
+  appearance: none; -webkit-appearance: none; font: inherit; font-size: 12px; color: var(--text-2);
+  padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: transparent; cursor: pointer;
+}
+.effort-pill.maxxxx { border-color: var(--honey); color: var(--honey); }
+.effort-pill option { background: var(--surface); color: var(--text); }
+.token-count { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.token-count.over { color: #ff8a80; }
+.chat-tokens { font-size: 12px; color: var(--text-3); white-space: nowrap; margin-left: 6px; }
+.tokens-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--text-3); }
+.tokens-bar { flex: 0 0 90px; height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+.tokens-bar i { display: block; height: 100%; background: var(--honey); }
+.effort-tag { padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; }
+.effort-tag.maxxxx { border-color: var(--honey); color: var(--honey); }
+#effortHint { margin-top: -6px; }

@@ -310,7 +310,7 @@ async def acquire_hardware(task: Task, parent: str, arch: dict, allow_smaller: b
             actions.append({"id": "smaller", "label": f"Make it {alt[0]} instead"})
         actions.append({"id": "later", "label": "Keep the blueprint, train later"})
         actions.append({"id": "cancel", "label": "Cancel", "style": "danger"})
-        reply = await ask(task, "confirm", parent=parent, title="Need more hardware", service=GPU,
+        reply = await ask(task, "confirm", parent=parent, title="Need more hardware", service=GPU, ask_anyway=True,
                           text=(f"Training needs {here['needed']} but {_short(plan['label'])} has {here['memory']}. "
                                 f"Connect more servers and I'll use them all together as one cluster, rent GPUs, or go smaller."),
                           details=[["Needs", here["needed"]], ["Available", here["memory"]],
@@ -360,7 +360,7 @@ async def rent_gpu(task: Task, parent: str, arch: dict) -> str | None:
         await task.answer("No single RunPod machine (up to 8 GPUs) can hold a model this big. Rent several and I'll cluster them, "
                           "or pick a smaller size.")
         return None
-    reply = await ask(task, "clarify", parent=parent, title="Rent GPUs", fields=[
+    reply = await ask(task, "clarify", parent=parent, title="Rent GPUs", ask_anyway=True, fields=[
         {"name": "gpu", "label": "Machine", "input": "select", "value": opts[0]["value"], "options": opts},
         {"name": "hours", "label": "Expected hours (for the cost estimate)", "input": "number", "value": "2"}],
         text="Billing starts when the machine is ready and stops when you say 'stop renting' or press Stop in the Lab.",
@@ -371,7 +371,7 @@ async def rent_gpu(task: Task, parent: str, arch: dict) -> str | None:
     chosen = next(g for g in gpus if g["id"] == gpu_id)
     hours = max(0.5, float(reply["values"].get("hours") or 2))
     cost = chosen["price"] * int(count) * hours
-    reply = await ask(task, "confirm", parent=parent, title="Confirm the rental", service=GPU,
+    reply = await ask(task, "confirm", parent=parent, title="Confirm the rental", service=GPU, ask_anyway=True,
                       details=[["Machine", f"{count}× {chosen['name']}"], ["Price", f"${chosen['price'] * int(count):.2f} per hour"],
                                ["Estimated", f"${cost:.2f} for {hours:g} hours"]],
                       text="This spends real money on your RunPod account.",

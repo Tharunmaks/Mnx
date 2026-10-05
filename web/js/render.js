@@ -52,6 +52,8 @@ export function buildModel(events) {
       model.answer += ev.text || "";
     } else if (t === "answer") {
       model.answer = ev.text || "";
+    } else if (t === "tokens") {
+      model.tokens = ev;
     } else if (t === "task_done") {
       model.status = "done";
     } else if (t === "task_error") {
@@ -97,11 +99,25 @@ export function renderRun(model, { onAction, cardCache }) {
   if (model.status === "error") {
     body.append(h("div", { class: "step error" }, h("span", { class: "ico", html: ICONS.error }), h("span", { class: "txt" }, model.error)));
   }
+  if (model.tokens) body.append(tokensLine(model.tokens));
 
   const wrap = h("div", { class: "msg-mnx" });
   wrap.innerHTML = logoSVG();
   wrap.append(body);
   return wrap;
+}
+
+// Token reading for one turn: what you wrote, what the Hive wrote, against the effort level's budget.
+const EFFORT_LABELS = { low: "Low", med: "Med", high: "High", ultra: "Ultra", maxxxx: "Maxxxx" };
+function tokensLine(t) {
+  const budget = Math.max(1, t.budget || 1);
+  const pct = Math.min(100, Math.round(100 * (t.total || 0) / budget));
+  const level = EFFORT_LABELS[t.effort] || t.effort || "";
+  const extra = t.effort === "maxxxx" ? " · no refusals · +20% tokens" : "";
+  return h("div", { class: "tokens-line", title: `${(t.total || 0).toLocaleString()} of ${budget.toLocaleString()} tokens used` },
+    h("span", {}, `Tokens · in ${(t.in || 0).toLocaleString()} · out ${(t.out || 0).toLocaleString()} · ${(t.total || 0).toLocaleString()} / ${budget.toLocaleString()}`),
+    h("span", { class: "tokens-bar" }, h("i", { style: `width:${pct}%` })),
+    h("span", { class: `effort-tag ${t.effort || ""}` }, `${level}${extra}`));
 }
 
 function hasWaitingCard(model) {

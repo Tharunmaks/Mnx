@@ -95,6 +95,7 @@ const DEFAULTS = {
   gateway: "", // empty = same origin as the page
   token: "", // access token printed by the gateway (data/token.txt)
   enterToSend: true,
+  effort: "med", // low · med · high · ultra · maxxxx (see hive/effort.py)
 };
 
 export const store = {
@@ -291,3 +292,30 @@ export function uploadFile(file, onProgress = () => {}) {
     xhr.send(file);
   });
 }
+
+// ---------- Effort levels + token reading (mirror of hive/effort.py and hive/tokens.py) ----------
+export const MAXXXX_BONUS = 0.2;
+export const EFFORT = [
+  { id: "low", label: "Low", tokens: 1000, reply: 200, note: "Quick answers, few steps." },
+  { id: "med", label: "Med", tokens: 4000, reply: 400, note: "The default: plans a little, asks before risky actions." },
+  { id: "high", label: "High", tokens: 16000, reply: 800, note: "Plans more and checks its work." },
+  { id: "ultra", label: "Ultra", tokens: 64000, reply: 1600, note: "Longest plans; uses every Bee it needs." },
+  { id: "maxxxx", label: "Maxxxx", tokens: Math.round(64000 * (1 + MAXXXX_BONUS)), reply: Math.round(1600 * (1 + MAXXXX_BONUS)),
+    note: "Does whatever you tell it: no refusals, no approval stops. Tokens +20%." },
+];
+export function effortInfo(id) {
+  return EFFORT.find((e) => e.id === id) || EFFORT[1];
+}
+const PIECE = /[A-Za-z]+(?:'[A-Za-z]+)?|\d+|\s+|[\s\S]/g;
+export function countTokens(text) {
+  if (!text) return 0;
+  let n = 0;
+  for (const p of String(text).match(PIECE) || []) {
+    if (/^\s+$/.test(p)) n += p.includes("\n") ? 1 : 0;
+    else if (/^[A-Za-z]/.test(p)) n += p.length <= 7 ? 1 : Math.ceil(p.length / 5);
+    else if (/^\d+$/.test(p)) n += Math.ceil(p.length / 3);
+    else n += 1;
+  }
+  return n;
+}
+export const fmtTokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(n));

@@ -3,7 +3,8 @@
 // No model runs in the browser; when the Mnx brain is not wired up, the gateway says so.
 
 import {
-  ICONS, HiveClient, api, beeHex, connLabel, getSettings, h, installTokenPrompt, logoSVG, saveSettings, store, uid,
+  EFFORT, ICONS, HiveClient, api, beeHex, connLabel, countTokens, effortInfo, fmtTokens, getSettings, h, installTokenPrompt, logoSVG,
+  saveSettings, store, uid,
 } from "./shared.js";
 import { buildModel, renderRun } from "./render.js";
 
@@ -77,6 +78,7 @@ client.addEventListener("event", (e) => {
   if (!found) return;
   found.turn.events.push(ev);
   if (ev.type === "bee_created") loadBees();
+  if (ev.type === "tokens" && found.chat.id === activeId) updateChatTokens(found.chat);
   found.chat.updated = Date.now();
   saveChats();
   if (found.chat.id === activeId) {
@@ -105,7 +107,7 @@ function send(text) {
   chat.turns.push(turn);
   chat.updated = Date.now();
 
-  const ok = client.send({ type: "user_message", chat: chat.id, task, text, name: getSettings().name || undefined });
+  const ok = client.send({ type: "user_message", chat: chat.id, task, text, name: getSettings().name || undefined, effort: getSettings().effort });
   if (!ok) {
     turn.events.push(
       { task, type: "error", text: "Can't reach the Mnx Hive gateway", detail: "check that the server is running, or set its URL in Settings" },
@@ -161,6 +163,7 @@ function renderAll() {
 
   $("chatTitle").textContent = chat ? chat.title : "New chat";
   document.title = chat ? `${chat.title} · Mnx Hive` : "Mnx Hive";
+  updateChatTokens(chat);
 
   const thread = $("thread");
   thread.replaceChildren();
@@ -225,11 +228,42 @@ function renderHistory() {
   }
 }
 
+// ---------- token reading ----------
+function chatTokens(chat) {
+  return chat ? chat.turns.reduce((n, t) => n + (((t.events || []).find((e) => e.type === "tokens") || {}).total || 0), 0) : 0;
+}
+function updateChatTokens(chat) {
+  const used = chatTokens(chat);
+  $("chatTokens").textContent = used ? `${used.toLocaleString()} tokens` : "";
+}
+
+// ---------- effort (low · med · high · ultra · maxxxx) ----------
+function fillEffortSelects() {
+  $("effortPill").replaceChildren(...EFFORT.map((e) => h("option", { value: e.id }, `Effort · ${e.label}`)));
+  $("setEffort").replaceChildren(...EFFORT.map((e) => h("option", { value: e.id }, `${e.label} · ${e.tokens.toLocaleString()} tokens`)));
+}
+function applyEffort() {
+  const s = getSettings();
+  const pill = $("effortPill");
+  pill.value = s.effort;
+  pill.classList.toggle("maxxxx", s.effort === "maxxxx");
+  pill.title = `Effort: ${effortInfo(s.effort).note}`;
+  updateTokenCount();
+}
+function updateTokenCount() {
+  const info = effortInfo(getSettings().effort);
+  const n = countTokens(input.value);
+  const el = $("tokenCount");
+  el.textContent = `~${n.toLocaleString()} / ${fmtTokens(info.tokens)} tokens`;
+  el.classList.toggle("over", n > info.tokens);
+}
+
 // ---------- composer ----------
 const input = $("input");
 function autosize() {
   input.style.height = "auto";
   input.style.height = Math.min(input.scrollHeight, 200) + "px";
+  updateTokenCount();
 }
 function updateSendState() {
   const btn = $("send");
@@ -284,6 +318,8 @@ function openSettings(focusName) {
   f.gateway.value = s.gateway;
   f.token.value = s.token;
   f.enterToSend.checked = s.enterToSend;
+  f.effort.value = s.effort;
+  $("effortHint").textContent = effortInfo(s.effort).note;
   $("settingsDlg").showModal();
   if (focusName) f.name.focus();
 }
@@ -300,8 +336,10 @@ $("settingsDlg").addEventListener("close", () => {
     model: f.model.value.trim() || "Mnx 3B",
     gateway: f.gateway.value.trim(),
     enterToSend: f.enterToSend.checked,
+    effort: f.effort.value,
   });
   applyProfile();
+  applyEffort();
   const now = getSettings();
   if (prev.gateway !== now.gateway || prev.token !== now.token || client.state !== "online") {
     client.reconnectNow();
@@ -365,3 +403,8 @@ $("scrim").addEventListener("click", closeRail);
 renderAll();
 loadTools();
 loadBees();
+
+fillEffortSelects();
+applyEffort();
+$("effortPill").addEventListener("change", () => { saveSettings({ effort: $("effortPill").value }); applyEffort(); });
+$("setEffort").addEventListener("change", () => { $("effortHint").textContent = effortInfo($("setEffort").value).note; });

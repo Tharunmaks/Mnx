@@ -367,7 +367,7 @@ async def stop(task: Task) -> None:
     run = max(active, key=lambda r: r["created"])
     last = run["metrics"][-1] if run["metrics"] else {}
     progress = ", ".join(f"{k} {v}" for k, v in last.items() if k in ("epoch", "step", "loss")) or run.get("stage") or run["status"]
-    reply = await ask(task, "confirm", parent=bee, title="Stop this training?", service=BEE,
+    reply = await ask(task, "confirm", parent=bee, title="Stop this training?", service=BEE, default="stop",
                       details=[["Run", run["name"]], ["Progress", progress]],
                       actions=[{"id": "stop", "label": "Stop it", "style": "danger"}, {"id": "keep", "label": "Keep training"}])
     if reply["action"] == "stop":

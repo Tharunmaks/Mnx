@@ -45,6 +45,7 @@
     <header class="topbar">
       <button class="icon-btn menu-btn" id="menuBtn" aria-label="Open menu"><span data-icon="menu"></span></button>
       <h1 id="chatTitle">New chat</h1>
+      <span class="chat-tokens" id="chatTokens" title="Tokens used in this chat (you + the Hive)"></span>
       <span class="conn" id="conn" title="Gateway connection"><i></i><span>Connecting</span></span>
       <button class="icon-btn" id="hiveToggle" aria-label="Show Bees"><span data-icon="hive"></span></button>
     </header>
@@ -71,6 +72,8 @@
         <div class="composer-row">
           <button type="button" class="icon-btn" id="attach" aria-label="Attach file" title="Attachments come later"><span data-icon="clip"></span></button>
           <button type="button" class="model-pill" id="modelPill" title="Model"><span id="pillLogo"></span><span id="modelName">Mnx 3B</span></button>
+          <select class="effort-pill" id="effortPill" aria-label="Effort" title="Effort: how hard the Hive works and how many tokens it may spend"></select>
+          <span class="token-count" id="tokenCount" title="Token reading: this message / budget for the effort level"></span>
           <button type="submit" class="send" id="send" aria-label="Send" disabled><span data-icon="send"></span></button>
         </div>
       </form>
@@ -103,6 +106,10 @@
         <input name="token" type="password" placeholder="From the server log or data/token.txt" autocomplete="off">
       </label>
       <label class="check"><input type="checkbox" name="enterToSend"> Enter sends, Shift+Enter adds a line</label>
+      <label class="field">Effort
+        <select name="effort" id="setEffort"></select>
+      </label>
+      <p class="hint" id="effortHint"></p>
       <button type="button" class="btn danger" id="clearChats">Delete all chats on this device</button>
     </div>
     <div class="dlg-foot">

@@ -1,7 +1,7 @@
 // Mnx Hive — shared Model Lab pieces: metric charts and model playgrounds.
 // Used by the Lab page and by the live cards the Cloud Bee posts in chat.
 
-import { gatewayBase, getSettings, h, toast } from "./shared.js";
+import { effortInfo, gatewayBase, getSettings, h, toast } from "./shared.js";
 
 const playgrounds = new Map(); // model id → element, so a chat with the model survives redraws
 
@@ -113,7 +113,7 @@ function buildChat(box, m) {
     const pending = h("div", { class: "chat-msg assistant hint" }, "…");
     log.append(pending);
     try {
-      const r = await call(m, "v1/chat/completions", { messages, max_tokens: 400, temperature: 0.7 });
+      const r = await call(m, "v1/chat/completions", { messages, max_tokens: effortInfo(getSettings().effort).reply, temperature: 0.7 });
       messages.push({ role: "assistant", content: r.choices?.[0]?.message?.content ?? "" });
     } catch (e) {
       messages.pop();

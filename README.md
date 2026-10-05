@@ -246,6 +246,24 @@ SMS, calls and opening links always need your confirmation; `--deny sms_send,cal
 blocks them on the phone itself. Wireless debugging turns off after a reboot, so pair again
 then (or use Shizuku).
 
+## Effort and token reading
+
+Every message carries an **effort** level, picked in the pill next to the model name (or in Settings):
+
+| Level | Tokens per message | What changes |
+| --- | --- | --- |
+| Low | 1,000 | Quick answers, few steps. |
+| Med | 4,000 | The default: plans a little, asks before risky actions. |
+| High | 16,000 | Plans more and checks its work. |
+| Ultra | 64,000 | Longest plans; uses every Bee it needs. |
+| **Maxxxx** | 76,800 (Ultra + 20%) | Does whatever you tell it: no refusals, no approval stops. Confirm and clarify cards are answered for you with their default choice (the card shows *"Maxxxx chose … for you"*); only cards that need something only you know (a server address, a file, what the AI is for) or spend money (renting GPUs, a cluster that doesn't fit) still stop. When the Mnx brain is connected it also gets the no-refusal instructions (`hive/effort.py`, `hive/brain.py`). |
+
+**Token reading**: the counter under the message box shows how many tokens your message is against the
+level's budget while you type; every turn ends with a line *"Tokens · in 12 · out 348 · 360 / 4,000"* and
+a bar, and the chat header keeps the running total. Counting is an estimate (`hive/tokens.py`,
+`countTokens` in `shared.js`) until Mnx's own tokenizer is connected. The level also sets how long a
+model's answer may be in the playgrounds (Run it): 200 tokens on Low up to 1,920 on Maxxxx.
+
 ## Event protocol
 
 Browser → gateway (WebSocket `/ws`):

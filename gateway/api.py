@@ -25,7 +25,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from gateway import auth
-from hive import phone, queen, status
+from hive import effort, phone, queen, status
 from hive.browser import BrowserError, stop_playwright
 from hive.cells import cells
 from hive.connectors import LANES, LAYERS, hub
@@ -957,6 +957,12 @@ def lab_secret(body: SecretBody):
     return {"secrets": lab.secret_names()}
 
 
+@api.get("/effort")
+def effort_levels():
+    """The five effort levels (low, med, high, ultra, maxxxx) and their token budgets."""
+    return {"levels": effort.listing(), "default": effort.DEFAULT, "maxxxx_bonus": effort.MAXXXX_BONUS}
+
+
 app.include_router(api)
 
 
@@ -1072,7 +1078,7 @@ async def ws_endpoint(ws: WebSocket):
                 if not text:
                     continue
                 task_id = str(msg.get("task") or f"t_{uuid.uuid4().hex[:10]}")[:40]
-                task = Task(task_id, str(msg.get("chat", ""))[:40], text, emit)
+                task = Task(task_id, str(msg.get("chat", ""))[:40], text, emit, effort=str(msg.get("effort") or "")[:12])
                 TASKS[task_id] = (task, asyncio.create_task(run_task(task)))
 
             elif kind == "action":
@@ -1094,10 +1100,12 @@ async def ws_endpoint(ws: WebSocket):
 async def run_task(task: Task) -> None:
     try:
         await queen.handle(task)
+        await task.emit("tokens", **task.usage())  # token reading for this turn
         await task.emit("task_done")
     except asyncio.CancelledError:
         EVENT_LOG.append({"task": task.id, "type": "stopped", "text": "Stopped by you", "at": now()})
     except Exception as exc:  # report, don't crash the gateway
+        await task.emit("tokens", **task.usage())
         await task.emit("task_error", f"The Hive hit an error: {exc}")
     finally:
         TASKS.pop(task.id, None)
