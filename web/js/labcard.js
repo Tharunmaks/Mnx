@@ -51,6 +51,9 @@ export function runCard(runId) {
       line.textContent = `${STAGE[r.stage] || "Starting"}${prog ? ` · ${prog}` : ""}${detail} · ${took}`;
     } else if (r.status === "succeeded") {
       line.textContent = `Done in ${took}.${r.result?.examples ? ` Learned from ${r.result.examples} examples.` : ""}`;
+      if (r.result && (r.result.perplexity != null || r.result.samples) && !card.querySelector(".eval-box")) {
+        card.insertBefore(evalBox(r.result), actions);
+      }
     } else {
       line.textContent = r.error ? `${r.status === "stopped" ? "Stopped" : "Failed"}: ${r.error}` : `${r.status} after ${took}`;
       line.classList.toggle("err", r.status === "failed");
@@ -76,6 +79,21 @@ export function runCard(runId) {
   return card;
 }
 
+// Eval Bee's report: how well the model predicts held-out text, and what it writes.
+function evalBox(res) {
+  const box = h("div", { class: "eval-box" }, h("div", { class: "eval-head" }, h("span", { class: "bee-tag" }, "Eval Bee"),
+    h("span", {}, res.perplexity != null ? `perplexity ${res.perplexity} on held-out text (lower is better)` : "checked the model")));
+  if (res.params_text) box.append(h("div", { class: "hint" }, `${res.params_text} parameters · trained on ${fmtTokens(res.tokens)} tokens in ${res.minutes} min`));
+  for (const smp of res.samples || []) {
+    box.append(h("div", { class: "sample" }, h("b", {}, smp.prompt), " ", h("span", {}, smp.text.slice(smp.prompt.length) || smp.text)));
+  }
+  return box;
+}
+function fmtTokens(n) {
+  if (!n) return "0";
+  return n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}K` : String(n);
+}
+
 export function modelCard(modelId) {
   return h("div", { class: "card lab-card" }, modelSection(modelId));
 }
@@ -91,6 +109,13 @@ function modelSection(modelId) {
   poll(box, async () => {
     const { model: m, deployment: d, gpu_local } = await api(`/api/lab/models/${modelId}`);
     const state = d ? d.status : null;
+    if (m.kind === "blueprint") {
+      const a = m.arch || {}, e = m.estimates || {}, ref = e.reference || {};
+      status.replaceChildren(h("b", {}, `${m.name}`), ` — designed, not trained. ${a.layers} layers, width ${a.hidden}, ${a.heads} heads, vocabulary ${a.vocab?.toLocaleString()}.`,
+        h("div", { class: "hint" }, `Weights ${e.weights || "?"} · training memory ${e.train_memory_gpu || "?"} · a good setup is ${ref.count}× ${ref.gpu} for ${ref.time} (~${ref.cost}).`));
+      actions.replaceChildren(h("a", { class: "btn", href: "lab.html#models" }, "See it in the Lab"));
+      return false;
+    }
     if (!m.servable) {
       status.textContent = "This model can't run as an API here (no serve.py), but you can download it from the Lab.";
       actions.replaceChildren();

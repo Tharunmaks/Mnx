@@ -14,7 +14,7 @@ import asyncio
 import re
 from dataclasses import dataclass
 
-from . import hf, system
+from . import architect, hf, system
 from .core import Task
 from .lab import lab
 
@@ -24,6 +24,12 @@ ASK_TIMEOUT = 30 * 60  # stop waiting for an answer after 30 minutes
 TRAIN = re.compile(r"\b(train|retrain|fine[\s-]?tune|finetune|teach|customi[sz]e)\b", re.I)
 STATUS = re.compile(r"\b(status|progress|how(?:'s| is| are)|check)\b.*\b(train\w*|run|runs|fine[\s-]?tun\w*)\b", re.I)
 STOP = re.compile(r"\b(stop|cancel|kill|abort)\b.*\b(train\w*|run|fine[\s-]?tun\w*)\b", re.I)
+CREATE = re.compile(r"\b(create|build|make|design|generate|invent)\b.*\b(model|llm|ai|transformer|brain|network)\b"
+                    r"|\bfrom scratch\b|\bnew (?:ai|model|llm)\b", re.I)
+ADD_DATA = re.compile(r"\b(add|feed|give|load|put|upload)\b.*\b(data|dataset|knowledge|text|examples|docs|documents|pages)\b"
+                      r"|\b(continue|keep|resume) training\b|\b(train|teach)\b.*\bmore\b", re.I)
+PURPOSE = re.compile(r"\b(?:for|about|that (?:writes|knows|speaks|does|can)|which|to write|on)\s+(.+)$", re.I)
+RENT_STOP = re.compile(r"\b(stop|end|cancel|kill)\b.*\b(rent\w*|pod|gpu machine|cloud machine)\b", re.I)
 RUN = re.compile(r"\b(run|start|deploy|serve|launch|chat with|talk to)\b.*\b(model|mnx|qwen|llama|gemma|phi|smollm|mistral|deepseek)\w*\b", re.I)
 SIZE_IN_TEXT = re.compile(r"\b(\d+(?:\.\d+)?)\s*([bm])\b", re.I)
 HF_ID = re.compile(r"\b([A-Za-z0-9][\w.-]*/[\w.-]+)\b")
@@ -37,12 +43,26 @@ class Intent:
     model_query: str = ""
     size_b: float | None = None
     dataset: str = ""
+    params: float | None = None  # exact parameter count for "create"
+    purpose: str = ""
 
 
 def parse(text: str) -> Intent | None:
     t = " ".join(text.strip().split())
+    if RENT_STOP.search(t):
+        return Intent("rent_stop")
     if STOP.search(t):
         return Intent("stop")
+    if ADD_DATA.search(t) and not CREATE.search(t):
+        mq = re.search(r"\b(?:to|into)\s+(?:my\s+)?(.+?)(?:\s+(?:model|llm|ai))?(?:\s*[.!?]|$|\s+(?:about|with|from)\b)", t, re.I)
+        pm = PURPOSE.search(t)
+        return Intent("add_data", model_query=(mq.group(1) if mq else "").strip(), purpose=(pm.group(1) if pm else "").strip())
+    n_params = architect.parse_size(t) if re.search(r"param|\bparams\b|\b\d+(?:\.\d+)?\s*[kmbt]\b", t, re.I) else None
+    if CREATE.search(t) and (n_params or re.search(r"from scratch|new (?:ai|model|llm)|\b(create|build|design|invent)\b", t, re.I)):
+        pm = PURPOSE.search(t)
+        purpose = (pm.group(1) if pm else "").strip()
+        purpose = re.sub(r"^(?:a|an|the)\s+", "", purpose)
+        return Intent("create", params=n_params, purpose=purpose[:120])
     if STATUS.search(t) and not TRAIN.match(t):
         return Intent("status")
     m = TRAIN.search(t)
@@ -80,7 +100,14 @@ async def handle(task: Task) -> bool:
     if not intent:
         return False
     try:
-        if intent.kind == "train":
+        if intent.kind == "train" and re.search(r"blueprint", task.text, re.I):
+            from . import swarm
+            bp = swarm.find_blueprint(intent.model_query)
+            if not bp:
+                await task.answer("I don't have a blueprint by that name. Say “create a 1B model” to design one.")
+            else:
+                await swarm.create_model(task, bp["arch"]["params"], bp.get("purpose") or "")
+        elif intent.kind == "train":
             await train(task, intent)
         elif intent.kind == "status":
             await status(task)
@@ -88,6 +115,14 @@ async def handle(task: Task) -> bool:
             await stop(task)
         elif intent.kind == "run":
             await run_model(task, intent)
+        elif intent.kind == "create":
+            from . import swarm
+            await swarm.create_model(task, intent.params, intent.purpose)
+        elif intent.kind == "add_data":
+            from . import swarm
+            await swarm.add_data(task, intent.model_query, intent.purpose)
+        elif intent.kind == "rent_stop":
+            await stop_renting(task)
     except asyncio.TimeoutError:
         await task.answer("I waited a long time for an answer, so I stopped here. Ask again whenever you're ready.")
     return True
@@ -358,3 +393,18 @@ async def run_model(task: Task, intent: Intent) -> None:
         await task.finish_step(s, text=f"Starting {m['name']} as an API")
     await task.emit("lab_model", id=f"lm-{m['id']}", parent=bee, model=m["id"])
     await task.answer("Your model is starting below. When it says ready, type in the box on the card to talk to it.")
+
+
+async def stop_renting(task: Task) -> None:
+    bee = await task.emit("bee_created", bee=BEE, text="checked")
+    if not lab.pods:
+        await task.answer("You aren't renting any cloud machines right now.")
+        return
+    for pid, pod in list(lab.pods.items()):
+        s = await task.step("running", f"Stopping {pod['name']} ({pod.get('count')}× {pod.get('gpu_type')})", bee=BEE, parent=bee)
+        try:
+            await lab.stop_pod(pid)
+            await task.finish_step(s, text=f"Stopped {pod['name']}; billing has ended")
+        except Exception as exc:
+            await task.finish_step(s, status="error", text=f"Couldn't stop {pod['name']}: {exc}"[:200])
+    await task.answer("Done. Double-check on runpod.io that nothing is still running.")

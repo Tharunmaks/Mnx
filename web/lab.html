@@ -110,9 +110,11 @@
             <div class="card-actions"><button class="btn primary" type="submit" id="targetBtn">Add and test</button></div>
           </form>
 
+          <div id="providers"></div>
+
           <form id="secretForm" class="card">
             <div class="card-head">Secrets for training</div>
-            <p class="card-text">Passed to every run as environment variables, e.g. <code>HF_TOKEN</code> for private or gated Hugging Face models. Values are never shown again.</p>
+            <p class="card-text">Passed to every run as environment variables, e.g. <code>HF_TOKEN</code> for private or gated Hugging Face models, <code>RUNPOD_API_KEY</code> to rent GPUs. Values are never shown again.</p>
             <div id="secretList" class="file-chips"></div>
             <div class="fields">
               <label class="field">Name<input name="name" placeholder="HF_TOKEN" autocomplete="off"></label>

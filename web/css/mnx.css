@@ -622,3 +622,9 @@ body.embed .page { padding-top: 10px; }
 .model-section { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line-soft); padding-top: 10px; }
 .lab-card > .model-section:first-child { border-top: 0; padding-top: 0; }
 .lab-card .play-wrap { border-top: 0; padding-top: 0; }
+
+/* ---------- swarm cards: Eval Bee report ---------- */
+.eval-box { border: 1px solid var(--line-soft); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: var(--bg); }
+.eval-head { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.sample { font-size: 13px; color: var(--text-2); padding: 6px 8px; border-left: 2px solid var(--honey); background: var(--surface); border-radius: 0 8px 8px 0; white-space: pre-wrap; word-break: break-word; }
+.sample b { color: var(--honey-2); }

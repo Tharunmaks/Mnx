@@ -291,6 +291,7 @@ function renderModels() {
     return;
   }
   for (const m of data.models) {
+    if (m.kind === "blueprint") { box.append(blueprintCard(m)); continue; }
     const dep = data.deployments[m.id];
     const state = dep ? dep.status : null;
     const resultChips = m.result ? Object.entries(m.result).filter(([, v]) => typeof v === "number" || typeof v === "string").slice(0, 6)
@@ -329,6 +330,32 @@ function renderModels() {
     else if (state === "starting") card.append(h("p", { class: "hint" }, "Starting… the first start installs packages and loads the model; this can take a few minutes."));
     box.append(card);
   }
+}
+
+function blueprintCard(m) {
+  const a = m.arch || {}, e = m.estimates || {}, ref = e.reference || {};
+  return h("div", { class: "card model-card", id: `model-${m.id}` },
+    h("div", { class: "card-head" },
+      h("div", { style: "min-width:0;flex:1" }, h("div", {}, m.name),
+        h("div", { class: "hint" }, `Blueprint · designed ${new Date(m.created * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}${m.purpose ? ` · ${m.purpose}` : ""}`)),
+      h("span", { class: "badge wait" }, "Not trained")),
+    h("div", { class: "metric-chips" },
+      h("span", { class: "chip" }, `${a.params_text} parameters`), h("span", { class: "chip" }, `${a.layers} layers`),
+      h("span", { class: "chip" }, `width ${a.hidden}`), h("span", { class: "chip" }, `${a.heads} heads`),
+      h("span", { class: "chip" }, `vocab ${(a.vocab || 0).toLocaleString()}`), h("span", { class: "chip" }, `context ${a.seq_len}`)),
+    h("p", { class: "card-text" }, `Weights ${e.weights || "?"} · training memory about ${e.train_memory_gpu || "?"} · a good setup is ${ref.count}× ${ref.gpu} for ${ref.time} (about ${ref.cost} to rent).`),
+    h("div", { class: "card-actions" },
+      h("button", { class: "btn primary", type: "button", onclick: () => {
+        const r = data.recipes.find((x) => x.id === "llm-pretrain");
+        if (!r) return;
+        showTab("train"); pickRecipe(r);
+        const f = $("trainForm");
+        f.elements.p_size.value = "custom"; f.elements.p_custom_params.value = a.params; f.name.value = m.name.replace(/ blueprint$/, "");
+      } }, "Train it"),
+      h("button", { class: "btn danger", type: "button", onclick: async () => {
+        if (!confirm(`Delete blueprint "${m.name}"?`)) return;
+        try { await api(`/api/lab/models/${m.id}`, { method: "DELETE" }); load(); } catch (err) { toast(err.message, "error"); }
+      } }, "Delete")));
 }
 
 async function fetchText(path) {
@@ -383,6 +410,7 @@ function renderServers() {
           try { await api(`/api/lab/targets/${t.id}`, { method: "DELETE" }); load(); } catch (err) { toast(err.message, "error"); }
         } }, "Remove"))));
   }
+  renderProviders();
   $("hiveKeyCmd").textContent = data.hive_key
     ? `mkdir -p ~/.ssh && echo '${data.hive_key}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`
     : "ssh-keygen isn't installed on the Hive server; paste a private key below instead.";
@@ -390,6 +418,44 @@ function renderServers() {
     h("button", { type: "button", "aria-label": `Delete ${n}`, onclick: async () => {
       try { await api("/api/lab/secrets", { method: "POST", body: { name: n, value: "" } }); load(); } catch (err) { toast(err.message, "error"); }
     } }, "×"))) : [h("span", { class: "hint" }, "None yet.")]));
+}
+
+let providers = null;
+async function renderProviders() {
+  const box = $("providers");
+  try { providers = await api("/api/lab/providers"); } catch { return; }
+  const rp = providers.runpod;
+  box.replaceChildren();
+  const head = h("div", { class: "card-head" }, h("span", { class: "svc" }, "☁"), h("div", { style: "flex:1" }, "Rent a GPU (RunPod)",
+    h("div", { class: "hint" }, rp.configured ? "API key saved · billing starts when a machine is ready and stops when you press Stop" : "Save RUNPOD_API_KEY under Secrets to rent GPUs from here or from the chat")),
+    h("span", { class: `badge ${rp.configured ? "ok" : "wait"}` }, rp.configured ? "Ready" : "Not set up"));
+  const card = h("div", { class: "card" }, head);
+  for (const pod of rp.pods) {
+    card.append(h("div", { class: "tool-row" },
+      h("div", { class: "meta" }, h("div", { class: "name" }, `${pod.count}× ${pod.gpu_type}`),
+        h("div", { class: "skill" }, `${pod.status}${pod.cost_per_hour ? ` · $${pod.cost_per_hour}/h` : ""}${pod.error ? ` · ${pod.error}` : ""} · since ${new Date(pod.started * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)),
+      h("button", { class: "btn danger", type: "button", onclick: async (e) => {
+        if (!confirm("Stop this machine? Billing ends and it is removed from your servers.")) return;
+        e.target.disabled = true;
+        try { await api(`/api/lab/providers/runpod/pods/${pod.id}/stop`, { method: "POST" }); toast("Stopped", "ok"); } catch (err) { toast(err.message, "error"); }
+        load();
+      } }, "Stop")));
+  }
+  if (rp.error) card.append(h("p", { class: "card-text err" }, rp.error));
+  if (rp.configured && rp.gpus.length) {
+    const sel = h("select", { class: "input" }, rp.gpus.map((g) => h("option", { value: g.id }, `${g.name} · ${g.memory_gb} GB · $${g.price}/h${g.stock ? ` · ${g.stock}` : ""}`)));
+    const count = h("input", { class: "input", type: "number", min: 1, max: 8, value: 1, style: "max-width:80px" });
+    card.append(h("div", { class: "row" }, sel, count, h("button", { class: "btn primary", type: "button", onclick: async (e) => {
+      const g = rp.gpus.find((x) => x.id === sel.value);
+      if (!confirm(`Rent ${count.value}× ${g.name} for $${(g.price * count.value).toFixed(2)} per hour? This spends real money.`)) return;
+      e.target.disabled = true;
+      try { await api("/api/lab/providers/runpod/rent", { method: "POST", body: { gpu_type: sel.value, count: Number(count.value) } }); toast("Renting… it appears under Servers when SSH is up", "ok"); }
+      catch (err) { toast(err.message, "error"); }
+      e.target.disabled = false;
+      load();
+    } }, "Rent")));
+  }
+  box.append(card);
 }
 
 $("copyKey").addEventListener("click", async () => {

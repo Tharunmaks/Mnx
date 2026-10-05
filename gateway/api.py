@@ -803,6 +803,63 @@ def lab_remove_target(tid: str):
     return {"ok": True}
 
 
+# ----- rented cloud GPUs (RunPod) -----
+@api.get("/lab/providers")
+async def lab_providers():
+    from hive import providers
+    key = lab._secrets.get("RUNPOD_API_KEY")
+    out = {"runpod": {"configured": bool(key), "pods": list(lab.pods.values()), "gpus": [], "error": None}}
+    if key:
+        try:
+            out["runpod"]["gpus"] = await providers.runpod_gpu_types(key)
+        except providers.ProviderError as exc:
+            out["runpod"]["error"] = str(exc)
+        except httpx.HTTPError as exc:
+            out["runpod"]["error"] = f"RunPod unreachable ({type(exc).__name__})"
+    return out
+
+
+class RentBody(BaseModel):
+    gpu_type: str = Field(max_length=80)
+    count: int = Field(default=1, ge=1, le=8)
+    disk_gb: int = Field(default=100, ge=20, le=2000)
+
+
+@api.post("/lab/providers/runpod/rent")
+async def lab_rent(body: RentBody):
+    try:
+        pod = await lab.rent_runpod(body.gpu_type, body.count, body.disk_gb)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    log("Cloud", "rented", f"{body.count}× {body.gpu_type} on RunPod")
+    asyncio.create_task(_attach(pod["id"]))
+    return pod
+
+
+async def _attach(pod_id: str) -> None:
+    try:
+        await lab.attach_pod(pod_id)
+    except Exception as exc:
+        rec = lab.pods.get(pod_id)
+        if rec:
+            rec["status"] = "failed"
+            rec["error"] = str(exc)[:300]
+            lab._save_pods()
+            await broadcast({"type": "lab_changed"})
+
+
+@api.post("/lab/providers/runpod/pods/{pod_id}/stop")
+async def lab_stop_pod(pod_id: str):
+    if pod_id not in lab.pods:
+        raise HTTPException(404, "No such rented machine")
+    try:
+        await lab.stop_pod(pod_id)
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    log("Cloud", "rental_stopped", pod_id)
+    return {"ok": True}
+
+
 class SecretBody(BaseModel):
     name: str = Field(max_length=64)
     value: str = Field(default="", max_length=10000)

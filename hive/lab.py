@@ -37,6 +37,7 @@ RUNS, MODELS, KEYS = LAB / "runs", LAB / "models", LAB / "keys"
 UPLOADS = LAB / "uploads"
 DOCKER_ARGS = shlex.split(os.getenv("MNX_DOCKER_ARGS", ""))
 PIP_CACHE = "mnx-pip-cache"
+HF_CACHE = "mnx-hf-cache"  # downloaded models and datasets, shared between runs
 LLAMA_IMAGE = os.getenv("MNX_LLAMA_IMAGE", "ghcr.io/ggml-org/llama.cpp:server")
 MAX_POINTS = 3000
 ID_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
@@ -185,6 +186,7 @@ class Lab:
                 self.models[m["id"]] = m
         self.deployments: dict[str, dict] = _read(LAB / "deployments.json", {})
         self.targets: dict[str, dict] = _read(LAB / "targets.json", {})
+        self.pods: dict[str, dict] = _read(LAB / "pods.json", {})  # rented cloud GPUs
         self._secrets: dict[str, str] = _read(LAB / "secrets.json", {})
         self.watchers: dict[str, asyncio.Task] = {}
         self._logs: dict[str, Any] = {}
@@ -333,7 +335,8 @@ class Lab:
         return RUNS / rid
 
     def create_run(self, recipe_id: str, name: str, params: dict, target: str, files: list[Path],
-                   use_sample: bool, gpu: bool, cpus: float | None, memory_gb: float | None) -> dict:
+                   use_sample: bool, gpu: bool, cpus: float | None, memory_gb: float | None,
+                   base_model_id: str | None = None) -> dict:
         recipe = self.recipes.get(recipe_id)
         if not recipe:
             raise ValueError("Unknown recipe")
@@ -347,6 +350,24 @@ class Lab:
         for f in ("train.py", "serve.py", "requirements.txt"):
             if (src / f).exists():
                 shutil.copy(src / f, job / f)
+        for helper in recipe.get("helpers", []):  # shared Python files a recipe imports (e.g. architect.py)
+            hp = Path(__file__).resolve().parent / helper
+            if hp.is_file():
+                shutil.copy(hp, job / hp.name)
+        mount_models = False
+        if base_model_id:
+            base = self.models.get(base_model_id)
+            if not base:
+                raise ValueError("Unknown base model")
+            model_dir = MODELS / base_model_id / "files" / "model"
+            if not model_dir.is_dir():
+                raise ValueError("That model has no saved weights folder to continue from")
+            if target == "local":
+                mount_models = True
+                params["init_from"] = f"/models/{base_model_id}/files/model"
+            else:
+                shutil.copytree(model_dir, job / "base")  # ships with the run to the other server
+                params["init_from"] = "base"
         for f in files:
             dest = job / f.name if f.name in ("train.py", "serve.py", "requirements.txt") else job / "data" / f.name
             shutil.move(str(f), dest)
@@ -372,6 +393,7 @@ class Lab:
             "status": "queued", "stage": None, "created": int(time.time()), "started": None, "ended": None,
             "exit": None, "metrics": [], "result": None, "model": None, "error": None,
             "data_files": sorted(p.name for p in (job / "data").iterdir()), "remote_offset": 0,
+            "base_model": base_model_id, "mount_models": mount_models,
         }
         self.runs[rid] = run
         self._save_run(run)
@@ -487,8 +509,11 @@ class Lab:
         image = self.recipes.get(run["recipe"], {}).get("image", "python:3.12-slim")
         args = ["docker", "run", "-d", "--name", f"mnx-run-{run['id']}", "--label", f"mnx.run={run['id']}",
                 "-v", f"{job}:/job", "-w", "/job", "-v", f"{PIP_CACHE}:/root/.cache/pip",
+                "-v", f"{HF_CACHE}:/root/.cache/huggingface",
                 "-e", "PYTHONUNBUFFERED=1", "-e", "PIP_ROOT_USER_ACTION=ignore", "-e", f"MNX_UID={os.getuid()}", "-e", f"MNX_GID={os.getgid()}",
-                "--shm-size", "1g", "--security-opt", "no-new-privileges", "--init"]
+                "--shm-size", "8g" if run.get("gpu") else "1g", "--security-opt", "no-new-privileges", "--init"]
+        if run.get("mount_models"):
+            args += ["-v", f"{MODELS.resolve()}:/models:ro"]
         if run.get("gpu") and self.gpu_local:
             args += ["--gpus", "all"]
         if run.get("cpus"):
@@ -668,6 +693,76 @@ class Lab:
         run["model"] = mid
         return model
 
+    def save_blueprint(self, name: str, arch: dict, estimates: dict, purpose: str = "") -> dict:
+        """Keep a designed-but-not-trained model so it can be trained later."""
+        mid = "m-blueprint-" + uuid.uuid4().hex[:8]
+        (MODELS / mid).mkdir(parents=True, exist_ok=True)
+        model = {"id": mid, "name": name[:80], "recipe": "llm-pretrain", "kind": "blueprint", "playground": None,
+                 "run": None, "created": int(time.time()), "result": None, "size": 0, "servable": False,
+                 "arch": arch, "estimates": {k: v for k, v in estimates.items() if k != "flops"}, "purpose": purpose[:200]}
+        _write(MODELS / mid / "model.json", model)
+        self.models[mid] = model
+        self._changed()
+        return model
+
+    # ---------- rented cloud GPUs ----------
+    def _save_pods(self) -> None:
+        _write(LAB / "pods.json", self.pods)
+
+    async def rent_runpod(self, gpu_type: str, count: int, disk_gb: int = 100) -> dict:
+        from . import providers
+        key = self._secrets.get("RUNPOD_API_KEY")
+        if not key:
+            raise ValueError("Save RUNPOD_API_KEY under Secrets first")
+        pod = await providers.runpod_rent(key, gpu_type, count, await self.hive_key(), disk_gb=disk_gb)
+        rec = {"id": pod["id"], "provider": "runpod", "name": pod["name"], "gpu_type": gpu_type, "count": count,
+               "started": int(time.time()), "target": None, "status": "starting", "cost_per_hour": None}
+        self.pods[pod["id"]] = rec
+        self._save_pods()
+        self._changed()
+        return rec
+
+    async def attach_pod(self, pod_id: str) -> dict:
+        """Wait for a rented pod's SSH, add it as a training server and test it."""
+        from . import providers
+        key = self._secrets.get("RUNPOD_API_KEY")
+        rec = self.pods[pod_id]
+        info = await providers.runpod_wait_ssh(key, pod_id)
+        rec["cost_per_hour"] = info.get("cost_per_hour")
+        if not rec.get("target"):
+            t = self.add_target(f"RunPod {info.get('gpu') or rec['gpu_type']}", info["ssh"]["host"], int(info["ssh"]["port"]),
+                                "root", "/workspace/mnx-runs", None)
+            rec["target"] = t["id"]
+        # The pod may take a moment to accept the key after the port appears.
+        for _ in range(12):
+            t = await self.test_target(rec["target"])
+            if t["status"] == "ok":
+                break
+            await asyncio.sleep(10)
+        rec["status"] = "ready" if t["status"] == "ok" else "ssh-failed"
+        self._save_pods()
+        self._changed()
+        return rec
+
+    async def stop_pod(self, pod_id: str) -> None:
+        from . import providers
+        key = self._secrets.get("RUNPOD_API_KEY")
+        rec = self.pods.get(pod_id)
+        if key:
+            try:
+                await providers.runpod_stop(key, pod_id)
+            except providers.ProviderError as exc:
+                if "no longer exists" not in str(exc):
+                    raise
+        if rec and rec.get("target") in self.targets:
+            try:
+                self.remove_target(rec["target"])
+            except ValueError:
+                pass
+        self.pods.pop(pod_id, None)
+        self._save_pods()
+        self._changed()
+
     async def import_model(self, name: str, kind: str, src: Path, filename: str) -> dict:
         if kind != "gguf" or not filename.lower().endswith(".gguf"):
             raise ValueError("Import takes a .gguf file (run it with llama.cpp)")
@@ -684,6 +779,8 @@ class Lab:
         return model
 
     async def delete_model(self, mid: str) -> None:
+        if any(r["status"] in ("queued", "preparing", "running") and r.get("base_model") == mid for r in self.runs.values()):
+            raise ValueError("A training run is still using this model as its base")
         if mid in self.deployments:
             await self.undeploy(mid)
         self.models.pop(mid, None)
