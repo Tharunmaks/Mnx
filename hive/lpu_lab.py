@@ -40,6 +40,22 @@ def _layout(p: dict) -> str:
     return s
 
 
+HELD_OUT = 8  # windows at the end of the demo text kept out of training, to measure learning honestly
+
+
+def held_out_loss(cfg: dict, load_layer, shared, windows: list) -> float:
+    """Mean cross-entropy on held-out windows, computed on a virtual chip with 32-bit words (a forward pass per window)."""
+    import numpy as np
+    m = lpu.Model(cfg, load_layer, shared, seq=TRAIN_SEQ, spec=TRAIN_SPEC, chips=1)
+    total = 0.0
+    for ids, targets in windows:
+        z = m.forward(ids).astype(np.float64)
+        z -= z.max(-1, keepdims=True)
+        lp = z - np.log(np.exp(z).sum(-1, keepdims=True))
+        total += -lp[np.arange(len(targets)), np.asarray(targets)].mean()
+    return total / len(windows)
+
+
 def _util(st: dict) -> str:
     return ", ".join(f"{u} {v:.0f}%" for u, v in st["utilisation"].items() if not u.startswith("link"))
 
@@ -71,10 +87,13 @@ async def on_lpu(task: Task, query: str, prompt: str = "", chips: int = 1, max_n
         steps = max(1, min(int(steps), MAX_STEPS))
         if train:
             seq = TRAIN_SEQ
-            text_ids = tok.encode((RECIPES / "llm-pretrain" / "sample.txt").read_text(), add_special_tokens=False).ids
-            if len(text_ids) < seq + 1:
-                await task.answer("The Hive's demo text is too short to make a training window.")
+            all_ids = tok.encode((RECIPES / "llm-pretrain" / "sample.txt").read_text(), add_special_tokens=False).ids
+            held = HELD_OUT * seq
+            if len(all_ids) < held + 2 * seq + 1:
+                await task.answer("The Hive's demo text is too short to make training and held-out windows.")
                 return
+            text_ids, tail = all_ids[:-held - 1], all_ids[-held - 1:]
+            windows = [(tail[k * seq:(k + 1) * seq], tail[k * seq + 1:(k + 1) * seq + 1]) for k in range(HELD_OUT)]
             ids: list = []
         else:
             prompt = prompt or "Once upon a time"
@@ -100,6 +119,7 @@ async def on_lpu(task: Task, query: str, prompt: str = "", chips: int = 1, max_n
                                             "(every multiply really runs, plus the tick loop)"]]
         if train:
             details += [["Steps", f"{steps} × {seq} tokens of the Hive's demo text, plain SGD (lr {LR:g}), forward + backward + update on the chips"],
+                        ["Measured on", f"{HELD_OUT * seq} held-out tokens of the same text, before and after (never trained on)"],
                         ["Afterwards", "the trained weights are merged back into the model, so Run it uses them"]]
         else:
             details += [["Prompt", prompt], ["Tokens to generate", str(max_new)]]
@@ -157,11 +177,13 @@ async def on_lpu(task: Task, query: str, prompt: str = "", chips: int = 1, max_n
                 state["model"] = m
                 t0 = time.time()
                 if train:
+                    state["before"] = held_out_loss(cfg, load_layer, shared, windows)
                     for k in range(steps):
                         start = (k * seq) % (len(text_ids) - seq - 1)
                         state["loss"] = m.train_step(text_ids[start:start + seq], text_ids[start + 1:start + seq + 1])
                         state["n"], state["stats"] = k + 1, m.step_stats()
                     m.pull_weights()
+                    state["after"] = held_out_loss(cfg, lambda i: m.weights[i], m.shared, windows)
                     for i in range(n_layers):  # the trained weights go back into the layer files, in the model's own dtype
                         orig = lpu.read_safetensors(str(layers_dir / f"layer_{i:04d}.safetensors"))
                         prefix = next(k for k in orig if ".layers." in k).split(".layers.")[0] + f".layers.{i}."
@@ -206,13 +228,16 @@ async def on_lpu(task: Task, query: str, prompt: str = "", chips: int = 1, max_n
         st, m = state["stats"], state["model"]
         if train:
             losses = st["losses"]
-            await task.finish_step(prog, text=f"{steps} steps in {state['seconds']:.1f} s of simulation · loss {losses[0]:.3f} → {losses[-1]:.3f} · "
+            before, after = state["before"], state["after"]
+            change = ("better" if after < before - 1e-4 else "worse" if after > before + 1e-4 else "unchanged")
+            await task.finish_step(prog, text=f"{steps} steps in {state['seconds']:.1f} s of simulation · held-out loss {before:.3f} → {after:.3f} · "
                                               f"{st['cycles_per_step']:,} cycles per step = {lpu._fmt_time(st['chip_seconds_per_step'])} on the chip")
             curve = " ".join(f"{x:.2f}" for x in (losses if len(losses) <= 12 else losses[:6] + losses[-6:]))
             await task.emit("lab_model", id=f"lm-{model['id']}", parent=bee, model=model["id"])
             await task.emit("result", parent=bee, service=LPU, title=f"{model['name']} trained on {_layout(plan)}, cycle by cycle", badge="Done",
-                            details=[["Steps", f"{steps} × {seq} tokens · loss {losses[0]:.3f} → {losses[-1]:.3f}" + (" (first and last six)" if len(losses) > 12 else "")],
-                                     ["Loss", curve],
+                            details=[["Held-out loss", f"{before:.3f} → {after:.3f} ({change}, on {HELD_OUT * seq} tokens never trained on)"],
+                                     ["Steps", f"{steps} × {seq} tokens"],
+                                     ["Training loss per step", curve + (" (first and last six)" if len(losses) > 12 else "") + " · each step is a different window, so it jumps"],
                                      ["Cycles per step", f"{st['cycles_per_step']:,} ({st['instructions_per_step']} instructions: forward, backward, update)"],
                                      ["On the chip", f"{lpu._fmt_time(st['chip_seconds_per_step'])} per step → {st['tokens_per_second']:,.0f} training tokens/s at {plan['clock_mhz']:.0f} MHz"],
                                      ["Weights", "resident in SRAM, updated in place" if st["resident"] else f"streamed: {st['host_mb_per_step']:.1f} MB over the host link per step"],
@@ -222,8 +247,9 @@ async def on_lpu(task: Task, query: str, prompt: str = "", chips: int = 1, max_n
                                      ["Simulation", f"{st['sim_seconds_per_step']:.2f} s per step here"],
                                      ["Merged", f"{architect.fmt_bytes(state['written'])} of trained layers written back; the model now has "
                                                 f"{state['merged']['trained_steps']} layer-streamed steps"]],
-                            text=f"Loss went from {losses[0]:.3f} to {losses[-1]:.3f}.")
-            await task.answer(f"{model['name']} learned on the virtual LPU, one compiled step at a time: {steps} steps, loss {losses[0]:.3f} → {losses[-1]:.3f}. "
+                            text=f"Held-out loss went from {before:.3f} to {after:.3f}.")
+            verb = "learned" if change == "better" else "trained"
+            await task.answer(f"{model['name']} {verb} on the virtual LPU, one compiled step at a time: {steps} steps, held-out loss {before:.3f} → {after:.3f} ({change}). "
                               f"Each step took {st['cycles_per_step']:,} cycles ({lpu._fmt_time(st['chip_seconds_per_step'])}) on the chip. "
                               "The trained weights are merged back, so Run it now uses them.")
         else:

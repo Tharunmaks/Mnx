@@ -56,6 +56,10 @@ class Intent:
 
 def parse(text: str) -> Intent | None:
     t = " ".join(text.strip().split())
+    from . import budget
+    if (budget.parse_money(t) and (budget.ASKS_GPU.search(t) or re.search(r"\b(train|pretrain|fine[\s-]?tune|finetune|what can i|i have|i've got|my budget)\b", t, re.I))) \
+            or (re.search(r"\b(which|what|best|cheapest)\s+(?:cloud\s+)?gpus?\b", t, re.I) and not RENT_STOP.search(t)):
+        return Intent("gpu_budget", dataset=t)
     pm = ON_PHONE.search(t)
     lm = ON_LPU.search(t)
     if pm and re.search(ACT, t, re.I):
@@ -165,6 +169,9 @@ async def handle(task: Task) -> bool:
             from . import phone_lab
             await phone_lab.on_phone(task, intent.purpose, intent.model_query, prompt=intent.dataset,
                                      steps=int(intent.size_b) if intent.size_b else 10, engine=intent.engine)
+        elif intent.kind == "gpu_budget":
+            from . import budget
+            await budget.on_budget(task, intent.dataset)
         elif intent.kind == "on_lpu":
             from . import lpu_lab
             await lpu_lab.on_lpu(task, intent.model_query, prompt=intent.dataset, chips=int(intent.size_b or 1), mode=intent.purpose,

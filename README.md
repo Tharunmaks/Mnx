@@ -127,6 +127,18 @@ Then say **“add data to my model”** (or “feed these pages into my stories 
 more text while the GPU Bee finds hardware and the Cloud Bee continues training the existing model on it
 (lower learning rate; saved as a new version). “stop renting” stops rented GPUs.
 
+**Which GPU should I rent?** Say your budget: “I have 1500 INR, which GPU should I rent?”, “₹2k to fine-tune a 7B
+model”, “$20, what can I train?”, “with 1.5 lakh rupees can I pretrain a 1B model”. The GPU Bee (`hive/budget.py`)
+converts the money (approximate rates for INR, EUR, GBP), prices every GPU (RunPod's live prices when
+`RUNPOD_API_KEY` is saved, else a built-in table marked approximate) and shows, per GPU: hours bought (15 minutes
+of each rental go to booting and downloads), the largest model you could pretrain from scratch in that time
+(compute-optimal at 20 tokens per parameter, capped by memory), the largest model a LoRA fine-tune fits, and how
+many tokens a LoRA fine-tune gets through. It recommends the cheapest per hour among the GPUs within 15% of the most
+training compute (more hours leave room for mistakes), names a bigger-memory alternative, and for a named size says
+what a proper pretraining run costs and how long it takes. For ₹1,500 (about $18) that is about 39 hours of an
+RTX 4090 or 65 of an RTX A5000 at typical prices: enough to pretrain a model of roughly 270M parameters, or to LoRA
+fine-tune up to about 8B.
+
 Honest limits: the Architect designs any size up to 500B, and the training recipe handles a CPU, one GPU,
 several GPUs on one machine (torchrun with DDP/FSDP) and **several machines at once** (the GPU Bee's
 “all connected servers together” option; the first server is the rendezvous master on port 29400, which the
@@ -274,6 +286,7 @@ model's answer may be in the playgrounds (Run it): 200 tokens on Low up to 1,920
 ## A 500B model on a phone: layer-by-layer streaming
 
 A phone can't hold a big model, so the Hive streams it **one layer at a time**. `hive/layers.py` splits a
+hive/budget.py    GPU Bee budget planner: "I have 1500 INR, which GPU should I rent?" with live or approximate prices
 hive/lpu.py       Virtual LPU: cycle-accurate chip simulator (SRAM, matrix/vector units, links) + deterministic compiler + chip mesh
 hive/lpu_lab.py   "run my model on the lpu / on 8 lpu chips": plan card with compiled cycles, simulation, chip statistics
 saved model's safetensors into one file per transformer layer (no PyTorch needed on the server) and serves
