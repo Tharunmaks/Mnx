@@ -86,6 +86,7 @@ def apply_fim(
 def make_fim_prompt(prefix: str, suffix: str, tok: BPETokenizer) -> List[int]:
     """Build the inference-time FIM prompt; the model then emits the middle."""
     return [
+        tok.bos_id,
         tok.fim_prefix_id,
         *tok.encode(prefix, allow_special=False),
         tok.fim_suffix_id,
@@ -116,9 +117,11 @@ def pack_documents(
     seed: int = 0,
     shuffle: bool = True,
 ) -> List[int]:
-    """Concatenate documents into a single stream, each followed by ``<|eos|>``.
+    """Concatenate documents into one stream as ``<|bos|> doc <|eos|>`` ...
 
     A fraction ``fim_rate`` of documents is transformed with :func:`apply_fim`.
+    Prompts at inference time are prefixed with ``<|bos|>`` too, so the model
+    sees the same document-start marker in both settings.
     """
     rng = random.Random(seed)
     order = list(range(len(token_docs)))
@@ -129,6 +132,7 @@ def pack_documents(
         ids = list(token_docs[i])
         if fim_rate > 0 and rng.random() < fim_rate:
             ids = apply_fim(ids, tok, rng)
+        stream.append(tok.bos_id)
         stream.extend(ids)
         stream.append(tok.eos_id)
     return stream

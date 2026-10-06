@@ -54,7 +54,7 @@ def test_apply_fim_short_sequence_unchanged(tokenizer):
 
 def test_fim_prompt_and_split(tokenizer):
     prompt = make_fim_prompt("def f(x):\n    ", "\n    return y\n", tokenizer)
-    assert prompt[0] == tokenizer.fim_prefix_id
+    assert prompt[:2] == [tokenizer.bos_id, tokenizer.fim_prefix_id]
     assert prompt[-1] == tokenizer.fim_middle_id
     middle = tokenizer.encode("y = x * 2")
     full = prompt + middle + [tokenizer.eos_id, 99, 98]
@@ -63,11 +63,13 @@ def test_fim_prompt_and_split(tokenizer):
 
 def test_pack_documents_adds_eos_and_fim(tokenizer):
     docs = [[1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]]
+    bos, eos = tokenizer.bos_id, tokenizer.eos_id
     stream = pack_documents(docs, tokenizer, fim_rate=0.0, seed=0, shuffle=False)
-    assert stream == [1, 2, 3, 4, 5, 6, tokenizer.eos_id, 7, 8, 9, 10, 11, 12, tokenizer.eos_id]
+    assert stream == [bos, 1, 2, 3, 4, 5, 6, eos, bos, 7, 8, 9, 10, 11, 12, eos]
     fim_stream = pack_documents(docs, tokenizer, fim_rate=1.0, seed=0, shuffle=False)
-    assert fim_stream.count(tokenizer.eos_id) == 2
+    assert fim_stream.count(eos) == 2 and fim_stream.count(bos) == 2
     assert fim_stream.count(tokenizer.fim_prefix_id) == 2
+    assert fim_stream[:2] == [bos, tokenizer.fim_prefix_id]
     assert len(fim_stream) == len(stream) + 2 * 3
 
 

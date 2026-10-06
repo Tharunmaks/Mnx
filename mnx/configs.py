@@ -56,7 +56,7 @@ PRESETS: Dict[str, MNXConfig] = {
         n_layers=32,
         n_heads=32,
         n_kv_heads=8,
-        d_ff=11008,
+        d_ff=14336,
         max_seq_len=16384,
         dropout=0.0,
     ),
