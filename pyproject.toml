@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mnx"
+version = "2.0.0"
+description = "MNX 2.0 Max Coder: a from-scratch decoder-only transformer language model for source code."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "MNX Authors" }]
+keywords = ["llm", "transformer", "code-generation", "pytorch", "bpe"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.2,<3.0",
+    "numpy>=1.24,<3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0,<9.0"]
+
+[project.scripts]
+mnx-train = "mnx.train:main"
+mnx-generate = "mnx.generate:main"
+mnx-tokenizer = "mnx.tokenizer:main"
+
+[tool.setuptools.packages.find]
+include = ["mnx*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
