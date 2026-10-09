@@ -219,7 +219,10 @@ class Lab:
             self.on_change(kind)
 
     async def _detect_local_gpu(self) -> bool:
-        code, out = await _run(["docker", "info", "--format", "{{json .Runtimes}}"], 20)
+        try:
+            code, out = await _run(["docker", "info", "--format", "{{json .Runtimes}}"], 20)
+        except FileNotFoundError:  # no Docker here (a phone, say): no local GPU, not an error
+            return False
         return code == 0 and b"nvidia" in out
 
     # ---------- uploads ----------
