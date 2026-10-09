@@ -28,7 +28,9 @@ from pydantic import BaseModel, Field
 from gateway import auth
 from hive import effort, phone, queen, status
 from hive.browser import BrowserError, stop_playwright
-from hive.cells import cells
+from hive.bees import SIZES, BeeError, registry
+from hive.cells import cells, machine
+import os
 from hive.connectors import LANES, LAYERS, hub
 from hive.core import Task, now
 from hive.lab import lab
@@ -39,37 +41,8 @@ WEB = ROOT / "web"
 DATA = ROOT / "data"
 STATE_FILE = DATA / "hive.json"
 
-DEFAULT_BEES = [
-    {"id": "chat", "name": "Chat", "skill": "Talks with you and answers questions", "tools": [], "approval": False, "builtin": True},
-    {"id": "memory", "name": "Memory", "skill": "Saves facts and recalls them before answering", "tools": ["memory"], "approval": False, "builtin": True},
-    {"id": "browser", "name": "Browser", "skill": "Uses any website like a person, in its own Chromium", "tools": ["browser"], "approval": True, "builtin": True},
-    {"id": "phone", "name": "Phone", "skill": "Taps, types and opens apps on your paired phone", "tools": ["phone"], "approval": True, "builtin": True},
-    {"id": "cloud", "name": "Cloud", "skill": "Trains AI models, keeps them and runs them as APIs, here or on any GPU server", "tools": ["lab"], "approval": True, "builtin": True},
-    {"id": "reader", "name": "Reader", "skill": "Reads your request and works out what you want", "tools": [], "approval": False, "builtin": True},
-    {"id": "architect", "name": "Architect", "skill": "Designs transformers for any size and estimates what training takes", "tools": ["lab"], "approval": False, "builtin": True},
-    {"id": "data", "name": "Data", "skill": "Gathers training text: datasets, your files, web pages", "tools": ["browser", "lab"], "approval": False, "builtin": True},
-    {"id": "gpu", "name": "GPU", "skill": "Opens cloud Docker and GPUs: your servers, clusters, or rented machines", "tools": ["lab"], "approval": True, "builtin": True},
-    {"id": "coding", "name": "Coding", "skill": "Writes the files for a training run (train.py, serve.py, config)", "tools": ["lab"], "approval": False, "builtin": True},
-    {"id": "eval", "name": "Eval", "skill": "Tests finished models with held-out prompts and reports back", "tools": ["lab"], "approval": False, "builtin": True},
-]
-
-
-# ---------- state (bees persisted to data/hive.json) ----------
-def load_bees() -> list[dict]:
-    try:
-        bees = json.loads(STATE_FILE.read_text()).get("bees") or []
-    except (FileNotFoundError, json.JSONDecodeError):
-        bees = []
-    have = {b["id"] for b in bees}
-    return [dict(b) for b in DEFAULT_BEES if b["id"] not in have] + bees
-
-
-def save_bees() -> None:
-    DATA.mkdir(exist_ok=True)
-    STATE_FILE.write_text(json.dumps({"bees": BEES}, indent=2))
-
-
-BEES = load_bees()
+# ---------- Bees: built-in, yours, and Bees made by Bees (hive/bees.py) ----------
+BEES = registry.bees  # the same list: the registry adds and removes in place
 BEE_STATUS: dict[str, str] = {}  # bee id → busy | failed (default idle / scheduled)
 EVENT_LOG: deque[dict] = deque(maxlen=500)
 CLIENTS: set[WebSocket] = set()
@@ -80,7 +53,63 @@ def bee_view(b: dict) -> dict:
     training = b["id"] == "cloud" and any(r["status"] in ("queued", "preparing", "running") for r in lab.runs.values())
     st = BEE_STATUS.get(b["id"]) or status.busy.get(b["id"]) or ("busy" if training else None) or cells.busy(b["id"]) or ("scheduled" if b.get("schedule") else "idle")
     cell = cells.cells.get(b["id"])
-    return {**b, "status": st, "cell": cell.view() if cell else None}
+    return {**registry.view(b), "status": st, "cell": cell.view() if cell else None}
+
+
+# ---------- each Bee's computer: here, or on a cloud server the Lab reaches over SSH ----------
+PORT = os.getenv("MNX_PORT", "8000")
+
+
+def _remote_for(bee_id: str, where: str) -> dict | None:
+    t = lab.targets.get(where)
+    if not t:
+        return None
+    return {"ssh": lab._ssh_base(t), "dir": f"{t['workdir'].rstrip('/')}/cells/{bee_id}", "name": t["name"]}
+
+
+def _env_for(bee_id: str, mode: str) -> dict:
+    """What a Cell needs to reach its Hive: the URL (as seen from inside it) and the Bee's own key."""
+    public = os.getenv("MNX_PUBLIC_URL", "").rstrip("/")
+    url = public or {"docker": f"http://host.docker.internal:{PORT}", "local": f"http://127.0.0.1:{PORT}"}.get(mode, "")
+    env = {"MNX_BEE_KEY": registry.key_for(bee_id)}
+    if url:
+        env["MNX_HIVE"] = url
+    return env
+
+
+def _server_name(where: str) -> str | None:
+    if where == "here":
+        return "this server"
+    t = lab.targets.get(where)
+    return t["name"] if t else f"{where} (disconnected)"
+
+
+async def _bee_created(b: dict) -> None:
+    try:
+        cell = cells.get(b["id"], b["name"], b["computer"])
+        asyncio.create_task(_boot_cell(cell))
+    except RuntimeError as exc:
+        log(b["name"], "cell_error", str(exc))
+    who = "you" if b.get("created_by") == "you" else (registry.get(b["created_by"]) or {}).get("name", b.get("created_by"))
+    log(b["name"], "bee_created", f"by {who} · {registry.view(b)['computer_text']}")
+    await broadcast({"type": "bees_changed"})
+
+
+async def _bee_deleted(b: dict) -> None:
+    await cells.remove(b["id"])
+    log(b["name"], "cell_deleted", "computer, files, browser storage and jobs removed")
+    await broadcast({"type": "bees_changed"})
+
+
+async def _bee_computer(b: dict, old: dict) -> None:
+    await cells.reconfigure(b["id"], b["name"], b["computer"], old)
+    log(b["name"], "computer", registry.view(b)["computer_text"])
+    await broadcast({"type": "bees_changed", "bee": b["id"]})
+
+
+registry.on_created, registry.on_deleted, registry.on_computer = _bee_created, _bee_deleted, _bee_computer
+registry.server_name = _server_name
+cells.remote_for, cells.env_for = _remote_for, _env_for
 
 
 async def broadcast(event: dict) -> None:
@@ -238,27 +267,64 @@ def list_bees():
     return [bee_view(b) for b in BEES]
 
 
+class Computer(BaseModel):
+    size: str | None = Field(default=None, max_length=12)
+    cpus: float | None = None
+    memory_gb: float | None = None
+    gpu: bool | None = None
+    where: str | None = Field(default=None, max_length=48)
+
+
 class NewBee(BaseModel):
     name: str = Field(min_length=1, max_length=24)
     skill: str = Field(min_length=1, max_length=90)
     tools: list[str] = Field(default_factory=list, max_length=20)
     schedule: str | None = Field(default=None, max_length=40)
     approval: bool = True
+    created_by: str = Field(default="you", max_length=40)
+    computer: Computer | None = None
+
+
+def _check_where(where: str | None) -> None:
+    if where and where != "here" and where not in lab.targets:
+        raise HTTPException(400, "That server isn't connected (add it in Cloud Bee · Lab → Servers)")
 
 
 @api.post("/bees")
 async def add_bee(bee: NewBee):
-    slug = re.sub(r"[^a-z0-9]+", "_", bee.name.lower()).strip("_") or "bee"
-    if any(b["id"] == slug for b in BEES):
-        raise HTTPException(409, "A Bee with that name already exists")
-    record = {"id": slug, **bee.model_dump(), "builtin": False}
-    BEES.append(record)
-    save_bees()
-    cell = cells.get(slug, bee.name)
-    asyncio.create_task(_boot_cell(cell))
-    log(bee.name, "cell_created", f"{cells.mode} Cell")
-    await broadcast({"type": "bees_changed"})
+    comp = bee.computer.model_dump(exclude_none=True) if bee.computer else None
+    _check_where((comp or {}).get("where"))
+    try:
+        record = await registry.create(bee.name, bee.skill, bee.created_by, bee.tools, bee.schedule, bee.approval, comp)
+    except BeeError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return bee_view(record)
+
+
+@api.put("/bees/{bee_id}/computer")
+async def bee_computer(bee_id: str, body: Computer):
+    """Resize a Bee's computer or move it to another server (files stay where they were)."""
+    change = body.model_dump(exclude_none=True)
+    _check_where(change.get("where"))
+    try:
+        b = await registry.set_computer(bee_id, change)
+    except BeeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return bee_view(b)
+
+
+@api.get("/computers")
+def computer_options():
+    """What a Bee's computer can be: the sizes, this server's capacity, and every connected cloud server."""
+    servers = [{"id": "here", "name": "This server", **machine(), "gpu": lab.gpu_local, "status": "ok"}]
+    for t in lab.targets.values():
+        info = t.get("info") or {}
+        servers.append({"id": t["id"], "name": t["name"], "cpus": info.get("cpus"), "memory_gb": round(int(info.get("ram_mb") or 0) / 1024, 1) or None,
+                        "gpu": bool(t.get("gpu")), "gpus": info.get("gpus") or [], "status": t.get("status")})
+    return {"sizes": SIZES, "servers": servers, "cell_mode": cells.mode,
+            "limits": "enforced" if cells.mode == "docker" else "not enforced on this server (no Docker); remote servers give the whole machine"}
 
 
 async def _boot_cell(cell) -> None:
@@ -271,17 +337,13 @@ async def _boot_cell(cell) -> None:
 
 @api.delete("/bees/{bee_id}")
 async def delete_bee(bee_id: str):
-    bee = next((b for b in BEES if b["id"] == bee_id), None)
-    if not bee:
+    if not registry.get(bee_id):
         raise HTTPException(404, "No such Bee")
-    if bee.get("builtin"):
-        raise HTTPException(400, "Built-in Bees can't be removed")
-    BEES.remove(bee)
-    save_bees()
-    await cells.remove(bee_id)
-    log(bee["name"], "cell_deleted", "container, files, browser storage and jobs removed")
-    await broadcast({"type": "bees_changed"})
-    return {"ok": True}
+    try:
+        adopted = await registry.delete(bee_id)
+    except BeeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "adopted": [b["id"] for b in adopted]}
 
 
 @api.get("/events")
@@ -390,7 +452,10 @@ def _bee(bee_id: str) -> dict:
 
 def _cell(bee_id: str):
     bee = _bee(bee_id)
-    return cells.get(bee["id"], bee["name"])
+    try:
+        return cells.get(bee["id"], bee["name"], bee.get("computer"))
+    except RuntimeError as exc:
+        raise HTTPException(409, f"{exc}. Move this Bee's computer to another server.") from exc
 
 
 @api.get("/browser")
@@ -537,8 +602,16 @@ def _path(cell, path: str):
 
 
 @api.get("/cells/{bee_id}/files")
-def files_list(bee_id: str, path: str = ""):
+async def files_list(bee_id: str, path: str = ""):
     cell = _cell(bee_id)
+    if cell.mode == "remote":
+        try:
+            await cell.ensure_up()
+            return await cell.rlist(path)
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(404, "Not a folder") from exc
+        except RuntimeError as exc:
+            raise HTTPException(502, str(exc)) from exc
     p = _path(cell, path)
     if not p.is_dir():
         raise HTTPException(404, "Not a folder")
@@ -546,8 +619,15 @@ def files_list(bee_id: str, path: str = ""):
 
 
 @api.get("/cells/{bee_id}/file")
-def file_get(bee_id: str, path: str):
+async def file_get(bee_id: str, path: str):
     cell = _cell(bee_id)
+    if cell.mode == "remote":
+        try:
+            data = await cell.rread(path)
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(404, "No such file") from exc
+        name = path.rstrip("/").rsplit("/", 1)[-1] or "file"
+        return Response(data, media_type="application/octet-stream", headers={"Content-Disposition": f'attachment; filename="{name}"'})
     p = _path(cell, path)
     if not p.is_file():
         raise HTTPException(404, "No such file")
@@ -557,6 +637,20 @@ def file_get(bee_id: str, path: str):
 @api.put("/cells/{bee_id}/file")
 async def file_put(bee_id: str, path: str, request: Request):
     cell = _cell(bee_id)
+    if cell.mode == "remote":
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > 200 * 1024 * 1024:
+                raise HTTPException(413, "Files up to 200 MB")
+        try:
+            await cell.ensure_up()
+            await cell.rwrite(path, bytes(data))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        return {"ok": True, "size": len(data)}
     p = _path(cell, path)
     p.parent.mkdir(parents=True, exist_ok=True)
     size = 0
@@ -578,6 +672,18 @@ async def file_put(bee_id: str, path: str, request: Request):
 @api.delete("/cells/{bee_id}/file")
 async def file_delete(bee_id: str, path: str):
     cell = _cell(bee_id)
+    if cell.mode == "remote":
+        from hive.cells import rpath
+        try:
+            target = rpath(cell.remote["dir"], path)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if target == rpath(cell.remote["dir"]):
+            raise HTTPException(400, "Can't delete the Cell's root folder")
+        code, out = await cell.exec(f"rm -rf -- {target}", 60)
+        if code != 0:
+            raise HTTPException(400, out.strip()[:300] or "Couldn't delete")
+        return {"ok": True}
     p = _path(cell, path)
     if p == cell.work.resolve():
         raise HTTPException(400, "Can't delete the Cell's root folder")
@@ -1238,6 +1344,42 @@ async def run_task(task: Task) -> None:
 
 
 # ---------- web app ----------
+# ---------- for Bees themselves: create and list their own children with their Bee key ----------
+class ChildBee(BaseModel):
+    name: str = Field(min_length=1, max_length=24)
+    skill: str = Field(min_length=1, max_length=90)
+    size: str | None = Field(default=None, max_length=12)
+    tools: list[str] = Field(default_factory=list, max_length=20)
+
+
+def _calling_bee(request: Request) -> dict:
+    b = registry.by_key(request.headers.get("x-bee-key", ""))
+    if not b:
+        raise HTTPException(401, "Unknown Bee key")
+    return b
+
+
+@app.get("/bee-api/me")
+def bee_me(request: Request):
+    return bee_view(_calling_bee(request))
+
+
+@app.get("/bee-api/children")
+def bee_children(request: Request):
+    return [bee_view(c) for c in registry.children(_calling_bee(request)["id"])]
+
+
+@app.post("/bee-api/children")
+async def bee_new_child(body: ChildBee, request: Request):
+    parent = _calling_bee(request)
+    try:
+        child = await registry.create(body.name, body.skill, parent["id"], body.tools, None, True,
+                                      {"size": body.size} if body.size else None)
+    except BeeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return bee_view(child)
+
+
 @app.get("/drone.py")
 def drone_script():
     """The Termux agent, so the phone can download it with curl."""

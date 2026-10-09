@@ -10,7 +10,11 @@ Cells live in the gateway process, not the web page, so closing the app changes 
 Run the gateway as a service (services/mnx-hive.service) so it also survives reboots.
 
 Modes (MNX_CELL_MODE): docker (isolated, recommended), local (no isolation: commands run
-as the gateway's user), auto (docker if available, else local).
+as the gateway's user), auto (docker if available, else local). A Cell whose Bee's computer is on
+another server is "remote": its terminal, commands, jobs and files go over SSH to a folder there.
+
+Each Cell gets its Bee's computer size (CPUs, memory, GPU; enforced in docker mode), and three
+variables: MNX_BEE, MNX_HIVE and MNX_BEE_KEY, which `python3 .mnx/mnx-bee` uses to create children.
 """
 
 from __future__ import annotations
@@ -19,7 +23,9 @@ import asyncio
 import fcntl
 import json
 import os
+import posixpath
 import re
+import shlex
 import shutil
 import signal
 import struct
@@ -41,6 +47,35 @@ SCROLLBACK = 256 * 1024
 LOG_MAX = 1024 * 1024
 BROWSER_IDLE = int(os.getenv("MNX_BROWSER_IDLE", "900"))  # close idle browsers; storage stays on disk
 ID_RE = re.compile(r"^[a-z0-9_]{1,40}$")
+KILL_TREE = (  # kill a job's whole process tree from its pid file (slim images have no pkill, so walk /proc)
+    'p=$(cat {pidfile} 2>/dev/null) || exit 0; '
+    'kids() {{ for s in /proc/[0-9]*/stat; do set -- $(cat $s 2>/dev/null); [ "$4" = "$1" ] && continue; '
+    '[ "$4" = "$P" ] && echo $1; done; }}; '
+    'all=$p; todo=$p; while [ -n "$todo" ]; do n=""; for P in $todo; do n="$n $(kids)"; done; todo=$(echo $n); all="$all $todo"; done; '
+    'kill -TERM $all 2>/dev/null; rm -f {pidfile}; true')
+
+
+def machine() -> dict:
+    """This server's CPUs and memory, to keep a Cell's limits within what exists."""
+    mem = 0.0
+    try:
+        for line in open("/proc/meminfo"):
+            if line.startswith("MemTotal:"):
+                mem = int(line.split()[1]) / 1024 / 1024
+    except OSError:
+        pass
+    return {"cpus": os.cpu_count() or 1, "memory_gb": round(mem, 1)}
+
+
+def rpath(base: str, rel: str = "") -> str:
+    """A shell-safe path on a remote server under `base` (which may start with ~/)."""
+    rel = posixpath.normpath("/" + (rel or "")).lstrip("/")
+    if rel.startswith(".."):
+        raise ValueError("Path is outside the Cell")
+    full = posixpath.join(base, rel) if rel and rel != "." else base
+    if full.startswith("~/"):
+        return '"$HOME"/' + shlex.quote(full[2:])
+    return shlex.quote(full)
 
 
 def _docker_ok() -> bool:
@@ -59,6 +94,19 @@ def pick_mode() -> str:
     if want == "docker" or _docker_ok():
         return "docker"
     return "local"
+
+
+async def _run_in(argv: list[str], timeout: float = 60, stdin: bytes | None = None) -> tuple[int, str]:
+    """Like _run, with optional input (for ssh: scripts and file contents)."""
+    proc = await asyncio.create_subprocess_exec(
+        *argv, stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(stdin), timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return 124, "timed out"
+    return proc.returncode or 0, out.decode(errors="replace")
 
 
 async def _run(argv: list[str], timeout: float = 60) -> tuple[int, str]:
@@ -184,10 +232,16 @@ class Terminal:
 
 # ---------- cell ----------
 class Cell:
-    def __init__(self, bee_id: str, name: str, mode: str):
+    def __init__(self, bee_id: str, name: str, mode: str, computer: dict | None = None, remote: dict | None = None,
+                 env: dict | None = None):
+        """remote: {"ssh": [ssh … user@host --], "dir": "~/mnx-runs/cells/<bee>", "name": "server name"}."""
         if not ID_RE.match(bee_id):
             raise ValueError("bad bee id")
-        self.id, self.name, self.mode = bee_id, name, mode
+        self.id, self.name = bee_id, name
+        self.remote = remote
+        self.mode = "remote" if remote else mode
+        self.computer = dict(computer or {})
+        self.extra_env = dict(env or {})
         self.dir = CELLS / bee_id
         self.work = self.dir / "work"
         self.logs = self.dir / "logs"
@@ -199,13 +253,55 @@ class Cell:
         self.jobs: dict[str, dict] = {j["id"]: j for j in self._read_jobs()}
         self.running: dict[str, asyncio.subprocess.Process] = {}
         self.loops: dict[str, asyncio.Task] = {}
-        self.container_state = "local" if mode == "local" else "missing"
+        self.container_state = "local" if self.mode == "local" else "missing"
+        self.write_helper()
         self.on_change = None  # set by the manager
         self._disk = (0.0, 0)
         self._up_lock = asyncio.Lock()
 
     # ----- container -----
+    def write_helper(self) -> None:
+        """Put .mnx/mnx-bee (and, for remote Cells, an env file) where the Bee's commands can reach it."""
+        from .bees import HELPER
+        if self.mode in ("local", "docker"):
+            d = self.work / ".mnx"
+            d.mkdir(exist_ok=True)
+            (d / "mnx-bee").write_text(HELPER)
+
+    async def _remote_up(self) -> None:
+        env = "".join(f"export {k}={shlex.quote(v)}\n" for k, v in {"MNX_BEE": self.id, **self.extra_env}.items())
+        from .bees import HELPER
+        d = rpath(self.remote["dir"])
+        script = (f"mkdir -p {d}/.mnx && cd {d} && umask 077 && cat > .mnx/env && "
+                  f"printf %s {shlex.quote(HELPER)} > .mnx/mnx-bee && echo MNX_UP")
+        code, out = await _run_in(self.remote["ssh"] + [script], 60, env.encode())
+        self.container_state = "remote" if code == 0 and "MNX_UP" in out else "failed"
+        if self.container_state == "failed":
+            raise RuntimeError(f"Couldn't reach {self.remote['name']}: {out.strip()[-300:]}")
+
+    def _limits(self) -> list[str]:
+        """docker run flags for the Bee's computer, kept within what this server has. No cpus/memory: no limit."""
+        c, m = self.computer, machine()
+        if not c:
+            return ["--memory", MEMORY, "--cpus", CPUS]
+        flags = []
+        if c.get("cpus"):
+            flags += ["--cpus", f"{min(float(c['cpus']), m['cpus']):g}"]
+        if c.get("memory_gb"):
+            gb = float(c["memory_gb"])
+            if m["memory_gb"]:
+                gb = min(gb, m["memory_gb"] * 0.9)
+            flags += ["--memory", f"{max(0.25, gb):.2f}g"]
+        if c.get("gpu"):
+            flags += ["--gpus", "all"]
+        return flags
+
     async def ensure_up(self) -> None:
+        if self.mode == "remote":
+            async with self._up_lock:
+                if self.container_state != "remote":
+                    await self._remote_up()
+            return
         if self.mode != "docker":
             return
         # One starter at a time: a new Bee's boot and its first terminal can arrive together,
@@ -223,15 +319,28 @@ class Cell:
         else:
             code, out = await _run([
                 "docker", "run", "-d", "--name", self.container, "--hostname", self.id.replace("_", "-"),
-                "--restart", "unless-stopped", "--memory", MEMORY, "--cpus", CPUS, "--pids-limit", "512",
+                "--restart", "unless-stopped", *self._limits(), "--pids-limit", "512",
                 "--security-opt", "no-new-privileges", "--label", "mnx.cell=" + self.id,
+                "--add-host", "host.docker.internal:host-gateway",
                 "-v", f"{self.work.resolve()}:/work", "-w", "/work", "-e", "HOME=/work",
-                IMAGE, "sleep", "infinity"], 600)
+                self.computer.get("os") or IMAGE, "sleep", "infinity"], 600)
         self.container_state = "running" if code == 0 else "failed"
         if code != 0:
             raise RuntimeError(f"Couldn't start the Cell container: {out.strip()[:300]}")
 
+    async def recreate(self) -> None:
+        """Apply a new computer size: the container is replaced; /work (files) stays."""
+        if self.terminal:
+            self.terminal.stop()
+            self.terminal = None
+        if self.mode == "docker":
+            await _run(["docker", "rm", "-f", self.container], 60)
+            self.container_state = "missing"
+            await self.ensure_up()
+
     async def container_status(self) -> str:
+        if self.mode == "remote":
+            return self.container_state
         if self.mode != "docker":
             return "local"
         code, out = await _run(["docker", "inspect", "-f", "{{.State.Status}}", self.container], 20)
@@ -240,12 +349,24 @@ class Cell:
 
     def _env(self) -> dict[str, str]:
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "TERM": "xterm-256color", "LANG": "C.UTF-8",
-               "HOME": str(self.work), "MNX_BEE": self.id}
+               "HOME": str(self.work), "MNX_BEE": self.id, **self.extra_env}
         return env
 
+    def _docker_env(self) -> list[str]:
+        out = []
+        for k, v in {"MNX_BEE": self.id, **self.extra_env}.items():
+            out += ["-e", f"{k}={v}"]
+        return out
+
+    def _remote_cmd(self, command: str) -> str:
+        return f"cd {rpath(self.remote['dir'])} && . .mnx/env && {command}"
+
     def shell_argv(self) -> list[str]:
+        if self.mode == "remote":
+            ssh = list(self.remote["ssh"])
+            return [ssh[0], "-tt", *ssh[1:], self._remote_cmd("export TERM=xterm-256color; command -v bash >/dev/null && exec bash -l || exec sh -l")]
         if self.mode == "docker":
-            return ["docker", "exec", "-it", "-w", "/work", "-e", "TERM=xterm-256color", self.container,
+            return ["docker", "exec", "-it", "-w", "/work", "-e", "TERM=xterm-256color", *self._docker_env(), self.container,
                     "sh", "-c", "command -v bash >/dev/null && exec bash -l || exec sh -l"]
         return ["bash", "-l"] if shutil.which("bash") else ["sh", "-l"]
 
@@ -259,8 +380,10 @@ class Cell:
 
     async def exec(self, command: str, timeout: float = 120) -> tuple[int, str]:
         await self.ensure_up()
+        if self.mode == "remote":
+            return await _run_in(self.remote["ssh"] + [self._remote_cmd(f"sh -lc {shlex.quote(command)}")], timeout)
         if self.mode == "docker":
-            return await _run(["docker", "exec", "-w", "/work", self.container, "sh", "-lc", command], timeout)
+            return await _run(["docker", "exec", "-w", "/work", *self._docker_env(), self.container, "sh", "-lc", command], timeout)
         proc = await asyncio.create_subprocess_exec(
             "sh", "-lc", command, cwd=self.work, env=self._env(),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
@@ -287,6 +410,40 @@ class Cell:
                         "path": str(e.relative_to(self.work))})
         return out
 
+    async def rlist(self, rel: str = "") -> list[dict]:
+        """Files in a remote Cell's folder (name, dir, size, mtime), like list_files."""
+        d = rpath(self.remote["dir"], rel)
+        script = (f"cd {d} 2>/dev/null || exit 3; for f in * .[!.]*; do [ -e \"$f\" ] || continue; "
+                  "if [ -d \"$f\" ]; then t=d; else t=f; fi; "
+                  "printf '%s\\t%s\\t%s\\t%s\\n' \"$t\" \"$(stat -c %s \"$f\" 2>/dev/null || echo 0)\" "
+                  "\"$(stat -c %Y \"$f\" 2>/dev/null || echo 0)\" \"$f\"; done")
+        code, out = await _run_in(self.remote["ssh"] + [script], 30)
+        if code == 3:
+            raise FileNotFoundError(rel)
+        base = posixpath.normpath("/" + (rel or "")).lstrip("/")
+        rows = []
+        for line in out.splitlines():
+            parts = line.split("\t", 3)
+            if len(parts) == 4:
+                t, size, mtime, name = parts
+                rows.append({"name": name, "dir": t == "d", "size": int(size or 0), "mtime": int(mtime or 0),
+                             "path": posixpath.join(base, name) if base and base != "." else name})
+        return sorted(rows, key=lambda r: (not r["dir"], r["name"].lower()))
+
+    async def rread(self, rel: str, limit: int = 200 * 1024 * 1024) -> bytes:
+        proc = await asyncio.create_subprocess_exec(*self.remote["ssh"], f"head -c {limit} -- {rpath(self.remote['dir'], rel)}",
+                                                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), 600)
+        if proc.returncode:
+            raise FileNotFoundError(rel)
+        return out
+
+    async def rwrite(self, rel: str, data: bytes) -> None:
+        target = rpath(self.remote["dir"], rel)
+        code, out = await _run_in(self.remote["ssh"] + [f"mkdir -p \"$(dirname -- {target})\" && cat > {target}"], 600, data)
+        if code:
+            raise RuntimeError(out.strip()[-300:] or "write failed")
+
     async def disk_usage_cached(self, max_age: float = 60) -> int:
         """Walking a browser profile is slow; do it in a thread, at most once a minute."""
         if time.monotonic() - self._disk[0] > max_age:
@@ -294,6 +451,8 @@ class Cell:
         return self._disk[1]
 
     def disk_usage(self) -> int:
+        if self.mode == "remote":
+            return 0  # lives on the remote server; its own disk
         total = 0
         for root, _, files in os.walk(self.dir):
             for f in files:
@@ -358,11 +517,17 @@ class Cell:
         job["last_start"], job["runs"] = int(time.time()), job["runs"] + 1
         self.save_jobs()
         pidfile = f"/tmp/mnx-job-{job_id}.pid"
-        if self.mode == "docker":
+        if self.mode == "remote":
+            pidfile = f"/tmp/mnx-job-{self.id}-{job_id}.pid"
+            await _run_in(self.remote["ssh"] + [KILL_TREE.format(pidfile=pidfile)], 20)
+            proc = await asyncio.create_subprocess_exec(
+                *self.remote["ssh"], self._remote_cmd(f"echo $$ > {pidfile}; exec sh -lc {shlex.quote(job['command'])}"),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        elif self.mode == "docker":
             # A run left over from before a gateway restart keeps going inside the container: end it first.
             await self._kill_in_container(job_id)
             proc = await asyncio.create_subprocess_exec(
-                "docker", "exec", "-w", "/work", "-e", f"MNX_CMD={job['command']}", self.container,
+                "docker", "exec", "-w", "/work", "-e", f"MNX_CMD={job['command']}", *self._docker_env(), self.container,
                 "sh", "-c", f'echo $$ > {pidfile}; exec sh -lc "$MNX_CMD"',
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         else:
@@ -402,7 +567,9 @@ class Cell:
         proc = self.running.get(job_id)
         if not proc:
             return
-        if self.mode == "docker":
+        if self.mode == "remote":
+            await _run_in(self.remote["ssh"] + [KILL_TREE.format(pidfile=f"/tmp/mnx-job-{self.id}-{job_id}.pid")], 20)
+        elif self.mode == "docker":
             await self._kill_in_container(job_id)
         else:
             try:
@@ -415,15 +582,7 @@ class Cell:
             proc.kill()
 
     async def _kill_in_container(self, job_id: str) -> None:
-        pidfile = f"/tmp/mnx-job-{job_id}.pid"
-        # Kill the job's whole process tree (slim images have no pkill, so walk /proc).
-        script = (
-            f'p=$(cat {pidfile} 2>/dev/null) || exit 0; '
-            'kids() { for s in /proc/[0-9]*/stat; do set -- $(cat $s 2>/dev/null); [ "$4" = "$1" ] && continue; '
-            '[ "$4" = "$P" ] && echo $1; done; }; '
-            'all=$p; todo=$p; while [ -n "$todo" ]; do n=""; for P in $todo; do n="$n $(kids)"; done; todo=$(echo $n); all="$all $todo"; done; '
-            f'kill -TERM $all 2>/dev/null; rm -f {pidfile}; true'
-        )
+        script = KILL_TREE.format(pidfile=f"/tmp/mnx-job-{job_id}.pid")
         await _run(["docker", "exec", self.container, "sh", "-c", script], 20)
 
     def start_always(self, job_id: str) -> None:
@@ -470,7 +629,10 @@ class Cell:
         failed = any(j["last_exit"] not in (None, 0, -15, 143) and j["id"] not in self.running for j in self.jobs.values())
         return {
             "bee": self.id, "name": self.name, "mode": self.mode, "container": self.container_state,
-            "image": IMAGE if self.mode == "docker" else None,
+            "image": (self.computer.get("os") or IMAGE) if self.mode == "docker" else None,
+            "server": self.remote["name"] if self.remote else "this server",
+            "limits": ("enforced" if self.mode == "docker" else "the whole remote server" if self.mode == "remote"
+                       else "not enforced (local mode: no Docker on this server)"),
             "terminal": bool(self.terminal and self.terminal.alive),
             "browser": self.browser.running,
             "jobs": len(self.jobs), "running": len(self.running), "failed": failed,
@@ -485,6 +647,8 @@ class Cell:
         if self.terminal:
             self.terminal.stop()
         await self.browser.shutdown()
+        if self.mode == "remote":
+            await _run_in(self.remote["ssh"] + [f"rm -rf -- {rpath(self.remote['dir'])}"], 120)
         if self.mode == "docker":
             # Files written inside the container belong to its root user; remove them from inside.
             if await self.container_status() == "running":
@@ -500,12 +664,20 @@ class CellManager:
         self.cells: dict[str, Cell] = {}
         self.on_change = None
         self._tasks: list[asyncio.Task] = []
+        # set by the gateway: where → {"ssh", "dir", "name"} for a cloud server (None for this server),
+        # and the variables each Cell gets (its Hive URL and Bee key)
+        self.remote_for = lambda bee_id, where: None
+        self.env_for = lambda bee_id, mode: {}
 
     async def start(self, bees: list[dict]) -> None:
         self.mode = await asyncio.to_thread(pick_mode)
         print(f"[mnx] Cells run in {self.mode} mode", flush=True)
         for b in bees:
-            cell = self.get(b["id"], b["name"])
+            try:
+                cell = self.get(b["id"], b["name"], b.get("computer"))
+            except Exception as exc:  # a server that's gone: the Bee's Cell waits until it's moved
+                print(f"[mnx] Cell {b['id']}: {exc}", flush=True)
+                continue
             for job in cell.jobs.values():
                 if job["schedule"] == "@always" and job["enabled"]:
                     cell.start_always(job["id"])
@@ -524,16 +696,42 @@ class CellManager:
         for cell in self.cells.values():
             cell.container_state = states.get(cell.id, "missing")
 
-    def get(self, bee_id: str, name: str | None = None) -> Cell:
+    def get(self, bee_id: str, name: str | None = None, computer: dict | None = None) -> Cell:
         cell = self.cells.get(bee_id)
         if not cell:
-            cell = Cell(bee_id, name or bee_id, self.mode)
+            where = (computer or {}).get("where", "here")
+            remote = self.remote_for(bee_id, where) if where != "here" else None
+            if where != "here" and not remote:
+                raise RuntimeError(f"The server {where!r} isn't connected any more")
+            mode = "remote" if remote else self.mode
+            cell = Cell(bee_id, name or bee_id, self.mode, computer, remote, self.env_for(bee_id, mode))
             cell.on_change = lambda c: self.on_change and self.on_change(c)
             self.cells[bee_id] = cell
         return cell
 
+    async def reconfigure(self, bee_id: str, name: str, computer: dict, old: dict) -> Cell:
+        """A Bee's computer changed. Same place: resize (the container is replaced, files stay). New place:
+        stop it here and start it there (files don't move by themselves; the old folder is kept)."""
+        cell = self.cells.get(bee_id)
+        moved = (old or {}).get("where", "here") != computer.get("where", "here")
+        if cell and not moved:
+            cell.computer = dict(computer)
+            await cell.recreate()
+            return cell
+        if cell:
+            for jid in list(cell.jobs):
+                await cell.stop_job(jid)
+            if cell.terminal:
+                cell.terminal.stop()
+            if cell.mode == "docker":
+                await _run(["docker", "rm", "-f", cell.container], 60)
+            self.cells.pop(bee_id, None)
+        cell = self.get(bee_id, name, computer)
+        await cell.ensure_up()
+        return cell
+
     async def remove(self, bee_id: str) -> None:
-        cell = self.cells.pop(bee_id, None) or Cell(bee_id, bee_id, self.mode)
+        cell = self.cells.pop(bee_id, None) or Cell(bee_id, bee_id, self.mode if self.mode != "remote" else "local")
         await cell.destroy()
 
     def busy(self, bee_id: str) -> str | None:

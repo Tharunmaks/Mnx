@@ -43,13 +43,25 @@
   <form method="dialog" id="beeForm">
     <div class="dlg-head"><h2>Add a Bee</h2><button class="icon-btn" value="cancel" aria-label="Close"><span data-icon="close"></span></button></div>
     <div class="dlg-body">
-      <p class="hint">A Bee's card: its name, one-line skill, the tools it may use and whether it needs your OK. Every Bee also gets its own Cell on your server: a container with its own terminal, browser storage, files and 24/7 jobs.</p>
+      <p class="hint">A Bee's card: its name, one-line skill, the tools it may use and whether it needs your OK. Every Bee gets its own computer: a terminal, browser storage, files and 24/7 jobs, on this server or on any cloud server you've connected. A Bee can make its own Bees too.</p>
       <label class="field">Name
         <input name="name" required maxlength="24" placeholder="e.g. Notes">
       </label>
       <label class="field">Skill (one line)
         <input name="skill" required maxlength="90" placeholder="What this Bee does">
       </label>
+      <label class="field">Made by
+        <select name="parent" id="beeParent"></select>
+      </label>
+      <div class="row" style="gap:10px">
+        <label class="field" style="flex:1">Computer
+          <select name="size" id="beeSize"></select>
+        </label>
+        <label class="field" style="flex:1">Runs on
+          <select name="where" id="beeWhere"></select>
+        </label>
+      </div>
+      <label class="check"><input type="checkbox" name="gpu"> Give it a GPU (if that server has one)</label>
       <label class="field">Tools (comma separated)
         <input name="tools" maxlength="200" placeholder="e.g. web_search, read_page">
       </label>
@@ -62,6 +74,28 @@
     <div class="dlg-foot">
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
       <button class="btn primary" value="save">Add Bee</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="compDlg">
+  <form method="dialog" id="compForm">
+    <div class="dlg-head"><h2 id="compTitle">Computer</h2><button class="icon-btn" value="cancel" aria-label="Close"><span data-icon="close"></span></button></div>
+    <div class="dlg-body">
+      <p class="hint" id="compNow"></p>
+      <label class="field">Size
+        <select name="size" id="compSize"></select>
+      </label>
+      <label class="field">Runs on
+        <select name="where" id="compWhere"></select>
+      </label>
+      <label class="check"><input type="checkbox" name="gpu"> GPU</label>
+      <p class="hint">A new size restarts the Bee's computer; its files and jobs stay. Moving it to another server starts a fresh folder there; the old files stay where they were. The operating system is the default image for now.</p>
+      <p class="hint" id="compErr" style="color:var(--failed)"></p>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn primary" value="save">Apply</button>
     </div>
   </form>
 </dialog>

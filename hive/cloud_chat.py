@@ -56,7 +56,10 @@ class Intent:
 
 def parse(text: str) -> Intent | None:
     t = " ".join(text.strip().split())
-    from . import budget
+    from . import bee_chat, budget
+    bi = bee_chat.parse(t)
+    if bi:
+        return Intent("bee", dataset=t, purpose=bi["kind"])
     if (budget.parse_money(t) and (budget.ASKS_GPU.search(t) or re.search(r"\b(train|pretrain|fine[\s-]?tune|finetune|what can i|i have|i've got|my budget)\b", t, re.I))) \
             or (re.search(r"\b(which|what|best|cheapest)\s+(?:cloud\s+)?gpus?\b", t, re.I) and not RENT_STOP.search(t)):
         return Intent("gpu_budget", dataset=t)
@@ -169,6 +172,9 @@ async def handle(task: Task) -> bool:
             from . import phone_lab
             await phone_lab.on_phone(task, intent.purpose, intent.model_query, prompt=intent.dataset,
                                      steps=int(intent.size_b) if intent.size_b else 10, engine=intent.engine)
+        elif intent.kind == "bee":
+            from . import bee_chat
+            await bee_chat.handle(task, intent.dataset)
         elif intent.kind == "gpu_budget":
             from . import budget
             await budget.on_budget(task, intent.dataset)

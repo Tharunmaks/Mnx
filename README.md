@@ -78,6 +78,39 @@ data/             Created at runtime: token.txt, hive.json (Bees), connectors.js
 
 Chat history is kept in the browser (localStorage) for now.
 
+## Bees that make Bees, each with its own computer
+
+Anyone can make a Bee, and so can a Bee. In the chat:
+
+- **"create a bee called Scout that watches prices"**: a card asks for the name, the one-line skill, the
+  computer size and where it runs, then the Bee is ready with its own computer.
+- **"tell the Coding bee to create a bee called Tester that runs the tests"**: the new Bee belongs to Coding.
+- **"give the Scout bee a large computer"**, **"upgrade Scout to xl"**, **"move Scout to my RunPod server"**,
+  **"give Scout the most powerful computer"** (pick a connected GPU server, the whole of this one, or rent a
+  GPU machine on RunPod after a price confirmation), **"list my bees"** (the family tree), **"delete the Scout bee"**.
+
+On the Hive page, **Add Bee** has *Made by*, *Computer* and *Runs on*; every card shows who made it, its
+children and its computer, and **Computer** resizes or moves it.
+
+**A Bee makes Bees from inside its own computer** with its own key (`MNX_BEE_KEY`, set in its Cell):
+
+```bash
+python3 .mnx/mnx-bee new "Deal Finder" "finds deals online" medium
+python3 .mnx/mnx-bee children
+```
+
+The key only opens `/bee-api` (create and list its own children); it can't reach your `/api`. Limits stop
+a runaway: 64 Bees in all, 4 generations, 12 children per Bee. Removing a Bee hands its children to its parent.
+
+**Computers** (`hive/bees.py`, `hive/cells.py`): Small (1 CPU, 1 GB), Medium (2, 4), Large (4, 16), XL (8, 32),
+Max (the whole machine), optional GPU. On this server they are Docker limits (`--cpus`, `--memory`,
+`--gpus all`), kept within what the server has; a new size restarts the container and keeps its files.
+Without Docker (a phone, say) the Cell is a folder and limits aren't enforced. On a cloud server (any SSH
+server in the Lab, including rented RunPod machines) the Bee's terminal, commands, jobs and files run over
+SSH in `<server folder>/cells/<bee>`, with the whole machine. A child starts small on its parent's machine.
+The operating system is the default image for now (`MNX_CELL_IMAGE`); a Bee's `os` field is kept for yours.
+Set `MNX_PUBLIC_URL` so Bees on remote servers can reach the Hive to make children.
+
 ## Cells: every Bee's own always-on workspace
 
 Every Bee, including ones you add, gets a Cell on your server:
@@ -286,6 +319,8 @@ model's answer may be in the playgrounds (Run it): 200 tokens on Low up to 1,920
 ## A 500B model on a phone: layer-by-layer streaming
 
 A phone can't hold a big model, so the Hive streams it **one layer at a time**. `hive/layers.py` splits a
+hive/bees.py      Bee registry: Bees you make and Bees that Bees make, family limits, keys, computer sizes
+hive/bee_chat.py  "create a bee called … that …", "give the … bee a large computer", "list my bees"
 hive/budget.py    GPU Bee budget planner: "I have 1500 INR, which GPU should I rent?" with live or approximate prices
 hive/lpu.py       Virtual LPU: cycle-accurate chip simulator (SRAM, matrix/vector units, links) + deterministic compiler + chip mesh
 hive/lpu_lab.py   "run my model on the lpu / on 8 lpu chips": plan card with compiled cycles, simulation, chip statistics
