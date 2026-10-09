@@ -234,3 +234,26 @@ def test_bee_phrases(text, want):
 @pytest.mark.parametrize("text", ["create a 10M model for stories", "run my stories model on the lpu", "train my model", "hello"])
 def test_not_bee_phrases(text):
     assert bee_chat.parse(text) is None
+
+
+def test_cloud_and_gpu_bees_default_to_the_whole_machine(reg, tmp_path):
+    assert reg.get("cloud")["computer"]["size"] == "max" and reg.get("gpu")["computer"]["size"] == "max"
+    assert reg.get("cloud")["computer"]["cpus"] is None and reg.get("coding")["computer"]["size"] == "small"
+    assert "whole machine" in reg.view(reg.get("gpu"))["computer_text"]
+
+
+def test_saved_built_ins_follow_the_default_until_you_choose(tmp_path):
+    state, keys = tmp_path / "hive.json", tmp_path / "bee_keys.json"
+    # a Hive saved before the default existed: every built-in is stored as Small
+    old = Registry(state, keys)
+    for b in old.bees:
+        b["computer"] = bees.default_computer()
+    old.save()
+    again = Registry(state, keys)
+    assert again.get("cloud")["computer"]["size"] == "max" and again.get("coding")["computer"]["size"] == "small"
+    # you choose Small for Cloud on purpose: that sticks
+    run(again.set_computer("cloud", {"size": "small"}))
+    assert Registry(state, keys).get("cloud")["computer"]["size"] == "small"
+    # and a size you chose for another built-in is kept
+    run(again.set_computer("coding", {"size": "xl"}))
+    assert Registry(state, keys).get("coding")["computer"]["size"] == "xl"

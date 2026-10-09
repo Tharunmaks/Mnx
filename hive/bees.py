@@ -33,11 +33,13 @@ DEFAULT_BEES = [
     {"id": "memory", "name": "Memory", "skill": "Saves facts and recalls them before answering", "tools": ["memory"], "approval": False, "builtin": True},
     {"id": "browser", "name": "Browser", "skill": "Uses any website like a person, in its own Chromium", "tools": ["browser"], "approval": True, "builtin": True},
     {"id": "phone", "name": "Phone", "skill": "Taps, types and opens apps on your paired phone", "tools": ["phone"], "approval": True, "builtin": True},
-    {"id": "cloud", "name": "Cloud", "skill": "Trains AI models, keeps them and runs them as APIs, here or on any GPU server", "tools": ["lab"], "approval": True, "builtin": True},
+    {"id": "cloud", "name": "Cloud", "skill": "Trains AI models, keeps them and runs them as APIs, here or on any GPU server", "tools": ["lab"], "approval": True, "builtin": True,
+     "computer": {"size": "max"}},
     {"id": "reader", "name": "Reader", "skill": "Reads your request and works out what you want", "tools": [], "approval": False, "builtin": True},
     {"id": "architect", "name": "Architect", "skill": "Designs transformers for any size and estimates what training takes", "tools": ["lab"], "approval": False, "builtin": True},
     {"id": "data", "name": "Data", "skill": "Gathers training text: datasets, your files, web pages", "tools": ["browser", "lab"], "approval": False, "builtin": True},
-    {"id": "gpu", "name": "GPU", "skill": "Opens cloud Docker and GPUs: your servers, clusters, or rented machines", "tools": ["lab"], "approval": True, "builtin": True},
+    {"id": "gpu", "name": "GPU", "skill": "Opens cloud Docker and GPUs: your servers, clusters, or rented machines", "tools": ["lab"], "approval": True, "builtin": True,
+     "computer": {"size": "max"}},
     {"id": "coding", "name": "Coding", "skill": "Writes the files for a training run (train.py, serve.py, config)", "tools": ["lab"], "approval": False, "builtin": True},
     {"id": "eval", "name": "Eval", "skill": "Tests finished models with held-out prompts and reports back", "tools": ["lab"], "approval": False, "builtin": True},
 ]
@@ -120,8 +122,11 @@ class Registry:
             saved = []
         have = {b["id"] for b in saved}
         self.bees: list[dict] = [dict(b) for b in DEFAULT_BEES if b["id"] not in have] + saved
+        defaults = {b["id"]: b for b in DEFAULT_BEES}
         for b in self.bees:
             b.setdefault("created_by", None if b.get("builtin") else "you")
+            if b.get("builtin") and not b.get("computer_set") and b["id"] in defaults:
+                b["computer"] = defaults[b["id"]].get("computer")  # never chosen by you: follows the built-in default
             b["computer"] = normalize_computer(b.get("computer"))
         try:
             self.keys: dict[str, str] = json.loads(keys_file.read_text())
@@ -261,6 +266,7 @@ class Registry:
         if new == old:
             return b
         b["computer"] = new
+        b["computer_set"] = True  # your choice from now on, whatever the built-in default becomes
         self.save()
         if self.on_computer:
             try:
