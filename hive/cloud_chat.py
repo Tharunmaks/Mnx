@@ -56,7 +56,9 @@ class Intent:
 
 def parse(text: str) -> Intent | None:
     t = " ".join(text.strip().split())
-    from . import bee_chat, budget
+    from . import bee_chat, budget, usage_chat
+    if usage_chat.matches(t):
+        return Intent("usage")
     bi = bee_chat.parse(t)
     if bi:
         return Intent("bee", dataset=t, purpose=bi["kind"])
@@ -172,6 +174,9 @@ async def handle(task: Task) -> bool:
             from . import phone_lab
             await phone_lab.on_phone(task, intent.purpose, intent.model_query, prompt=intent.dataset,
                                      steps=int(intent.size_b) if intent.size_b else 10, engine=intent.engine)
+        elif intent.kind == "usage":
+            from . import usage_chat
+            await usage_chat.handle(task)
         elif intent.kind == "bee":
             from . import bee_chat
             await bee_chat.handle(task, intent.dataset)

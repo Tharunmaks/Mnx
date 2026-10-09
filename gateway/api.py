@@ -34,7 +34,7 @@ import os
 from hive.connectors import LANES, LAYERS, hub
 from hive.core import Task, now
 from hive.lab import lab
-from hive import system
+from hive import system, usage
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -259,6 +259,86 @@ async def system_stats():
     data["cell_mode"] = cells.mode
     data["gpu_docker"] = lab.gpu_local
     return data
+
+
+# ---------- Usage: what was actually used, next to the limits ----------
+_disk_cache: dict[str, tuple[float, int]] = {}
+
+
+async def _cached_size(key: str, path: Path, max_age: float = 120) -> int:
+    hit = _disk_cache.get(key)
+    if hit and time.monotonic() - hit[0] < max_age:
+        return hit[1]
+    size = await asyncio.to_thread(usage.dir_size, path) if path.exists() else 0
+    _disk_cache[key] = (time.monotonic(), size)
+    return size
+
+
+async def _docker_stats() -> dict:
+    if cells.mode != "docker":
+        return {}
+    try:
+        proc = await asyncio.create_subprocess_exec("docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}",
+                                                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), 20)
+        return usage.parse_docker_stats(out.decode(errors="replace"))
+    except (OSError, asyncio.TimeoutError):
+        return {}
+
+
+@api.get("/usage")
+async def usage_report():
+    from hive.bees import MAX_BEES, MAX_CHILDREN, MAX_DEPTH, SIZES
+    from hive.lab import MODELS
+    stats = system.stats()
+    docker = await _docker_stats()
+    rows = []
+    for b in BEES:
+        cell = cells.cells.get(b["id"])
+        view = registry.view(b)
+        c = b["computer"]
+        measured = docker.get(cell.container) if cell else None
+        disk = await cell.disk_usage_cached() if cell and cell.mode != "remote" else None
+        rows.append({
+            "id": b["id"], "name": b["name"], "builtin": bool(b.get("builtin")), "parent": view["parent_name"], "computer": view["computer_text"],
+            "where": c.get("where", "here"), "cpus_limit": c.get("cpus"), "memory_limit_gb": c.get("memory_gb"),
+            "limits": cell.view()["limits"] if cell else None, "container": cell.container_state if cell else "no Cell yet",
+            "cpu_percent": measured["cpu"] if measured else None, "memory_bytes": measured["mem"] if measured else None,
+            "memory_limit_bytes": measured["mem_limit"] if measured else None, "disk_bytes": disk,
+            "jobs": len(cell.jobs) if cell else 0, "running": len(cell.running) if cell else 0,
+            "measured": bool(measured), "status": bee_view(b)["status"]})
+    runs = list(lab.runs.values())
+    by_status: dict[str, int] = {}
+    for r in runs:
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+    ts = time.time()
+    pods = [{**usage.rental_now(p, ts), "id": p["id"], "status": p.get("status")} for p in lab.pods.values()]
+    past = usage.ledger.rentals
+    efforts = {k: {"label": v["label"], "tokens": v["tokens"], "reply": v["reply"]} for k, v in effort.LEVELS.items()}
+    data_dir = await _cached_size("data", DATA)
+    return {
+        "at": int(ts),
+        "tokens": usage.token_summary(usage.ledger),
+        "server": {"cpus": stats["cpus"], "load": stats["load"], "cpu_percent": stats["cpu_percent"], "memory": stats["memory"], "disk": stats["disk"],
+                   "gpus": stats["gpus"], "uptime": stats["uptime"], "data_bytes": data_dir, "cell_mode": cells.mode},
+        "bees": {"count": len(BEES), "limit": MAX_BEES, "built_in": sum(1 for b in BEES if b.get("builtin")),
+                 "yours": sum(1 for b in BEES if b.get("created_by") == "you"),
+                 "by_bees": sum(1 for b in BEES if b.get("created_by") not in (None, "you")),
+                 "deepest": max((registry.depth(b["id"]) for b in BEES), default=0), "max_depth": MAX_DEPTH, "max_children": MAX_CHILDREN,
+                 "rows": rows, "docker_measured": bool(docker)},
+        "lab": {"runs": len(runs), "by_status": by_status, "training_seconds": round(sum(usage.run_seconds(r, ts) for r in runs)),
+                "running": sum(1 for r in runs if r["status"] in ("preparing", "running")),
+                "models": len(lab.models), "models_bytes": await _cached_size("models", MODELS),
+                "deployments_running": sum(1 for d in lab.deployments.values() if d.get("status") in ("starting", "running")),
+                "servers": len(lab.targets)},
+        "rentals": {"active": pods, "active_cost": round(sum(p["cost"] or 0 for p in pods), 2),
+                    "past_count": len(past), "past_hours": round(sum(x["hours"] for x in past), 2),
+                    "past_cost": round(sum(x["cost"] or 0 for x in past), 2),
+                    "unpriced": sum(1 for p in pods if p["cost"] is None) + sum(1 for x in past if x["cost"] is None),
+                    "recent": past[-8:][::-1],
+                    "note": "Cost is hours x the price RunPod reported for that machine; the invoice on runpod.io is the authority."},
+        "limits": {"efforts": efforts, "sizes": SIZES, "upload_mb": 200, "file_mb": 200},
+    }
 
 
 # ---------- Bees ----------
@@ -1330,6 +1410,13 @@ async def ws_endpoint(ws: WebSocket):
 
 
 async def run_task(task: Task) -> None:
+    try:
+        await _run_task(task)
+    finally:
+        usage.ledger.record_task(task.usage())  # every message counts, finished, failed or stopped
+
+
+async def _run_task(task: Task) -> None:
     try:
         await queen.handle(task)
         await task.emit("tokens", **task.usage())  # token reading for this turn

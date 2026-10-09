@@ -856,6 +856,9 @@ class Lab:
                 self.remove_target(rec["target"])
             except ValueError:
                 pass
+        if rec:
+            from . import usage
+            usage.ledger.record_rental(rec)  # hours and cost of this rental, kept after the pod is gone
         self.pods.pop(pod_id, None)
         self._save_pods()
         self._changed()

@@ -41,6 +41,7 @@ For the Browser Bee, install Chromium once: `playwright install --with-deps chro
 | Page | What it is |
 | --- | --- |
 | `/` | Chat: left rail (new chat, history, MCP tools, Hive, settings, profile), wordmark + greeting, message box, live step tree, Bees panel |
+| `/usage.html` | Usage and limits: tokens, server, each Bee's CPU / memory / disk, training, GPU rentals, with the limits |
 | `/hive.html` | Hive: every Bee's state (busy / idle / scheduled / failed), add or remove Bees, activity log |
 | `/connectors.html` | Connector Hub: one search across all six layers, connect MCP servers, Go/Ask/You lane per tool, try tools |
 | `/cell.html?bee=<id>` | A Bee's Cell: terminal, browser (own saved logins), jobs (always-on / scheduled / manual) and files |
@@ -77,6 +78,25 @@ data/             Created at runtime: token.txt, hive.json (Bees), connectors.js
 ```
 
 Chat history is kept in the browser (localStorage) for now.
+
+## Usage and limits
+
+**Usage** in the sidebar (`/usage.html`, data from `GET /api/usage`) shows what has actually been used next to
+the limit it runs under. Everything is measured; what can't be measured says "not measured" instead of a guess.
+
+- **Tokens**: today, last 7 days, all time, a 14-day chart (with a table view), and for each effort level its limit
+  per message, how many messages used it today and the biggest one as a percent of the limit. Every message is
+  counted when it ends, saved per day in `data/usage.json` (120 days) and counted by the Hive's own token reading,
+  within about 10-15% of a real tokenizer.
+- **This server**: CPU, memory, disk, the Hive's data folder, and each GPU's memory and busy percent.
+- **Bees**: how many of the 64, how deep the family goes, and per Bee its computer, CPU and memory from
+  `docker stats` against its limit, disk, and jobs running. Without Docker only disk and jobs are measured.
+- **Training and models**: runs by status, time spent training, models and their disk, models being served.
+- **Rented GPUs**: machines billing now with hours and cost so far (hours x the price RunPod reported), and the
+  hours and cost of every finished rental, kept after the machine is gone. The invoice on runpod.io is the authority.
+- **Limits**: tokens per message, computer sizes, Bee limits and the upload size.
+
+In the chat: **"show my usage"**, **"how many tokens have I used"**, **"what are my limits"**.
 
 ## Bees that make Bees, each with its own computer
 
@@ -319,6 +339,8 @@ model's answer may be in the playgrounds (Run it): 200 tokens on Low up to 1,920
 ## A 500B model on a phone: layer-by-layer streaming
 
 A phone can't hold a big model, so the Hive streams it **one layer at a time**. `hive/layers.py` splits a
+hive/usage.py     Usage ledger (tokens per day, GPU rentals) and the measurements behind the Usage page
+hive/usage_chat.py "show my usage"
 hive/bees.py      Bee registry: Bees you make and Bees that Bees make, family limits, keys, computer sizes
 hive/bee_chat.py  "create a bee called … that …", "give the … bee a large computer", "list my bees"
 hive/budget.py    GPU Bee budget planner: "I have 1500 INR, which GPU should I rent?" with live or approximate prices
