@@ -21,8 +21,10 @@ No pre-trained weights or third-party model classes are used anywhere.
 > hundred steps on a laptop CPU using 51 tiny Python snippets. It learns to
 > reproduce and recombine that corpus; it is a toy. The `small`, `base` and
 > `max` presets describe real model sizes (up to a 7B-class flagship), but
-> pretraining them requires GPUs/TPUs, a large deduplicated code corpus and a
-> distributed training setup that are outside the scope of this repository.
+> pretraining them requires a GPU cluster and a large deduplicated code corpus.
+> The distributed trainer for that (`mnx.pretrain`, see
+> [Training the 7B model](#training-the-7b-model)) is included and tested on
+> CPU, but a 7B run needs thousands of GPU-hours.
 
 ---
 
@@ -191,6 +193,11 @@ mnx/
   data.py         corpus loading, document packing, FIM transform, CodeDataset
   train.py        training loop, LR schedule, checkpoints + CLI (python -m mnx.train)
   generate.py     completion and FIM inference + CLI (python -m mnx.generate)
+  prepare.py      parallel corpus -> uint16 token shards (python -m mnx.prepare)
+  pretrain.py     FSDP2 multi-GPU pretraining, sharded checkpoints, export (python -m mnx.pretrain)
+  budget.py       compute / time / cost / memory estimator (python -m mnx.budget)
+scripts/
+  launch_7b.sh    multi-node torchrun launcher for the 7B preset
 data/sample/      51 short self-authored Python snippets used by the demo and tests
 tests/            pytest suite (tokenizer, model, data, training, CLIs)
 pyproject.toml    package metadata (name: mnx)
@@ -207,21 +214,91 @@ The suite covers tokenizer round trips and persistence, model output shapes,
 causality (changing a future token leaves earlier logits unchanged), KV-cache
 equivalence with the full forward pass, `generate()` length / eos handling /
 sliding window, RoPE relativity, the FIM transform, dataset windows, a 5-step
-training smoke test, checkpoint resume and both CLIs. It runs in a few seconds
+training smoke test, checkpoint resume and both CLIs, plus the scale-up path:
+shard preparation (serial/parallel equivalence, JSONL input), meta-device
+init of the 7B preset, activation checkpointing, single-process and 2-rank
+FSDP pretraining with resume, and export back to `ckpt.pt`. It runs in a few seconds
 on CPU.
 
-## Scaling beyond the demo
+## Training the 7B model
 
-The code is device-agnostic (`--device cuda`) and the larger presets build
-with the same `MNXCoder` class, but training them for real needs:
+The `max` preset (7.11B parameters) is trained with `mnx.pretrain`, a
+multi-GPU trainer built on PyTorch FSDP2:
 
-- a large, deduplicated, licence-filtered multi-language code corpus
-  (hundreds of billions of tokens for the `max` preset);
-- a 32 768-entry tokenizer trained on that corpus;
-- multi-GPU data/tensor parallelism, mixed precision, fused attention kernels
-  and a streaming data loader, none of which are included here;
-- an evaluation harness (e.g. pass@k on execution-based benchmarks) beyond the
-  held-out loss reported by `mnx.train`.
+- parameters, gradients and AdamW state sharded across all GPUs (one FSDP unit
+  per transformer block), with meta-device init so no rank ever holds the full
+  fp32 model;
+- bf16 compute with fp32 master weights and fp32 gradient reduction;
+- activation checkpointing (`--grad-checkpointing`) and per-block
+  `torch.compile` (`--compile`);
+- streaming `uint16` token shards read with `numpy.memmap`;
+- sharded checkpoints (`torch.distributed.checkpoint`) with automatic resume
+  from `--out`, keeping the last `--keep-checkpoints`;
+- tokens/s and MFU logging to stdout and `log.csv`.
+
+### 1. Check the budget first
+
+```bash
+python -m mnx.budget --config max --gpus 64 --seq-len 4096
+```
+
+```
+model            mnx-2.0-max-coder-max  (7.11B params)
+tokens           142.3B  (20 tokens/param)
+compute          6.99e+21 FLOPs
+GPU-hours        4,908 H100-hours at 40% MFU
+wall-clock       76.7 h on 64 GPUs (3.2 days)
+est. cost        $12,269
+```
+
+These are estimates (6·N FLOPs per token plus attention, an assumed 40% MFU,
+indicative cloud prices). 20 tokens/parameter is the compute-optimal minimum.
+Strong open 7B models are trained on 2T to 15T+ tokens, which is 15x to 100x
+this budget (`--tokens 2e12`).
+
+### 2. Tokenizer and data
+
+```bash
+# 32k-entry BPE tokenizer on a representative sample (the trainer is pure
+# Python, so keep the sample to a few hundred MB)
+python -m mnx.tokenizer train --data /data/code-sample --vocab-size 32768 --out tok/tokenizer.json
+
+# Tokenise the full corpus (directories of source files and/or .jsonl files
+# with a "content" or "text" field) into ~100M-token shards
+python -m mnx.prepare --input /data/code /data/the-stack.jsonl \
+    --tokenizer tok/tokenizer.json --out /data/mnx-shards --workers 64 --fim-rate 0.5
+```
+
+The corpus should be deduplicated and licence-filtered beforehand. A document
+lands in the validation split based on a hash of its contents
+(`--val-fraction`, default 0.5%).
+
+### 3. Pretrain
+
+```bash
+# one node, 8 GPUs
+torchrun --nproc_per_node 8 -m mnx.pretrain --config max --data /data/mnx-shards \
+    --out runs/mnx-2.0-max --seq-len 4096 --micro-batch 2 --grad-accum 32 \
+    --steps 34000 --lr 3e-4 --min-lr 3e-5 --warmup 2000 --grad-checkpointing --compile
+
+# multi-node: run on every node (computes grad-accum for ~4M tokens/step)
+NNODES=8 NODE_RANK=0 MASTER_ADDR=node0 DATA=/data/mnx-shards ./scripts/launch_7b.sh
+```
+
+Rerunning the same command resumes from the latest checkpoint in `--out`.
+On a single process (no `torchrun`) the same script trains without sharding
+under `torch.autocast`, which is what the CPU tests use.
+
+### 4. Export and use
+
+```bash
+python -m mnx.pretrain export --run runs/mnx-2.0-max --out runs/mnx-2.0-max-final  # bf16 ckpt.pt (~14 GB)
+python -m mnx.generate --ckpt runs/mnx-2.0-max-final --device cuda --prompt "def quicksort(xs):"
+```
+
+A pretrained base model completes code; it does not follow chat instructions.
+That takes a further supervised fine-tuning stage on instruction data, which
+this repository does not include yet.
 
 ## License
 

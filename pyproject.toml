@@ -17,7 +17,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "torch>=2.2,<3.0",
+    "torch>=2.6,<3.0",
     "numpy>=1.24,<3.0",
 ]
 
@@ -28,6 +28,9 @@ dev = ["pytest>=8.0,<9.0"]
 mnx-train = "mnx.train:main"
 mnx-generate = "mnx.generate:main"
 mnx-tokenizer = "mnx.tokenizer:main"
+mnx-prepare = "mnx.prepare:main"
+mnx-pretrain = "mnx.pretrain:main"
+mnx-budget = "mnx.budget:main"
 
 [tool.setuptools.packages.find]
 include = ["mnx*"]

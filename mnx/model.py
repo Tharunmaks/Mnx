@@ -20,6 +20,7 @@ from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint
 
 KVCache = List[Tuple[torch.Tensor, torch.Tensor]]
 
@@ -214,18 +215,38 @@ class MNXCoder(nn.Module):
         self.norm = RMSNorm(cfg.d_model, cfg.norm_eps)
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
 
-        cos, sin = precompute_rope(cfg.head_dim, cfg.max_seq_len, cfg.rope_theta)
-        self.register_buffer("rope_cos", cos, persistent=False)
-        self.register_buffer("rope_sin", sin, persistent=False)
+        # Recompute activations in the backward pass instead of storing them
+        # (trades ~30% extra compute for a large cut in activation memory).
+        self.gradient_checkpointing = False
 
+        self.register_buffer("rope_cos", torch.empty(0), persistent=False)
+        self.register_buffer("rope_sin", torch.empty(0), persistent=False)
+
+        self.init_weights()
+
+    @torch.no_grad()
+    def init_weights(self) -> None:
+        """(Re-)initialise all parameters and the RoPE tables in place.
+
+        Called from ``__init__``; call it again after materialising a model
+        that was built on the ``meta`` device (``model.to_empty(...)``).
+        """
+        cfg = self.cfg
+        if cfg.tie_embeddings:
+            # ``to_empty`` allocates each module's parameters separately,
+            # which unties shared weights; restore the tie.
+            self.lm_head.weight = self.tok_emb.weight
+        device = self.tok_emb.weight.device
+        cos, sin = precompute_rope(cfg.head_dim, cfg.max_seq_len, cfg.rope_theta)
+        self.rope_cos = cos.to(device)
+        self.rope_sin = sin.to(device)
+        if device.type == "meta":
+            return
         self.apply(self._init_weights)
         # Scale residual-branch output projections by depth (GPT-2 style).
         for name, p in self.named_parameters():
             if name.endswith("attn.wo.weight") or name.endswith("ffn.down.weight"):
                 nn.init.normal_(p, mean=0.0, std=cfg.init_std / math.sqrt(2 * cfg.n_layers))
-
-        if cfg.tie_embeddings:
-            self.lm_head.weight = self.tok_emb.weight
 
     def _init_weights(self, module: nn.Module) -> None:
         if isinstance(module, nn.Linear):
@@ -234,6 +255,8 @@ class MNXCoder(nn.Module):
                 nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=self.cfg.init_std)
+        elif isinstance(module, RMSNorm):
+            nn.init.ones_(module.weight)
 
     # ------------------------------------------------------------ utilities
     def num_parameters(self, non_embedding: bool = False) -> int:
@@ -293,7 +316,10 @@ class MNXCoder(nn.Module):
         new_cache: KVCache = []
         for i, block in enumerate(self.blocks):
             layer_past = past_kv[i] if past_kv is not None else None
-            x, kv = block(x, cos, sin, layer_past, use_cache)
+            if self.gradient_checkpointing and self.training and not use_cache:
+                x, kv = torch.utils.checkpoint.checkpoint(block, x, cos, sin, use_reentrant=False)
+            else:
+                x, kv = block(x, cos, sin, layer_past, use_cache)
             if use_cache:
                 new_cache.append(kv)
         x = self.norm(x)
@@ -303,7 +329,7 @@ class MNXCoder(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(
                 logits.view(-1, logits.size(-1)).float(),
-                targets.view(-1),
+                targets.reshape(-1),
                 ignore_index=ignore_index,
             )
         return logits, loss, (new_cache if use_cache else None)
