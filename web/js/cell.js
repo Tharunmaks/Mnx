@@ -54,7 +54,8 @@ async function startCell(e) {
 const shown = new Set();
 function showTab(name) {
   document.querySelectorAll(".cell-tabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
-  for (const n of ["terminal", "browser", "jobs", "files"]) $(`tab-${n}`).classList.toggle("hidden", n !== name);
+  for (const n of ["desktop", "terminal", "browser", "jobs", "files"]) $(`tab-${n}`).classList.toggle("hidden", n !== name);
+  if (name === "desktop") loadDesktop();
   if (name === "terminal") { openTerminal(); requestAnimationFrame(() => fit?.fit()); }
   if (name === "browser" && !shown.has("browser")) $("browserFrame").src = `browser.html?bee=${encodeURIComponent(beeId)}&embed=1`;
   if (name === "files") loadFiles(cwd);
@@ -62,6 +63,53 @@ function showTab(name) {
   history.replaceState(null, "", `?bee=${encodeURIComponent(beeId)}#${name}`);
 }
 document.querySelectorAll(".cell-tabs .tab").forEach((t) => t.addEventListener("click", () => showTab(t.dataset.tab)));
+
+// ---------- desktop: Vortex OS on this Bee's computer ----------
+let desk = null;
+function deskUrl(d) {
+  const host = d.bind === "0.0.0.0" ? location.hostname : d.bind;
+  return `${location.protocol}//${host.includes(":") ? `[${host}]` : host}:${d.port}/`;
+}
+async function loadDesktop() {
+  try { desk = await api(`${base}/desktop`); } catch (e) { $("deskErr").textContent = e.message; return; }
+  const d = desk;
+  const running = d.status === "running";
+  $("deskTitle").textContent = `${d.os_label} · ${d.where}`;
+  const st = $("deskStatus");
+  st.className = `status ${running ? "busy" : d.status === "failed" ? "failed" : d.status === "starting" ? "scheduled" : "idle"}`;
+  st.textContent = { running: "Running", starting: "Starting…", failed: "Failed", off: "Off", stopped: "Stopped" }[d.status] || d.status;
+  $("deskErr").textContent = d.error || d.os_error || "";
+  $("deskLogin").classList.toggle("hidden", !d.user);
+  $("deskUser").textContent = d.user || "";
+  const plain = d.os !== "vortex";
+  $("deskNote").textContent = plain
+    ? "This Bee's computer runs plain Linux (terminal only). Switch its OS to Vortex OS on the Hive page (Computer) to give it a desktop."
+    : d.bind === "127.0.0.1" && !["localhost", "127.0.0.1", "::1"].includes(location.hostname)
+      ? "The desktop listens on the Hive machine only (MNX_VORTEX_BIND=127.0.0.1). Open it on that machine, or set MNX_VORTEX_BIND=0.0.0.0 to reach it from here."
+      : "A Debian desktop for this Bee: windows, a real terminal, files, an editor, a browser and a system monitor. Its home folder is this Bee's work folder.";
+  $("deskStart").classList.toggle("hidden", running || plain);
+  $("deskStart").disabled = d.status === "starting";
+  $("deskOpen").classList.toggle("hidden", !running);
+  if (running) $("deskOpen").href = deskUrl(d);
+  $("deskStop").classList.toggle("hidden", !running || info?.cell?.mode === "docker");
+}
+$("deskStart").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  e.target.textContent = "Starting… (the first time downloads Vortex OS)";
+  $("deskErr").textContent = "";
+  try { await api(`${base}/desktop/start`, { method: "POST" }); } catch (err) { $("deskErr").textContent = err.message; }
+  e.target.textContent = "Start desktop";
+  loadDesktop();
+});
+$("deskStop").addEventListener("click", async () => { try { await api(`${base}/desktop/stop`, { method: "POST" }); } catch (err) { toast(err.message, "error"); } loadDesktop(); });
+$("deskShow").addEventListener("click", () => {
+  const shown = $("deskPass").textContent !== "••••••••••••";
+  $("deskPass").textContent = shown ? "••••••••••••" : desk?.password || "";
+  $("deskShow").textContent = shown ? "Show" : "Hide";
+});
+$("deskCopy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(desk?.password || ""); toast("Password copied"); } catch { toast("Copy blocked; use Show", "error"); }
+});
 
 // ---------- terminal ----------
 let term, fit, ws, wsRetry = 0;

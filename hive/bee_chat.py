@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-from .bees import SIZE_WORDS, SIZES, BeeError, describe_computer, registry
+from .bees import OS_CHOICES as OS_LABELS, SIZE_WORDS, SIZES, BeeError, describe_computer, registry
 from .core import Task
 
 BEE = "Queen"
@@ -27,8 +27,10 @@ SIZE_RE = re.compile(r"\b(?P<w>very powerful|most powerful|extra large|maximum|b
                      r"|\b(?:to|size)\s+(?P<w2>small|medium|large|xl|max)\b", re.I)
 GPU_RE = re.compile(r"\b(?:with|has|have|a|give \w+(?: a)?|gpu)\s*(?:an?\s+)?gpus?\b|\bgpu\s+(?:computer|machine|server|bee)\b", re.I)
 WHERE_RE = re.compile(r"\b(?:on|to|onto)\s+(?:my\s+|the\s+)?(?P<w>[\w .-]{1,40}?)\s+(?:server|machine|pod|box)\b", re.I)
-COMPUTER = re.compile(r"\b(?:give|set|upgrade|move|put|resize|make|switch|change)\b.*\b(?:computer|machine|server|gpu|cpus?|ram|memory|"
-                      r"small|medium|large|xl|max|powerful|bigger|pod|runpod)\b", re.I)
+COMPUTER = re.compile(r"\b(?:give|set|upgrade|move|put|resize|make|switch|change|install|run|use)\b.*\b(?:computer|machine|server|gpu|cpus?|ram|memory|"
+                      r"small|medium|large|xl|max|powerful|bigger|pod|runpod|vortex|os|linux|desktop)\b", re.I)
+OS_RE = re.compile(r"\b(?P<v>vortex(?:\s*os)?)\b|\b(?P<p>plain(?:\s+linux)?|no desktop|terminal only)\b", re.I)
+DESKTOP = re.compile(r"\b(?:open|start|show|launch|give me)\b.*\bdesktop\b|\bdesktop\b.*\b(?:open|start|link)\b", re.I)
 LIST = re.compile(r"\b(?:list|show|see)\b.*\bbees\b|\bmy bees\b|\bhow many bees\b|\bwhich bees\b|\bbee (?:family|tree)\b", re.I)
 DELETE = re.compile(r"\b(?:delete|remove|kill|destroy)\s+(?:the\s+|my\s+)?(?P<b>[\w -]{1,30}?)\s+bee\b", re.I)
 STOP = {"a", "an", "the", "my", "and", "of", "for", "to", "that", "which", "who", "every", "all", "it", "its", "me", "i"}
@@ -90,7 +92,13 @@ def parse(text: str) -> dict | None:
         adj = (m.group("adj") or "").lower()
         size = _size(t) or next((SIZE_WORDS[w] for w in adj.split() if w in SIZE_WORDS), None)
         gpu = bool(GPU_RE.search(t)) or " gpu" in adj
-        return {"kind": "create", "parent": parent, "name": name, "skill": skill, "size": size, "gpu": gpu, "where": _where(t) if WHERE_RE.search(t) else None}
+        om = OS_RE.search(t)
+        return {"kind": "create", "parent": parent, "name": name, "skill": skill, "size": size, "gpu": gpu,
+                "where": _where(t) if WHERE_RE.search(t) else None, "os": ("vortex" if om.group("v") else "plain") if om else None}
+    if DESKTOP.search(t):
+        b = _bee_named(t)
+        if b:
+            return {"kind": "desktop", "bee": b["id"]}
     dm = DELETE.search(t)
     if dm:
         return {"kind": "delete", "bee": dm.group("b").strip()}
@@ -99,11 +107,15 @@ def parse(text: str) -> dict | None:
     if COMPUTER.search(t) and (re.search(r"\bbee", t, re.I) or _bee_named(t)):
         b = _bee_named(t)
         if b:
-            return {"kind": "computer", "bee": b["id"], "size": _size(t) or (
-                        "max" if re.search(r"\b(?:most powerful|very powerful|powerful|strongest|biggest|maximum)\b", t, re.I) else None),
-                    "gpu": True if re.search(r"\bgpus?\b", t, re.I) else None, "where": _where(t),
-                    "where_text": (WHERE_RE.search(t).group("w") if WHERE_RE.search(t) else None),
-                    "powerful": bool(re.search(r"\b(?:powerful|strongest|biggest|maximum|max|gpu)\b", t, re.I))}
+            # words about the computer, without the Bee's own name ("the GPU bee" is not a request for a GPU)
+            w = re.sub(rf"\b(?:{re.escape(b['name'])}|{re.escape(b['id'])})\s+bee(?:'s)?\b", " ", t, flags=re.I)
+            om = OS_RE.search(w)
+            return {"kind": "computer", "bee": b["id"], "size": _size(w) or (
+                        "max" if re.search(r"\b(?:most powerful|very powerful|powerful|strongest|biggest|maximum)\b", w, re.I) else None),
+                    "gpu": True if re.search(r"\bgpus?\b", w, re.I) else None, "where": _where(w),
+                    "where_text": (WHERE_RE.search(w).group("w") if WHERE_RE.search(w) else None),
+                    "os": ("vortex" if om.group("v") else "plain") if om else None,
+                    "powerful": bool(re.search(r"\b(?:powerful|strongest|biggest|maximum|max|gpu)\b", w, re.I))}
     return None
 
 
@@ -158,6 +170,28 @@ async def handle(task: Task, text: str) -> None:
         await task.answer(f"The Hive has {len(registry.bees)} Bees; {sum(1 for b in registry.bees if not b.get('builtin'))} were made by you or by other Bees. "
                           "Open the Hive page to see each one's computer.")
         return
+    if kind == "desktop":
+        from .cells import cells
+        from .vortex import desktops
+        b = registry.get(intent["bee"])
+        if b["computer"].get("os", "vortex") != "vortex":
+            await task.answer(f"{b['name']}'s computer runs plain Linux. Say “give the {b['name']} bee vortex os” to give it a desktop.")
+            return
+        s = await task.step("running", f"Starting {b['name']}'s Vortex OS desktop", bee=BEE, parent=bee)
+        try:
+            cell = cells.get(b["id"], b["name"], b["computer"])
+            st = await desktops.start(cell)
+        except Exception as exc:
+            await task.finish_step(s, status="error", text=str(exc)[:200])
+            await task.answer(f"The desktop didn't start: {exc}")
+            return
+        await task.finish_step(s, text=f"Running on port {st['port']}")
+        await task.emit("result", parent=bee, service="Vortex OS", title=f"{b['name']}'s desktop is running", badge="Desktop",
+                        details=[["Open", f"port {st['port']} on the Hive's machine (the Desktop tab opens it)"], ["Bee name", st["user"]],
+                                 ["Password", "on the Desktop tab of its Cell (not shown in the chat)"], ["Home folder", "this Bee's work folder"],
+                                 ["Its Cell", f"/cell.html?bee={b['id']}#desktop"]])
+        await task.answer(f"{b['name']}'s Vortex OS desktop is running. Open its Cell's Desktop tab and press Open desktop; sign in as {st['user']}.")
+        return
     if kind == "delete":
         b = registry.find(intent["bee"])
         if not b:
@@ -187,7 +221,7 @@ async def handle(task: Task, text: str) -> None:
             parent_id = p["id"]
         skill = intent.get("skill") or ""
         name = intent.get("name") or (_auto_name(skill) if skill else "")
-        computer = {"size": intent.get("size") or "small", "gpu": bool(intent.get("gpu"))}
+        computer = {"size": intent.get("size") or "small", "gpu": bool(intent.get("gpu")), "os": intent.get("os") or "vortex"}
         where = intent.get("where") or (registry.get(parent_id)["computer"].get("where", "here") if parent_id != "you" else "here")
         opts = [o for o in _server_options() if o["value"] != "rent"]
         if where not in [o["value"] for o in opts]:
@@ -197,8 +231,10 @@ async def handle(task: Task, text: str) -> None:
             {"name": "name", "label": "Name", "value": name, "placeholder": "e.g. Scout"},
             {"name": "skill", "label": "What it does (one line)", "value": skill, "placeholder": "e.g. watches prices and tells me when they drop"},
             {"name": "size", "label": "Its computer", "input": "select", "value": computer["size"], "options": SIZE_OPTS},
-            {"name": "where", "label": "Runs on", "input": "select", "value": where, "options": opts}],
-            text=f"It gets its own computer: a terminal, files, a browser and 24/7 jobs. {'It belongs to ' + maker + '.' if parent_id != 'you' else ''}",
+            {"name": "where", "label": "Runs on", "input": "select", "value": where, "options": opts},
+            {"name": "os", "label": "Operating system", "input": "select", "value": computer["os"],
+             "options": [{"value": k, "label": v} for k, v in OS_LABELS.items()]}],
+            text=f"It gets its own computer: a Vortex OS desktop, a terminal, files, a browser and 24/7 jobs. {'It belongs to ' + maker + '.' if parent_id != 'you' else ''}",
             actions=[{"id": "create", "label": "Create Bee"}, {"id": "cancel", "label": "Cancel", "style": "danger"}])
         if reply["action"] != "create":
             await task.answer("Okay, no new Bee.")
@@ -206,7 +242,8 @@ async def handle(task: Task, text: str) -> None:
         v = reply.get("values") or {}
         name = (v.get("name") or name).strip()
         skill = (v.get("skill") or skill).strip()
-        computer = {"size": v.get("size") or computer["size"], "gpu": computer["gpu"], "where": v.get("where") or where}
+        computer = {"size": v.get("size") or computer["size"], "gpu": computer["gpu"], "where": v.get("where") or where,
+                    "os": v.get("os") or computer["os"]}
         if not name or not skill:
             await task.answer("A Bee needs a name and a one-line skill. Try again with both, e.g. “create a bee called Scout that watches prices”.")
             return
@@ -231,6 +268,8 @@ async def handle(task: Task, text: str) -> None:
             change["gpu"] = intent["gpu"]
         if intent.get("where"):
             change["where"] = intent["where"]
+        if intent.get("os"):
+            change["os"] = intent["os"]
         if intent.get("powerful") and "where" not in change:
             # the strongest place there is: ask, showing what each server has
             opts = _server_options()

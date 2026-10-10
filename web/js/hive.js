@@ -22,6 +22,10 @@ function sizeOptions() {
   return Object.entries(COMPUTERS.sizes).map(([k, v]) => [k, v.cpus ? `${v.label} · ${v.cpus} CPU${v.cpus > 1 ? "s" : ""}, ${v.memory_gb} GB` : v.label]);
 }
 
+function osOptions() {
+  return Object.entries(COMPUTERS.os || { vortex: "Vortex OS", plain: "Plain Linux" });
+}
+
 function serverOptions() {
   return COMPUTERS.servers.map((s) => [s.id, `${s.name}${s.cpus ? ` · ${s.cpus} CPUs` : ""}${s.memory_gb ? `, ${s.memory_gb} GB` : ""}${s.gpu ? " · GPU" : ""}${s.status && s.status !== "ok" ? ` (${s.status})` : ""}`]);
 }
@@ -103,6 +107,7 @@ async function openAdd() {
   fill($("beeParent"), [["you", "You"], ...BEES.map((b) => [b.id, `${b.name} Bee`])], "you");
   fill($("beeSize"), sizeOptions(), "small");
   fill($("beeWhere"), serverOptions(), "here");
+  fill($("beeOs"), osOptions(), "vortex");
   $("beeDlg").showModal();
 }
 
@@ -117,6 +122,7 @@ async function openComputer(b) {
   const c = b.computer || {};
   fill($("compSize"), sizeOptions(), c.size in COMPUTERS.sizes ? c.size : "small");
   fill($("compWhere"), serverOptions(), c.where || "here");
+  fill($("compOs"), osOptions(), c.os || "vortex");
   $("compForm").gpu.checked = !!c.gpu;
   $("compDlg").showModal();
 }
@@ -127,7 +133,7 @@ $("compForm").addEventListener("submit", async (e) => {
   const f = e.target;
   $("compErr").textContent = "Applying…";
   try {
-    await api(`/api/bees/${encodeURIComponent(compBee.id)}/computer`, { method: "PUT", body: { size: f.size.value, where: f.where.value, gpu: f.gpu.checked } });
+    await api(`/api/bees/${encodeURIComponent(compBee.id)}/computer`, { method: "PUT", body: { size: f.size.value, where: f.where.value, gpu: f.gpu.checked, os: f.os.value } });
     $("compDlg").close();
     loadBees();
   } catch (err) {
@@ -151,7 +157,7 @@ $("beeForm").addEventListener("submit", async (e) => {
         schedule: f.schedule.value.trim() || null,
         approval: f.approval.checked,
         created_by: f.parent.value || "you",
-        computer: { size: f.size.value, where: f.where.value, gpu: f.gpu.checked },
+        computer: { size: f.size.value, where: f.where.value, gpu: f.gpu.checked, os: f.os.value },
       },
     });
     $("beeDlg").close();

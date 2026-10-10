@@ -26,15 +26,35 @@
       <div class="page wide">
         <div class="cell-head">
           <div class="chips" id="chips"></div>
-          <p class="hint">This Bee's own workspace on your server. Its terminal, browser storage, files and jobs keep going 24/7, even when you close the app.</p>
+          <p class="hint">This Bee's own computer. Its desktop, terminal, browser storage, files and jobs keep going 24/7, even when you close the app.</p>
         </div>
 
         <div class="tabs cell-tabs" role="tablist">
+          <button class="tab" data-tab="desktop" type="button">Desktop</button>
           <button class="tab active" data-tab="terminal" type="button">Terminal</button>
           <button class="tab" data-tab="browser" type="button">Browser</button>
           <button class="tab" data-tab="jobs" type="button">Jobs <span id="jobCount"></span></button>
           <button class="tab" data-tab="files" type="button">Files</button>
         </div>
+
+        <section id="tab-desktop" class="cell-pane hidden">
+          <div class="usage-card desk">
+            <div class="usage-head"><b id="deskTitle">Vortex OS</b><span class="status idle" id="deskStatus">…</span></div>
+            <p class="hint" id="deskNote">A Debian desktop for this Bee: windows, a real terminal, files, an editor, a browser and a system monitor. Its home folder is this Bee's work folder.</p>
+            <div class="desk-login hidden" id="deskLogin">
+              <div class="meter-row"><span class="lbl">Bee name</span><span></span><span class="val mono" id="deskUser"></span></div>
+              <div class="meter-row"><span class="lbl">Password</span><span></span>
+                <span class="val"><span class="mono" id="deskPass">••••••••••••</span>
+                  <button class="btn" type="button" id="deskShow">Show</button> <button class="btn" type="button" id="deskCopy">Copy</button></span></div>
+            </div>
+            <p class="hint err" id="deskErr"></p>
+            <div class="card-actions">
+              <button class="btn primary" type="button" id="deskStart">Start desktop</button>
+              <a class="btn primary hidden" id="deskOpen" target="_blank" rel="noopener">Open desktop</a>
+              <button class="btn hidden" type="button" id="deskStop">Stop</button>
+            </div>
+          </div>
+        </section>
 
         <section id="tab-terminal" class="cell-pane">
           <div class="term-wrap"><div id="term"></div></div>

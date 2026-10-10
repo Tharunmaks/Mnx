@@ -3,9 +3,9 @@
 Every Bee has
   - a card: name, one-line skill, tools, schedule, whether it asks before acting
   - a family: who made it ("you" or another Bee); deleting a Bee hands its children to its own parent
-  - its own computer (a Cell): a size (CPUs, memory, GPU) and where it runs: this server, or any cloud server
-    the Lab can reach over SSH (your own, or a rented GPU machine). An "os" slot is kept for your own
-    system image; until it is set, Cells use the default image.
+  - its own computer (a Cell): a size (CPUs, memory, GPU), where it runs (this server, or any cloud server
+    the Lab can reach over SSH: your own, or a rented GPU machine) and its operating system: Vortex OS, a web
+    desktop (hive/vortex.py), or plain Linux with a terminal only
   - a key that lets the Bee, from inside its own computer, create and list its children and nothing else
 
 Limits keep a Bee from filling the Hive: MAX_BEES in total, MAX_DEPTH generations, MAX_CHILDREN per Bee.
@@ -62,8 +62,12 @@ class BeeError(ValueError):
     """A Bee can't be created or changed that way (a limit, a name clash, a bad computer)."""
 
 
+OS_CHOICES = {"vortex": "Vortex OS", "plain": "Plain Linux"}
+DEFAULT_OS = "vortex"
+
+
 def default_computer() -> dict:
-    return {"size": "small", "cpus": 1, "memory_gb": 1, "gpu": False, "where": "here", "os": None}
+    return {"size": "small", "cpus": 1, "memory_gb": 1, "gpu": False, "where": "here", "os": DEFAULT_OS}
 
 
 def normalize_computer(c: dict | None, base: dict | None = None) -> dict:
@@ -90,8 +94,13 @@ def normalize_computer(c: dict | None, base: dict | None = None) -> dict:
         if where != "here" and not re.fullmatch(r"[a-z0-9-]{1,48}", where):
             raise BeeError("Bad server id")
         out["where"] = where
-    if "os" in c:
-        out["os"] = c["os"] or None
+    if c.get("os"):
+        os_name = str(c["os"]).lower()
+        if os_name not in OS_CHOICES:
+            raise BeeError(f"Unknown operating system {c['os']!r}: use one of {', '.join(OS_CHOICES)}")
+        out["os"] = os_name
+    if out.get("os") not in OS_CHOICES:  # a Hive saved before the OS existed
+        out["os"] = DEFAULT_OS
     return out
 
 
@@ -104,7 +113,8 @@ def describe_computer(c: dict, where_name: str | None = None) -> str:
     if c.get("gpu"):
         parts.append("GPU")
     label = SIZES.get(c["size"], {}).get("label", "Custom")
-    return f"{label} · {', '.join(parts)} · {where_name or ('this server' if c.get('where', 'here') == 'here' else c['where'])}"
+    return (f"{label} · {', '.join(parts)} · {OS_CHOICES.get(c.get('os') or DEFAULT_OS, 'Vortex OS')} · "
+            f"{where_name or ('this server' if c.get('where', 'here') == 'here' else c['where'])}")
 
 
 def slug(name: str) -> str:
@@ -288,7 +298,23 @@ HELPER = r'''#!/usr/bin/env python3
 """
 import json, os, sys, urllib.request
 
-hive, key = os.environ.get("MNX_HIVE"), os.environ.get("MNX_BEE_KEY")
+def from_file():
+    """Desktop terminals (Vortex OS) start with a clean environment: read this Bee's .mnx/env instead."""
+    import shlex
+    out = {}
+    try:
+        for line in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "env")):
+            parts = shlex.split(line.strip())
+            if len(parts) == 2 and parts[0] == "export" and "=" in parts[1]:
+                k, v = parts[1].split("=", 1)
+                out[k] = v
+    except OSError:
+        pass
+    return out
+
+saved = from_file()
+hive = os.environ.get("MNX_HIVE") or saved.get("MNX_HIVE")
+key = os.environ.get("MNX_BEE_KEY") or saved.get("MNX_BEE_KEY")
 if not hive or not key:
     sys.exit("This computer can't reach the Hive (no MNX_HIVE / MNX_BEE_KEY). On a remote server, set MNX_PUBLIC_URL on the Hive.")
 

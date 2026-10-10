@@ -687,3 +687,7 @@ body.embed .page { padding-top: 10px; }
   .bars, .bar-days { gap: 3px; }
   .bar-days span:nth-child(even) { visibility: hidden; }
 }
+
+.desk .meter-row { grid-template-columns: 120px 0 1fr; }
+.desk .val .btn { padding: 3px 10px; font-size: 12px; margin-left: 6px; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }

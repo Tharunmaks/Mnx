@@ -348,6 +348,7 @@ def list_bees():
 
 
 class Computer(BaseModel):
+    os: str | None = Field(default=None, max_length=12)
     size: str | None = Field(default=None, max_length=12)
     cpus: float | None = None
     memory_gb: float | None = None
@@ -403,7 +404,8 @@ def computer_options():
         info = t.get("info") or {}
         servers.append({"id": t["id"], "name": t["name"], "cpus": info.get("cpus"), "memory_gb": round(int(info.get("ram_mb") or 0) / 1024, 1) or None,
                         "gpu": bool(t.get("gpu")), "gpus": info.get("gpus") or [], "status": t.get("status")})
-    return {"sizes": SIZES, "servers": servers, "cell_mode": cells.mode,
+    from hive.bees import OS_CHOICES
+    return {"sizes": SIZES, "servers": servers, "cell_mode": cells.mode, "os": OS_CHOICES,
             "limits": "enforced" if cells.mode == "docker" else "not enforced on this server (no Docker); remote servers give the whole machine"}
 
 
@@ -559,6 +561,37 @@ async def browser_do(body: BrowserAction, bee: str = "browser"):
         raise HTTPException(400, str(exc)) from exc
     finally:
         BEE_STATUS.pop(cell.id, None)
+
+
+# ---------- each Bee's desktop: Vortex OS on its computer ----------
+@api.get("/cells/{bee_id}/desktop")
+def desktop_status(bee_id: str):
+    from hive.vortex import desktops
+    cell = _cell(bee_id)
+    return {**desktops.status(cell), "os_error": cell.os_error}
+
+
+@api.post("/cells/{bee_id}/desktop/start")
+async def desktop_start(bee_id: str):
+    from hive.vortex import desktops
+    cell = _cell(bee_id)
+    try:
+        st = await desktops.start(cell)
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    log(cell.name, "desktop", f"Vortex OS on port {st['port']}")
+    await broadcast({"type": "bees_changed", "bee": cell.id})
+    return {**st, "os_error": cell.os_error}
+
+
+@api.post("/cells/{bee_id}/desktop/stop")
+async def desktop_stop(bee_id: str):
+    from hive.vortex import desktops
+    cell = _cell(bee_id)
+    if cell.mode == "docker":
+        raise HTTPException(400, "In Docker the desktop is the Bee's computer itself; it runs while the computer runs")
+    await desktops.stop(cell)
+    return desktops.status(cell)
 
 
 # ---------- Cells: each Bee's own always-on workspace ----------

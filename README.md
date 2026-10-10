@@ -70,6 +70,14 @@ hive/system.py    Server stats (CPU, memory, disk, GPU)
 scripts/          install.sh (fresh server) and update.sh
 hive/browser.py   Browser engine (Playwright), one saved profile per Bee; private/local addresses are blocked
 hive/phone.py     Gateway side of the Phone Drone link
+hive/usage.py     Usage ledger (tokens per day, GPU rentals) and the measurements behind the Usage page
+hive/usage_chat.py "show my usage"
+hive/bees.py      Bee registry: Bees you make and Bees that Bees make, family limits, keys, computer sizes
+hive/bee_chat.py  "create a bee called … that …", "give the … bee a large computer", "list my bees"
+hive/budget.py    GPU Bee budget planner: "I have 1500 INR, which GPU should I rent?" with live or approximate prices
+hive/lpu.py       Virtual LPU: cycle-accurate chip simulator (SRAM, matrix/vector units, links) + deterministic compiler + chip mesh
+hive/lpu_lab.py   "run my model on the lpu / on 8 lpu chips": plan card with compiled cycles, simulation, chip statistics
+hive/vortex.py    Vortex OS on every Bee's computer: Docker image, local Node process or SSH tunnel; accounts and ports
 drone/drone.py    Termux agent for your phone (served at /drone.py)
 services/         systemd unit to run the gateway 24/7
 web/              index.html, hive.html, css/, js/ — plain HTML/CSS/JS, no build step
@@ -128,8 +136,29 @@ Max (the whole machine), optional GPU. On this server they are Docker limits (`-
 Without Docker (a phone, say) the Cell is a folder and limits aren't enforced. On a cloud server (any SSH
 server in the Lab, including rented RunPod machines) the Bee's terminal, commands, jobs and files run over
 SSH in `<server folder>/cells/<bee>`, with the whole machine. A child starts small on its parent's machine.
-The operating system is the default image for now (`MNX_CELL_IMAGE`); a Bee's `os` field is kept for yours.
+Every computer runs Vortex OS by default (below); choose Plain Linux (`MNX_CELL_IMAGE`) per Bee instead.
 Set `MNX_PUBLIC_URL` so Bees on remote servers can reach the Hive to make children.
+
+## Vortex OS on every Bee's computer
+
+Each Bee's computer runs [Vortex OS](https://github.com/Tharunmaks/Vortex-os-), a web desktop with files,
+terminal and apps, signed in as the Bee itself (`hive/vortex.py`). The desktop's home folder is the Bee's own
+work folder, so files the Bee makes show up there, and `mnx-bee` works in its terminal.
+
+- **Docker**: the Bee's container *is* Vortex OS (image `MNX_VORTEX_IMAGE`, built once from `MNX_VORTEX_REPO`),
+  hardened like Vortex's own compose file: no capabilities, read-only root, its own user, the computer's limits.
+  If the image can't be built, the computer starts as plain Linux and its Cell says why.
+- **No Docker (a phone)**: one Node process per Bee from a checkout in `MNX_VORTEX_DIR` (default `vortex-os/`),
+  cloned and installed the first time a desktop starts. Needs Node 20+, and `make`/`clang` for its terminal
+  (Termux: `pkg install nodejs python make clang`).
+- **Cloud servers**: Vortex runs on the server (Docker if it has it, else Node) and the Hive opens an SSH
+  tunnel to it.
+
+Desktops listen on `MNX_VORTEX_BIND` (default `127.0.0.1`; set `0.0.0.0` to open them from another device on
+your network), one port per Bee from 8421. Each Bee's account and strong password are kept in
+`data/vortex.json` (private, mode 600). Open it from the Cell's **Desktop** tab (Start, Open, Show/Copy
+password, Stop), or say “open the scout bee's desktop”, “give the scout bee vortex os”, “switch scout to
+plain linux”. The Add Bee and Computer dialogs have an Operating system choice.
 
 ## Cells: every Bee's own always-on workspace
 
@@ -339,13 +368,6 @@ model's answer may be in the playgrounds (Run it): 200 tokens on Low up to 1,920
 ## A 500B model on a phone: layer-by-layer streaming
 
 A phone can't hold a big model, so the Hive streams it **one layer at a time**. `hive/layers.py` splits a
-hive/usage.py     Usage ledger (tokens per day, GPU rentals) and the measurements behind the Usage page
-hive/usage_chat.py "show my usage"
-hive/bees.py      Bee registry: Bees you make and Bees that Bees make, family limits, keys, computer sizes
-hive/bee_chat.py  "create a bee called … that …", "give the … bee a large computer", "list my bees"
-hive/budget.py    GPU Bee budget planner: "I have 1500 INR, which GPU should I rent?" with live or approximate prices
-hive/lpu.py       Virtual LPU: cycle-accurate chip simulator (SRAM, matrix/vector units, links) + deterministic compiler + chip mesh
-hive/lpu_lab.py   "run my model on the lpu / on 8 lpu chips": plan card with compiled cycles, simulation, chip statistics
 saved model's safetensors into one file per transformer layer (no PyTorch needed on the server) and serves
 them at `/api/lab/models/<id>/layers/<layer>`; `stream.py` (fetched by the phone from `/stream.py`) runs the
 model with a single layer module in memory, loading layer 0's weights, running it, loading layer 1's weights

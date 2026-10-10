@@ -61,6 +61,9 @@
           <select name="where" id="beeWhere"></select>
         </label>
       </div>
+      <label class="field">Operating system
+        <select name="os" id="beeOs"></select>
+      </label>
       <label class="check"><input type="checkbox" name="gpu"> Give it a GPU (if that server has one)</label>
       <label class="field">Tools (comma separated)
         <input name="tools" maxlength="200" placeholder="e.g. web_search, read_page">
@@ -89,8 +92,11 @@
       <label class="field">Runs on
         <select name="where" id="compWhere"></select>
       </label>
+      <label class="field">Operating system
+        <select name="os" id="compOs"></select>
+      </label>
       <label class="check"><input type="checkbox" name="gpu"> GPU</label>
-      <p class="hint">A new size restarts the Bee's computer; its files and jobs stay. Moving it to another server starts a fresh folder there; the old files stay where they were. The operating system is the default image for now.</p>
+      <p class="hint">A new size restarts the Bee's computer; its files and jobs stay. Moving it to another server starts a fresh folder there; the old files stay where they were. Vortex OS gives the Bee a desktop (open it from its Cell); Plain Linux is terminal only.</p>
       <p class="hint" id="compErr" style="color:var(--failed)"></p>
     </div>
     <div class="dlg-foot">

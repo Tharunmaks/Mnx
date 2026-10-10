@@ -254,6 +254,7 @@ class Cell:
         self.running: dict[str, asyncio.subprocess.Process] = {}
         self.loops: dict[str, asyncio.Task] = {}
         self.container_state = "local" if self.mode == "local" else "missing"
+        self.os_error: str | None = None
         self.write_helper()
         self.on_change = None  # set by the manager
         self._disk = (0.0, 0)
@@ -267,6 +268,9 @@ class Cell:
             d = self.work / ".mnx"
             d.mkdir(exist_ok=True)
             (d / "mnx-bee").write_text(HELPER)
+            env = d / "env"  # for shells that start clean (the Vortex OS terminal): only this Bee's own key
+            env.write_text("".join(f"export {k}={shlex.quote(v)}\n" for k, v in {"MNX_BEE": self.id, **self.extra_env}.items()))
+            os.chmod(env, 0o600)
 
     async def _remote_up(self) -> None:
         env = "".join(f"export {k}={shlex.quote(v)}\n" for k, v in {"MNX_BEE": self.id, **self.extra_env}.items())
@@ -316,6 +320,11 @@ class Cell:
             return
         if code == 0:
             code, out = await _run(["docker", "start", self.container], 60)
+        elif self.computer.get("os", "vortex") == "vortex" and await self._vortex_ready():
+            from . import vortex
+            rec = vortex.creds.get(self.id)
+            code, out = await _run(vortex.docker_run_args(self.container, self.id, self.name, self.work, self.dir / "vortex",
+                                                          self._limits(), rec), 600)
         else:
             code, out = await _run([
                 "docker", "run", "-d", "--name", self.container, "--hostname", self.id.replace("_", "-"),
@@ -323,10 +332,23 @@ class Cell:
                 "--security-opt", "no-new-privileges", "--label", "mnx.cell=" + self.id,
                 "--add-host", "host.docker.internal:host-gateway",
                 "-v", f"{self.work.resolve()}:/work", "-w", "/work", "-e", "HOME=/work",
-                self.computer.get("os") or IMAGE, "sleep", "infinity"], 600)
+                IMAGE, "sleep", "infinity"], 600)
         self.container_state = "running" if code == 0 else "failed"
         if code != 0:
             raise RuntimeError(f"Couldn't start the Cell container: {out.strip()[:300]}")
+
+    async def _vortex_ready(self) -> bool:
+        """Build the Vortex image if needed and hand the Bee's folders to its user. False (and why) if that fails:
+        the Bee then gets a plain computer, so it can still work."""
+        from . import vortex
+        try:
+            await vortex.ensure_image()
+            await vortex.give_to_bee([self.work, self.dir / "vortex"])
+            self.os_error = None
+            return True
+        except Exception as exc:
+            self.os_error = f"Vortex OS isn't available, so this computer runs plain Linux: {exc}"[:500]
+            return False
 
     async def recreate(self) -> None:
         """Apply a new computer size: the container is replaced; /work (files) stays."""
@@ -629,7 +651,8 @@ class Cell:
         failed = any(j["last_exit"] not in (None, 0, -15, 143) and j["id"] not in self.running for j in self.jobs.values())
         return {
             "bee": self.id, "name": self.name, "mode": self.mode, "container": self.container_state,
-            "image": (self.computer.get("os") or IMAGE) if self.mode == "docker" else None,
+            "image": IMAGE if self.mode == "docker" else None,
+            "os": self.computer.get("os", "vortex"), "os_error": self.os_error,
             "server": self.remote["name"] if self.remote else "this server",
             "limits": ("enforced" if self.mode == "docker" else "the whole remote server" if self.mode == "remote"
                        else "not enforced (local mode: no Docker on this server)"),
@@ -715,10 +738,15 @@ class CellManager:
         cell = self.cells.get(bee_id)
         moved = (old or {}).get("where", "here") != computer.get("where", "here")
         if cell and not moved:
+            from .vortex import desktops
+            if computer.get("os") != (old or {}).get("os"):
+                await desktops.stop(cell)
             cell.computer = dict(computer)
             await cell.recreate()
             return cell
         if cell:
+            from .vortex import desktops
+            await desktops.stop(cell)
             for jid in list(cell.jobs):
                 await cell.stop_job(jid)
             if cell.terminal:
@@ -731,7 +759,9 @@ class CellManager:
         return cell
 
     async def remove(self, bee_id: str) -> None:
+        from .vortex import desktops
         cell = self.cells.pop(bee_id, None) or Cell(bee_id, bee_id, self.mode if self.mode != "remote" else "local")
+        await desktops.forget(cell)
         await cell.destroy()
 
     def busy(self, bee_id: str) -> str | None:
@@ -773,6 +803,8 @@ class CellManager:
                     await cell.browser.shutdown()
 
     async def shutdown(self) -> None:
+        from .vortex import desktops
+        desktops.shutdown()
         for t in self._tasks:
             t.cancel()
         for cell in self.cells.values():

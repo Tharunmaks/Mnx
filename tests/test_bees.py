@@ -257,3 +257,14 @@ def test_saved_built_ins_follow_the_default_until_you_choose(tmp_path):
     # and a size you chose for another built-in is kept
     run(again.set_computer("coding", {"size": "xl"}))
     assert Registry(state, keys).get("coding")["computer"]["size"] == "xl"
+
+
+def test_the_helper_reads_its_key_file_when_the_shell_starts_clean(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.setattr(cells_mod, "CELLS", tmp_path)
+    cells_mod.Cell("scout", "Scout", "local", None, None, {"MNX_HIVE": "http://127.0.0.1:9", "MNX_BEE_KEY": "k'1 x"})
+    mnx = tmp_path / "scout" / "work" / ".mnx"
+    assert oct((mnx / "env").stat().st_mode)[-3:] == "600"
+    # a clean environment (no MNX_*): the helper finds the Hive from the file and tries to reach it
+    r = subprocess.run([sys.executable, str(mnx / "mnx-bee"), "me"], env={"PATH": os.environ["PATH"]}, capture_output=True, text=True, timeout=30)
+    assert "can't reach the Hive" not in (r.stdout + r.stderr) and r.returncode != 0  # port 9: refused, but it knew where to go
