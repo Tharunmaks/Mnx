@@ -73,6 +73,7 @@
       <div class="thread" id="thread"></div>
     </div>
 
+    <button type="button" class="to-bottom" id="toBottom" aria-label="Jump to latest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <div class="composer-wrap hidden" id="bottomSlot"></div>
 
     <!-- The composer is moved between the welcome slot and the bottom slot -->
@@ -82,7 +83,10 @@
         <textarea id="input" rows="1" placeholder="Ask the Hive anything…" autocomplete="off"></textarea>
         <div class="composer-row">
           <button type="button" class="icon-btn" id="attach" aria-label="Attach file" title="Attachments come later"><span data-icon="clip"></span></button>
-          <button type="button" class="model-pill" id="modelPill" title="Your models"><span id="pillLogo"></span><span id="modelName">Models</span></button>
+          <div class="model-wrap">
+            <button type="button" class="model-pill" id="modelPill" title="Choose a model" aria-haspopup="listbox" aria-expanded="false"><span id="modelName">Mnx</span><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            <div class="model-menu hidden" id="modelMenu" role="listbox" aria-label="Models"></div>
+          </div>
           <select class="effort-pill" id="effortPill" aria-label="Effort" title="Effort: how hard the Hive works and how many tokens it may spend"></select>
           <span class="token-count" id="tokenCount" title="Token reading: this message / budget for the effort level"></span>
           <button type="button" class="icon-btn talk-btn" id="talkBtn" aria-label="Talk" title="Talk: a voice call with the Hive (Fish Audio voice)"><span data-icon="mic"></span></button>
@@ -166,9 +170,9 @@
   </form>
 </dialog>
 
-<dialog id="modelsDlg" class="wide-dlg">
+<dialog id="modelsDlg" class="wide-dlg owner-only">
   <form method="dialog">
-    <div class="dlg-head"><h2>Your models</h2><button class="icon-btn" value="cancel" aria-label="Close"><span data-icon="close"></span></button></div>
+    <div class="dlg-head"><h2>Set up models</h2><button class="icon-btn" value="cancel" aria-label="Close"><span data-icon="close"></span></button></div>
     <div class="dlg-body">
       <p class="hint" id="modelsHint"></p>
       <div class="model-list" id="modelList"></div>

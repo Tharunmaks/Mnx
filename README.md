@@ -80,7 +80,7 @@ hive/lpu_lab.py   "run my model on the lpu / on 8 lpu chips": plan card with com
 hive/modes.py     Rush (every Bee together: fan-out commands, roll call, the board) and Peace (one chat per Bee)
 hive/cloud.py     Real cloud computers per Bee: Hetzner / DigitalOcean, cheapest 8 GB / 40 GB server, SSH, delete on remove
 hive/plan.py      Free / Plus plans (both ₹0); hive/plans.py applies a plan to every Bee, "subscribe me to plus"
-hive/models.py    Your Mnx models: Drive folder → parts → joined + MD5-checked → llama.cpp (or your command) → the brain
+hive/models.py    Your Mnx models: owner downloads from Drive (joined + MD5-checked), users pick by name, started on demand
 hive/admin.py     Owner commands: set / list / unset credentials, owner token, user tokens (never in git)
 hive/iotamine.py  Iotamine VPS API: list your VPSes, price and deploy one with the Hive's SSH key, add it to the Hive's cloud
 hive/gpu_pool.py  The Hive's GPU: free Kaggle GPU (16 GB VRAM) jobs with the Bee's files, outputs back into its computer
@@ -272,10 +272,15 @@ conversation starters, a store to share and remix) and creative muse bots.
 - **Chat with it** in **Peace**: your bots are first in the list, each opens with its emoji, first message and
   starters. With a brain it talks in character and sees the last turns of the chat.
 
-## Your Mnx models
+## Your Mnx models: pick one by name
 
-Tap the model button in the chat box (it shows the model the Hive is thinking with) to see your models
-(`hive/models.py`, `web/js/models.js`):
+Like ChatGPT: click the model name in the chat box, pick a model, and use it. The list is **names only** (no images,
+no downloading, nothing to set up) and a check mark shows the one in use. Each message is answered by the model its
+sender picked; if that model isn't running, the Hive starts it by itself (and lets an answer already in progress
+finish before it switches). Only models the owner has set up appear.
+
+**Only the owner sets models up** (`hive/models.py`, `web/js/models.js`): the owner sees one extra row, **Set up
+models…**, with the four models, what each is and what it needs:
 
 | Model | What it is | Size | Runs with |
 | --- | --- | --- | --- |
@@ -284,18 +289,18 @@ Tap the model button in the chat box (it shows the model the Hive is thinking wi
 | **Mnx 1 (7B)** | your 7B final checkpoint (table.bin + core.pt) | 15.8 GB, ~16 GB RAM | its own code (race7b scripts) |
 | **Mnx lonjer** | Mnx 1 on Qwen3.6-35B-A3B int4 (colibri) with the Mnx app | ~23 GB, ~24 GB RAM | `run_mnx1.sh` |
 
-The owner pastes each model's Google Drive folder link once (in that dialog, or
-`python3 -m hive.admin model mnx-1.5-max-coder <link>`). Links are kept in `data/models/sources.json` and never go
-into git: this repo is public. Share the Drive folder as **Anyone with the link** so the Hive can download it
-without your Google login. Then **Download**: the Hive fetches every 95 MB part (a re-run skips parts already
-fetched), joins them in order, checks every file's MD5 against the model's README and the folder's own
-MD5SUMS/manifest files, and removes the parts. **Start and use** runs it and makes it the brain, so every chat and
-bot thinks with it; **Stop** unplugs it.
+Paste a model's Google Drive folder link once (there, or `python3 -m hive.admin model mnx-1.5-max-coder <link>`; shared
+as **Anyone with the link**). Links are kept in `data/models/sources.json` and never go into git: this repo is public.
+**Download** fetches every 95 MB part (a re-run skips parts already fetched), joins them in order, checks every MD5
+against the model's README and the folder's own MD5SUMS/manifest files, and removes the parts. Once a model is ready it
+shows up for everyone.
 
-- GGUF models run with llama.cpp's `llama-server` on port 8081 (Termux: `pkg install llama-cpp`), or its Docker image.
-- The others run with your own code: set a start command and the port of its OpenAI-compatible server (for
-  lonjer, `run_mnx1.sh`; note its colibri server uses port 8000, so run the Hive on another port on that machine).
-- Users see the models and which one is in use; only the owner downloads, starts and switches them.
+- GGUF models run with llama.cpp's `llama-server` (Termux: `pkg install llama-cpp`; or its Docker image), each on its
+  own port (8081, 8082 …).
+- The others run with your own code: set a start command and the port of its OpenAI-compatible server; it appears in
+  the list once saved.
+- Users never see links, sizes, downloads or the setup, and the server answers them 403 if they try.
+- The Settings → Brain (Ollama, Groq, Gemini …) still works for a model that isn't one of yours; a user's pick wins.
 
 ## The brain: what the Hive and your bots think with
 

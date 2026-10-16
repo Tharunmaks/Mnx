@@ -67,6 +67,7 @@ class Task:
         self.speaker: str | None = None  # Peace: the Bee's name, used in place of "Queen"
         self.history: list[dict] = []  # Peace: the last turns of this chat ({role: user|bot, text}), for bots with a brain
         self.user_name = ""
+        self.model: str | None = None  # the model the user picked for this message (hive/models.py)
         self.chat_id = chat_id
         self.text = text
         self._emit = emit

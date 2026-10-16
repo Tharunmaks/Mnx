@@ -15,6 +15,7 @@ Then the Hive:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import os
@@ -23,6 +24,7 @@ import shutil
 import signal
 import time
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -35,30 +37,31 @@ MD5_LINE = re.compile(r"^\s*(?P<md5>[0-9a-f]{32})\s+(?:(?P<size>\d+)\s+)?\*?(?P<
 
 # What each model is. MD5s and sizes come from the models' own READMEs. No links here: the repo is public.
 CATALOG = [
-    {"id": "mnx-1.5-max-coder", "name": "Mnx 1.5 Max Coder", "emoji": "🧑‍💻",
+    {"id": "mnx-1.5-max-coder", "name": "Mnx 1.5 Max Coder",
      "about": "Your coding model, small enough for the phone (Q4_K_M GGUF).",
      "kind": "gguf", "run": "llama.cpp", "ram_gb": 2, "disk_gb": 0.95,
      "main": "mnx-1.5-max-coder-q4_k_m.gguf",
      "md5": {"mnx-1.5-max-coder-q4_k_m.gguf": "b3e450e066fae5e18d2738344b3a6ef8"},
      "sizes": {"mnx-1.5-max-coder-q4_k_m.gguf": 986048128}},
-    {"id": "mnx-1-lite", "name": "Mnx 1 Lite", "emoji": "🪶",
+    {"id": "mnx-1-lite", "name": "Mnx 1 Lite",
      "about": "Your 1.3B mixture-of-experts model, trained from scratch (checkpoint at 320M of 1B tokens; still training).",
      "kind": "pytorch", "run": "its own code", "ram_gb": 6, "disk_gb": 2.7,
      "main": "mnx_lite1.pt",
      "md5": {"mnx_lite1.pt": "9d0e6c88eaf867bc499524e6e7b697e6"}, "sizes": {"mnx_lite1.pt": 2674569846}},
-    {"id": "mnx-1", "name": "Mnx 1 (7B)", "emoji": "🐝",
+    {"id": "mnx-1", "name": "Mnx 1 (7B)",
      "about": "Your 7B model, final checkpoint (training finished Oct 16 2026): table.bin + core.pt.",
      "kind": "custom", "run": "its own code (race7b scripts)", "ram_gb": 16, "disk_gb": 15.8,
      "main": "core.pt",
      "md5": {"table.bin": "9639b782ab2649bd178fe3152b500f61", "core.pt": "2fdf05d2da61aa8fffaee0d9cbe97a2d",
              "core_only.pt": "1ec8721612395dba450dbff26f5cec0e"},
      "sizes": {"table.bin": 13747503104, "core.pt": 1514987917, "core_only.pt": 504997975}},
-    {"id": "mnx-lonjer", "name": "Mnx lonjer", "emoji": "🦁",
+    {"id": "mnx-lonjer", "name": "Mnx lonjer",
      "about": "Mnx 1 on Qwen3.6-35B-A3B (int4, colibri engine) with your Mnx app: tools, MCP, self-coding.",
      "kind": "colibri", "run": "run_mnx1.sh (colibri)", "ram_gb": 24, "disk_gb": 23,
      "main": "mnx1_app_code.tar.gz",
      "md5": {"mnx1_app_code.tar.gz": "966e8ad63cf3926abac1d408f0baf473"}, "sizes": {}},
 ]
+selected: contextvars.ContextVar[str | None] = contextvars.ContextVar("mnx_selected_model", default=None)
 DRIVE_FOLDER = re.compile(r"(?:folders/|[?&]id=)([A-Za-z0-9_-]{20,})")
 
 
@@ -133,6 +136,8 @@ class Models:
         self.procs: dict[str, asyncio.subprocess.Process] = {}
         self.progress: dict[str, dict] = {}
         self.on_change = None
+        self._lock = asyncio.Lock()
+        self.inflight: dict[str, int] = defaultdict(int)
         try:
             self.state = json.loads((root / "state.json").read_text())
         except (FileNotFoundError, json.JSONDecodeError):
@@ -185,7 +190,7 @@ class Models:
         for m in CATALOG:
             st = self.state.get(m["id"], {})
             running = m["id"] in self.procs and self.procs[m["id"]].returncode is None
-            v = {k: m[k] for k in ("id", "name", "emoji", "about", "kind", "run", "ram_gb", "disk_gb")}
+            v = {k: m[k] for k in ("id", "name", "about", "kind", "run", "ram_gb", "disk_gb")}
             v.update(status=("downloading" if m["id"] in self.jobs and not self.jobs[m["id"]].done() else
                              "running" if running else st.get("status") or "not downloaded"),
                      progress=self.progress.get(m["id"]), error=st.get("error"),
@@ -196,6 +201,47 @@ class Models:
                          path=st.get("path"))
             out.append(v)
         return out
+
+    # ----- picking a model: what users see and use -----
+    def usable(self, model_id: str) -> bool:
+        """The owner has set it up: users can pick it and it starts by itself when they do."""
+        e = next((m for m in CATALOG if m["id"] == model_id), None)
+        st = self.state.get(model_id, {})
+        if not e or st.get("status") not in ("ready", "running", "starting", "stopped"):
+            return False
+        return e["kind"] == "gguf" or bool(st.get("command"))
+
+    def choices(self) -> list[dict]:
+        """What a user's model picker shows: names only."""
+        return [{"id": m["id"], "name": m["name"]} for m in CATALOG if self.usable(m["id"])]
+
+    def default(self) -> str | None:
+        """The model used when none is picked: the one running now, else the first set up."""
+        for mid in self.procs:
+            if self.procs[mid].returncode is None and self.usable(mid):
+                return mid
+        return next((m["id"] for m in CATALOG if self.usable(m["id"])), None)
+
+    @asynccontextmanager
+    async def using(self, model_id: str):
+        """Yields the model's server URL for one answer, starting it (and stopping another) if needed. A model that
+        is answering someone isn't stopped for another until it finishes."""
+        if not self.usable(model_id):
+            raise ModelError("That model isn't available")
+        async with self._lock:
+            running = model_id in self.procs and self.procs[model_id].returncode is None
+            if not running:
+                for _ in range(240):  # let answers in progress on another model finish first
+                    if not any(n for mid, n in self.inflight.items() if mid != model_id):
+                        break
+                    await asyncio.sleep(0.5)
+                await self.start(model_id, use=False)
+            url = self.state[model_id]["url"]
+            self.inflight[model_id] += 1
+        try:
+            yield url
+        finally:
+            self.inflight[model_id] -= 1
 
     # ----- downloading -----
     def _list(self, fid: str) -> list[tuple[str, str]]:
@@ -324,15 +370,20 @@ class Models:
         return bad
 
     # ----- running -----
-    def _server_argv(self, path: str) -> list[str]:
+    def _port_for(self, model_id: str) -> int:
+        """Each model has its own port (PORT + its place in the catalog), so a model never collides with another."""
+        return PORT + next((i for i, m in enumerate(CATALOG) if m["id"] == model_id), 0)
+
+    def _server_argv(self, path: str, port: int | None = None) -> list[str]:
+        port = port or PORT
         exe = shutil.which("llama-server") or next((str(p) for p in [Path.home() / "llama.cpp/build/bin/llama-server"] if p.exists()), None)
         threads = str(max(1, (os.cpu_count() or 2) - 1))
         if exe:
-            return [exe, "-m", path, "--host", "127.0.0.1", "--port", str(PORT), "-c", "4096", "-t", threads]
+            return [exe, "-m", path, "--host", "127.0.0.1", "--port", str(port), "-c", "4096", "-t", threads]
         if shutil.which("docker"):
             from .lab import LLAMA_IMAGE
             d = str(Path(path).parent)
-            return ["docker", "run", "--rm", "--name", "mnx-brain", "-p", f"127.0.0.1:{PORT}:8080", "-v", f"{d}:/models:ro",
+            return ["docker", "run", "--rm", "--name", f"mnx-model-{port}", "-p", f"127.0.0.1:{port}:8080", "-v", f"{d}:/models:ro",
                     LLAMA_IMAGE, "-m", f"/models/{Path(path).name}", "--host", "0.0.0.0", "--port", "8080", "-c", "4096"]
         raise ModelError("llama.cpp isn't installed. On the phone: pkg install llama-cpp · on a server: install llama.cpp "
                          "(llama-server) or Docker")
@@ -344,7 +395,8 @@ class Models:
             raise ModelError("Download it first")
         await self.stop_all()
         if e["kind"] == "gguf":
-            argv, port, cwd, env = self._server_argv(st["path"]), PORT, None, None
+            port = self._port_for(model_id)
+            argv, cwd, env = self._server_argv(st["path"], port), None, None
         elif st.get("command"):
             argv, port = ["sh", "-c", st["command"]], int(st.get("port") or 8000)
             cwd = str(self.dir(model_id) / "files") if (self.dir(model_id) / "files").exists() else None

@@ -236,7 +236,91 @@ def test_models_api_is_owner_only_and_never_shows_links(monkeypatch, tmp_path):
     assert client.put("/api/models/mnx-1.5-max-coder/source", headers=user, json={"link": link}).status_code == 403
     assert client.put("/api/models/mnx-1.5-max-coder/source", headers=owner, json={"link": link}).status_code == 200
     assert client.post("/api/models/mnx-1.5-max-coder/download", headers=user).status_code == 403
-    seen = client.get("/api/models", headers=user).json()
-    assert [x["name"] for x in seen] == ["Mnx 1.5 Max Coder", "Mnx 1 Lite", "Mnx 1 (7B)", "Mnx lonjer"]
-    assert "1qZiLMCJ" not in json.dumps(seen) and "has_link" not in seen[0]
-    assert client.get("/api/models", headers=owner).json()[0]["has_link"]
+    assert client.get("/api/models", headers=user).json() == []  # nothing set up yet: users see nothing to pick
+    assert client.get("/api/models?setup=1", headers=user).json() == []  # ?setup is the owner's view only
+    full = client.get("/api/models?setup=1", headers=owner).json()
+    assert [x["name"] for x in full] == ["Mnx 1.5 Max Coder", "Mnx 1 Lite", "Mnx 1 (7B)", "Mnx lonjer"] and full[0]["has_link"]
+    assert "emoji" not in full[0]
+
+
+# ---------------------------------------------------------------- users just pick a model by name
+def _two_models(monkeypatch, tmp_path, m, drive=None):
+    """Two fake models (different fake servers) that the owner has already set up."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    exe = bindir / "llama-server"
+    exe.write_text(FAKE_SERVER.replace("{python}", sys.executable))
+    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    ports = {"alpha": 18641, "beta": 18642}
+    cat = []
+    for i, (mid, name) in enumerate((("alpha", "Alpha Chat"), ("beta", "Beta Coder"))):
+        f = tmp_path / f"{mid}.gguf"
+        f.write_bytes(b"x")
+        cat.append({"id": mid, "name": name, "about": "t", "kind": "gguf", "run": "llama.cpp", "ram_gb": 1, "disk_gb": 0.001,
+                    "main": f.name, "md5": {}, "sizes": {}})
+        m.state[mid] = {"status": "ready", "path": str(f)}
+    monkeypatch.setattr(models_mod, "CATALOG", cat)
+    monkeypatch.setattr(models_mod, "PORT", 18641)  # alpha 18641, beta 18642: one port per model
+    return ports
+
+
+def test_users_see_only_names_and_each_message_goes_to_the_model_picked(mm, monkeypatch, tmp_path):
+    m, b = mm
+    monkeypatch.setattr(models_mod, "models", m)
+    _two_models(monkeypatch, tmp_path, m)
+    assert m.choices() == [{"id": "alpha", "name": "Alpha Chat"}, {"id": "beta", "name": "Beta Coder"}]  # names only, no more
+    assert brain_mod.is_connected()  # a model set up is a brain: no separate Brain setting needed
+
+    async def ask(model):
+        tok = models_mod.selected.set(model)
+        try:
+            return await brain_mod.chat([{"role": "user", "content": "hi"}])
+        finally:
+            models_mod.selected.reset(tok)
+
+    async def go():
+        a = await ask("alpha")        # starts alpha by itself: no download, no click on "start"
+        c = await ask("beta")         # the user switches: beta starts, alpha stops
+        again = await ask(None)       # nothing picked: whichever is running
+        await m.stop_all()
+        return a, c, again
+    a, c, again = run(go())
+    assert a == "from alpha.gguf: hi" and c == "from beta.gguf: hi" and again == "from beta.gguf: hi"
+    assert not b.url  # picking models never touched the Settings brain
+
+
+def test_an_answer_in_progress_isnt_cut_off_by_another_users_pick(mm, monkeypatch, tmp_path):
+    m, _ = mm
+    monkeypatch.setattr(models_mod, "models", m)
+    _two_models(monkeypatch, tmp_path, m)
+    order = []
+
+    async def slow_alpha():
+        async with m.using("alpha") as url:
+            order.append("alpha-start")
+            await asyncio.sleep(1.2)
+            order.append("alpha-done")
+
+    async def beta_wants_in():
+        await asyncio.sleep(0.4)
+        async with m.using("beta") as url:
+            order.append("beta-start")
+
+    async def go():
+        await asyncio.gather(slow_alpha(), beta_wants_in())
+        await m.stop_all()
+    run(go())
+    assert order == ["alpha-start", "alpha-done", "beta-start"]
+
+
+def test_a_model_the_owner_hasnt_set_up_cant_be_used(mm, monkeypatch, tmp_path):
+    m, _ = mm
+    _two_models(monkeypatch, tmp_path, m)
+    m.state.pop("beta")
+    assert [c["id"] for c in m.choices()] == ["alpha"] and not m.usable("beta") and not m.usable("nope")
+    with pytest.raises(ModelError, match="isn't available"):
+        async def go():
+            async with m.using("beta"):
+                pass
+        run(go())

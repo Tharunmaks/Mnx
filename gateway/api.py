@@ -1574,6 +1574,9 @@ async def ws_endpoint(ws: WebSocket):
                 task.history = [{"role": "bot" if h.get("role") == "bot" else "user", "text": str(h.get("text", ""))[:4000]}
                                 for h in hist[-24:] if isinstance(h, dict)]
                 task.user_name = str(msg.get("name") or "")[:40]
+                from hive.models import models as _models_
+                picked = str(msg.get("model") or "")[:60]
+                task.model = picked if picked and _models_.usable(picked) else None
                 TASKS[task_id] = (task, asyncio.create_task(run_task(task)))
 
             elif kind == "action":
@@ -1593,6 +1596,8 @@ async def ws_endpoint(ws: WebSocket):
 
 
 async def run_task(task: Task) -> None:
+    from hive.models import selected as _selected_model
+    _selected_model.set(getattr(task, "model", None))  # this message is answered by the model the user picked
     try:
         await _run_task(task)
     finally:
@@ -1921,8 +1926,11 @@ def _models():
 
 @api.get("/models")
 def list_models(request: Request):
+    """Users: just the names of the models they can pick. The owner: everything, for setting them up."""
     m, _ = _models()
-    return m.view(owner=_is_owner(request))
+    if _is_owner(request) and request.query_params.get("setup"):
+        return m.view(owner=True)
+    return m.choices()
 
 
 class ModelLink(BaseModel):

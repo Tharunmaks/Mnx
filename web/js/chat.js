@@ -8,7 +8,7 @@ import {
 } from "./shared.js";
 import { buildModel, renderRun } from "./render.js";
 import { askNotifications, installVoice, speak, startTalk, stopSpeaking } from "./voice.js";
-import { openModels, refreshModelPill } from "./models.js";
+import { installModelPicker, refreshModelPill, selectedModel } from "./models.js";
 
 const $ = (id) => document.getElementById(id);
 const CHATS_KEY = "mnx.chats";
@@ -18,7 +18,6 @@ const ACTIVE_KEY = "mnx.activeChat";
 document.querySelectorAll("[data-icon]").forEach((el) => { el.outerHTML = ICONS[el.dataset.icon]; });
 $("brandLogo").innerHTML = logoSVG();
 $("welcomeLogo").innerHTML = logoSVG("wordmark-hex");
-$("pillLogo").innerHTML = logoSVG();
 
 // ---------- state ----------
 let chats = store.get(CHATS_KEY, []);
@@ -131,7 +130,8 @@ function send(text) {
   chat.updated = Date.now();
 
   const ok = client.send({ type: "user_message", chat: chat.id, task, text, name: getSettings().name || undefined, effort: getSettings().effort,
-    mode: chat.bee ? "peace" : "rush", bee: chat.bee || undefined, history: chat.bee ? historyOf(chat) : undefined });
+    mode: chat.bee ? "peace" : "rush", bee: chat.bee || undefined, history: chat.bee ? historyOf(chat) : undefined,
+    model: selectedModel() || undefined });
   if (!ok) {
     turn.events.push(
       { task, type: "error", text: "Can't reach the Mnx Hive gateway", detail: "check that the server is running, or set its URL in Settings" },
@@ -245,7 +245,6 @@ function scheduleRender(turn) {
 function rerenderTurn(turn, scroll = true) {
   const run = runs.get(turn.task);
   if (!run) return;
-  const nearBottom = isNearBottom();
   const el = renderRun(buildModel(turn.events), { onAction: onAction(turn), cardCache: run.cardCache });
   const owner = turn.bee && bees.find((b) => b.id === turn.bee);
   if (owner) {
@@ -254,17 +253,55 @@ function rerenderTurn(turn, scroll = true) {
     el.querySelector(".logo")?.replaceWith(badge);
   }
   run.el.replaceChildren(el);
-  if (scroll && nearBottom) scrollDown();
+  if (scroll) scrollDown();
 }
+
+// ---------- smooth following ----------
+// "Stuck" means you're reading the bottom: the view then follows the reply as it grows (one jump per layout change,
+// no flicker). Scroll up and it lets go; a "Jump to latest" button brings you back.
+let stuck = true;
+let followFrame = 0;
+let programmatic = 0;
+const NEAR = 90;
 
 function isNearBottom() {
   const s = $("scroll");
-  return s.scrollHeight - s.scrollTop - s.clientHeight < 120;
+  return s.scrollHeight - s.scrollTop - s.clientHeight < NEAR;
+}
+function toBottom(smooth = false) {
+  const s = $("scroll");
+  programmatic = performance.now() + (smooth ? 600 : 80);
+  s.scrollTo({ top: s.scrollHeight, behavior: smooth ? "smooth" : "auto" });
 }
 function scrollDown(force, smooth = false) {
-  const s = $("scroll");
-  if (force || isNearBottom()) requestAnimationFrame(() => s.scrollTo({ top: s.scrollHeight, behavior: smooth ? "smooth" : "auto" }));
+  if (force) stuck = true;
+  if (!stuck) return;
+  cancelAnimationFrame(followFrame);
+  followFrame = requestAnimationFrame(() => toBottom(smooth));
 }
+let syncFrame = 0;
+function syncJumpButton() {  // judged once the scroll has settled, so it never flashes while we follow a reply
+  cancelAnimationFrame(syncFrame);
+  syncFrame = requestAnimationFrame(() => $("toBottom").classList.toggle("show", !isNearBottom() && !stuck));
+}
+// Only real input (wheel, touch, keys, dragging the scrollbar) can let go of the bottom, never our own scrolling or
+// the page growing under us.
+let lastInput = 0;
+let touching = false;
+const note = (ms) => () => { lastInput = performance.now() + ms; };
+const sc = $("scroll");
+sc.addEventListener("wheel", note(250), { passive: true });
+sc.addEventListener("keydown", note(250));
+sc.addEventListener("pointerdown", note(400), { passive: true });
+sc.addEventListener("touchstart", () => { touching = true; lastInput = Infinity; }, { passive: true });
+sc.addEventListener("touchend", () => { touching = false; lastInput = performance.now() + 1500; }, { passive: true });  // momentum
+sc.addEventListener("touchcancel", () => { touching = false; lastInput = performance.now() + 1500; }, { passive: true });
+sc.addEventListener("scroll", () => {
+  if (touching || performance.now() < lastInput) stuck = isNearBottom();
+  syncJumpButton();
+}, { passive: true });
+if (window.ResizeObserver) new ResizeObserver(() => { if (stuck) scrollDown(); syncJumpButton(); }).observe($("thread"));
+$("toBottom").addEventListener("click", () => { stuck = true; toBottom(true); $("toBottom").classList.remove("show"); });
 
 function renderHistory() {
   const box = $("history");
@@ -399,7 +436,7 @@ function openSettings(focusName) {
 }
 $("openSettings").addEventListener("click", () => openSettings(false));
 $("openProfile").addEventListener("click", () => openSettings(true));
-$("modelPill").addEventListener("click", openModels);
+installModelPicker();
 $("settingsDlg").addEventListener("close", () => {
   if ($("settingsDlg").returnValue !== "save") return;
   const f = $("settingsForm");

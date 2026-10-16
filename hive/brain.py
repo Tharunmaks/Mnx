@@ -49,8 +49,8 @@ class Brain:
     def url(self) -> str:
         return self._get("url").rstrip("/")
 
-    def endpoint(self) -> str:
-        u = self.url
+    def endpoint(self, url: str | None = None) -> str:
+        u = (url or self.url).rstrip("/")
         if u.endswith("/chat/completions"):
             return u
         if u.endswith("/v1") or "generativelanguage.googleapis.com" in u:  # Gemini's OpenAI path has no /v1
@@ -80,30 +80,44 @@ class Brain:
 
     async def chat(self, messages: list[dict], effort: str | None = None, max_tokens: int | None = None,
                    temperature: float = 0.7) -> str:
+        """One answer. The model the user picked for this message (hive/models.py) answers it; with none picked, the
+        brain set in Settings, else the first of the owner's models that is set up."""
+        from . import models as models_mod
+        picked = models_mod.selected.get() or (None if self.url else models_mod.models.default())
+        if picked:
+            try:
+                async with models_mod.models.using(picked) as base:
+                    return await self._post(base, "", "", messages, effort, max_tokens, temperature)
+            except models_mod.ModelError as exc:
+                raise BrainNotConnected(str(exc)) from exc
         if not self.url:
-            raise BrainNotConnected("No brain is connected (Settings → Brain)")
+            raise BrainNotConnected("No model is set up yet")
+        return await self._post(self.url, self._get("key"), self._get("model"), messages, effort, max_tokens, temperature)
+
+    async def _post(self, base: str, key: str, model: str, messages: list[dict], effort, max_tokens, temperature) -> str:
         body = {"messages": messages, "max_tokens": max_tokens or effort_mod.LEVELS[effort_mod.normalize(effort)]["reply"] * 2,
                 "temperature": temperature}
-        if self._get("model"):
-            body["model"] = self._get("model")
-        headers = {"Authorization": f"Bearer {self._get('key')}"} if self._get("key") else {}
-        async with httpx.AsyncClient(timeout=120, transport=self.transport) as c:
-            r = await c.post(self.endpoint(), json=body, headers=headers)
+        if model:
+            body["model"] = model
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        async with httpx.AsyncClient(timeout=180, transport=self.transport) as c:
+            r = await c.post(self.endpoint(base), json=body, headers=headers)
         if r.status_code in (401, 403):
-            raise BrainNotConnected("The brain's server rejected the API key")
+            raise BrainNotConnected("The model's server rejected the API key")
         if r.status_code >= 400:
-            raise BrainNotConnected(f"The brain answered {r.status_code}: {r.text[:200]}")
+            raise BrainNotConnected(f"The model answered {r.status_code}: {r.text[:200]}")
         try:
             return (r.json()["choices"][0]["message"]["content"] or "").strip()
         except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise BrainNotConnected(f"The brain's answer wasn't a chat completion: {r.text[:200]}") from exc
+            raise BrainNotConnected(f"The model's answer wasn't a chat completion: {r.text[:200]}") from exc
 
 
 brain = Brain()
 
 
 def is_connected() -> bool:
-    return bool(brain.url)
+    from . import models as models_mod
+    return bool(brain.url) or models_mod.models.default() is not None
 
 
 def system_prompt(effort: str | None = None) -> str:
