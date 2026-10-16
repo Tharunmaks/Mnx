@@ -8,7 +8,9 @@ never by users, and they never go into the code or git: they live in data/ (owne
   python3 -m hive.admin token                           show the owner token
   python3 -m hive.admin user-token                      make a token to give to a user (they can't see credentials)
   python3 -m hive.admin model mnx-1.5-max-coder <Drive folder link>   where a model downloads from (kept private)
-  python3 -m hive.admin models                          your models and whether their link is set
+  python3 -m hive.admin install-models id=link id=link ...   download, join and check models now (no clicking), e.g.
+        mnx-1.5-max-coder=<Drive folder link>   mnx-1-lite=<link>   mnx-1=<link>   mnx-lonjer=<link>
+  python3 -m hive.admin models                          your models and whether they're installed
 
 Names the Hive knows: IOTAMINE_API_KEY, KAGGLE_USERNAME, KAGGLE_API_TOKEN, HCLOUD_TOKEN, DIGITALOCEAN_TOKEN,
 RUNPOD_API_KEY. Voice, brain and Twilio settings are on the owner's Settings (they need the owner token).
@@ -63,11 +65,29 @@ def main(argv: list[str]) -> int:
             return 1
         print(f"Saved the Drive folder for {rest[0]} (data/models/sources.json, owner-only, never in git).")
         return 0
+    if cmd == "install-models" and rest:
+        from hive.models import ModelError, models
+        models.quiet = False
+        bad = 0
+        for arg in rest:
+            mid, _, link = arg.partition("=")
+            print(f"\n== {mid}")
+            try:
+                models.set_source(mid, link)
+            except ModelError as exc:
+                print(f"  {exc}")
+                bad += 1
+                continue
+            ok = models.fetch_all(mid, models._sources()[mid], say=print)
+            print("  ✓ ready: users can now pick it by name" if ok else "  ✗ not installed")
+            bad += 0 if ok else 1
+        return 1 if bad else 0
     if cmd == "models":
         from hive.models import CATALOG, models
         links = models._sources()
         for m in CATALOG:
-            print(f"{'✓' if m['id'] in links else '·'} {m['id']:20} {m['name']}  ({m['disk_gb']:g} GB, runs with {m['run']})")
+            st = models.state.get(m["id"], {}).get("status", "not installed")
+            print(f"{'✓' if st in ('ready', 'running', 'stopped') else '·'} {m['id']:20} {m['name']:18} {st}  ({m['disk_gb']:g} GB, runs with {m['run']})")
         return 0
     if cmd == "token":
         from gateway import auth

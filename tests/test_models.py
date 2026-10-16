@@ -324,3 +324,31 @@ def test_a_model_the_owner_hasnt_set_up_cant_be_used(mm, monkeypatch, tmp_path):
             async with m.using("beta"):
                 pass
         run(go())
+
+
+# ---------------------------------------------------------------- the owner installs from the command line; users just pick
+def test_one_command_installs_models_and_a_running_server_sees_them(tmp_path, monkeypatch, capsys):
+    from hive import admin
+    drive = FakeDrive(tmp_path)
+    _tiny(monkeypatch, drive)
+    cli = models_mod.Models(tmp_path / "shared")        # the command line
+    server = models_mod.Models(tmp_path / "shared")     # the server that was already running
+    cli.lister, cli.fetcher = drive.lister, drive.fetcher
+    monkeypatch.setattr(models_mod, "models", cli)
+    assert server.choices() == []                       # before: nothing for users to pick
+    assert admin.main(["install-models", "tiny=https://drive.google.com/drive/folders/1qZiLMCJWyMytw88ZIO5T2_lCkYLXRZHS"]) == 0
+    out = capsys.readouterr().out
+    assert "ready: users can now pick it by name" in out and "checking MD5s" in out
+    assert server.choices() == [{"id": "tiny", "name": "Tiny"}]  # no restart, no clicking: it just appears
+    assert admin.main(["install-models", "tiny=not-a-link"]) == 1
+
+
+def test_a_failed_install_says_so_and_nothing_appears(tmp_path, monkeypatch, capsys):
+    from hive import admin
+    drive = FakeDrive(tmp_path, corrupt=True)
+    _tiny(monkeypatch, drive)
+    cli = models_mod.Models(tmp_path / "shared")
+    cli.lister, cli.fetcher = drive.lister, drive.fetcher
+    monkeypatch.setattr(models_mod, "models", cli)
+    assert admin.main(["install-models", "tiny=1qZiLMCJWyMytw88ZIO5T2_lCkYLXRZHS"]) == 1
+    assert "Checksum mismatch" in capsys.readouterr().out and cli.choices() == []

@@ -130,6 +130,7 @@ def read_md5_lists(root: Path) -> dict[str, str]:
 class Models:
     def __init__(self, root: Path = MODELS_DIR):
         self.root = root
+        self.quiet = True       # the command line turns gdown's progress bar on
         self.lister = None      # tests swap these in: (folder id) → [(file id, relative path)]
         self.fetcher = None     # (file id, dest Path, progress cb) → None
         self.jobs: dict[str, asyncio.Task] = {}
@@ -147,8 +148,27 @@ class Models:
     def _save(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "state.json").write_text(json.dumps(self.state, indent=1))
+        self._mtime = (self.root / "state.json").stat().st_mtime_ns
         if self.on_change:
             self.on_change()
+
+    def _sync(self) -> None:
+        """The owner may install a model from the command line while the server runs: pick that up."""
+        try:
+            m = (self.root / "state.json").stat().st_mtime_ns
+        except FileNotFoundError:
+            return
+        if m != getattr(self, "_mtime", None):
+            self._mtime = m
+            try:
+                disk = json.loads((self.root / "state.json").read_text())
+            except (json.JSONDecodeError, OSError):
+                return
+            for mid, st in disk.items():
+                mine = self.state.get(mid, {})
+                if mine.get("status") in ("running", "starting", "downloading") and mid in self.procs | self.jobs:
+                    continue  # this server is busy with it: its own state wins
+                self.state[mid] = st
 
     def _sources(self) -> dict:
         try:
@@ -186,6 +206,7 @@ class Models:
 
     def view(self, owner: bool = False) -> list[dict]:
         from .brain import brain
+        self._sync()
         out = []
         for m in CATALOG:
             st = self.state.get(m["id"], {})
@@ -205,6 +226,7 @@ class Models:
     # ----- picking a model: what users see and use -----
     def usable(self, model_id: str) -> bool:
         """The owner has set it up: users can pick it and it starts by itself when they do."""
+        self._sync()
         e = next((m for m in CATALOG if m["id"] == model_id), None)
         st = self.state.get(model_id, {})
         if not e or st.get("status") not in ("ready", "running", "starting", "stopped"):
@@ -263,7 +285,7 @@ class Models:
             return self.fetcher(file_id, dest, progress)
         import gdown
         dest.parent.mkdir(parents=True, exist_ok=True)
-        got = gdown.download(id=file_id, output=str(dest), quiet=True, resume=True, progress=progress, retries=3)
+        got = gdown.download(id=file_id, output=str(dest), quiet=self.quiet, resume=True, progress=progress, retries=3)
         if not got:
             raise ModelError(f"Drive didn't send {dest.name} (is the folder shared “Anyone with the link”?)")
 
@@ -281,14 +303,23 @@ class Models:
         self.jobs[model_id] = asyncio.get_running_loop().create_task(self._download(model_id, fid))
 
     async def _download(self, model_id: str, fid: str) -> None:
+        loop = asyncio.get_running_loop()
+        await asyncio.to_thread(self.fetch_all, model_id, fid, lambda: loop.call_soon_threadsafe(self._changed))
+
+    def fetch_all(self, model_id: str, fid: str, tick=None, say=None) -> bool:
+        """The whole job, synchronous: list the Drive folder, fetch every part (skipping parts already fetched), join,
+        check the MD5s, tidy up. Runs on the server in a thread, or straight from the command line. True when ready."""
         e = self._entry(model_id)
         st = self.state.setdefault(model_id, {})
         st.update(status="downloading", error=None)
         self._save()
+        tick = tick or (lambda: None)
+        say = say or (lambda msg: None)
         work = self.dir(model_id) / "download"
         out = self.dir(model_id) / "files"
+        ok = False
         try:
-            listing = await asyncio.to_thread(self._list, fid)
+            listing = self._list(fid)
             if not listing:
                 raise ModelError("The Drive folder is empty")
             by_rel = {rel: fid_ for fid_, rel in listing}
@@ -303,29 +334,37 @@ class Models:
                 dest = work / rel
                 self.progress[model_id] = {"file": Path(rel).name, "files_done": i, "files": total, "stage": "downloading",
                                            "since": t0}
-                self._changed()
-                if not (rel in fetched and dest.exists()):
-                    await asyncio.to_thread(self._fetch, file_id, dest, None)
-                    fetched.add(rel)
-                    marks.write_text(json.dumps(sorted(fetched)))
+                tick()
+                if rel in fetched and dest.exists():
+                    continue
+                say(f"  [{i + 1}/{total}] {Path(rel).name}")
+                self._fetch(file_id, dest, None)
+                fetched.add(rel)
+                marks.write_text(json.dumps(sorted(fetched)))
             self.progress[model_id] = {"stage": "joining", "files_done": total, "files": total}
-            self._changed()
-            joined = await asyncio.to_thread(self._join, work, out)
+            tick()
+            say("  joining the parts…")
+            joined = self._join(work, out)
             self.progress[model_id] = {"stage": "checking", "files_done": total, "files": total}
-            self._changed()
+            tick()
+            say("  checking MD5s…")
             expected = {**read_md5_lists(work), **read_md5_lists(out), **e["md5"]}
-            bad = await asyncio.to_thread(self._verify, out, joined, expected, e.get("sizes") or {})
+            bad = self._verify(out, joined, expected, e.get("sizes") or {})
             if bad:
                 raise ModelError("Checksum mismatch, download again: " + ", ".join(bad[:5]))
             shutil.rmtree(work, ignore_errors=True)  # the parts aren't needed once the files check out
             (self.dir(model_id) / "fetched.json").unlink(missing_ok=True)
             main = next(out.rglob(e["main"]), None)
             st.update(status="ready", path=str(main or out), verified=len(joined), ready_at=int(time.time()))
+            ok = True
         except Exception as exc:
             st.update(status="failed", error=str(exc)[:400])
+            say(f"  failed: {exc}")
         finally:
             self.progress.pop(model_id, None)
             self._save()
+            tick()
+        return ok
 
     def _changed(self) -> None:
         if self.on_change:

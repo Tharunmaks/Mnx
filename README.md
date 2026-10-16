@@ -279,6 +279,20 @@ no downloading, nothing to set up) and a check mark shows the one in use. Each m
 sender picked; if that model isn't running, the Hive starts it by itself (and lets an answer already in progress
 finish before it switches). Only models the owner has set up appear.
 
+**Phone: start and keep the Hive running** with `bash scripts/termux-start.sh` (updates, installs what's missing, keeps
+the phone awake, restarts the server if it stops). "Can't reach the Mnx Hive gateway" in the chat means this isn't running.
+
+**One command installs a model, no clicking** (run once on the Hive's machine; the Drive folder must be shared "Anyone
+with the link" while it downloads, and you can make it private again afterwards):
+
+```bash
+python3 -m hive.admin install-models mnx-1.5-max-coder=<Drive folder link>
+python3 -m hive.admin models          # what's installed
+```
+
+It downloads every part with a progress bar (a re-run resumes), joins them, checks the MD5s, and the model appears in
+everyone's list at once, even on a server that's already running.
+
 **Only the owner sets models up** (`hive/models.py`, `web/js/models.js`): the owner sees one extra row, **Set up
 models…**, with the four models, what each is and what it needs:
 
