@@ -47,6 +47,7 @@ SCROLLBACK = 256 * 1024
 LOG_MAX = 1024 * 1024
 BROWSER_IDLE = int(os.getenv("MNX_BROWSER_IDLE", "900"))  # close idle browsers; storage stays on disk
 ID_RE = re.compile(r"^[a-z0-9_]{1,40}$")
+GPU_DOCKER = False  # set by the gateway: Docker on this machine can hand out an NVIDIA GPU
 KILL_TREE = (  # kill a job's whole process tree from its pid file (slim images have no pkill, so walk /proc)
     'p=$(cat {pidfile} 2>/dev/null) || exit 0; '
     'kids() {{ for s in /proc/[0-9]*/stat; do set -- $(cat $s 2>/dev/null); [ "$4" = "$1" ] && continue; '
@@ -296,7 +297,7 @@ class Cell:
             if m["memory_gb"]:
                 gb = min(gb, m["memory_gb"] * 0.9)
             flags += ["--memory", f"{max(0.25, gb):.2f}g"]
-        if c.get("gpu"):
+        if c.get("gpu") and GPU_DOCKER:  # no GPU here: the Bee's GPU comes from the Hive's GPU pool (gpu_pool.py)
             flags += ["--gpus", "all"]
         return flags
 

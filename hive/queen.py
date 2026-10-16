@@ -6,7 +6,8 @@ reports that honestly instead of inventing an answer.
 
 from __future__ import annotations
 
-from . import brain, calls, cloud_chat, modes
+from . import bots, brain, calls, cloud_chat, gpu_pool, modes, plans
+from .gpu_chat import gpu_chat
 from .bees import registry
 from .core import Task
 
@@ -20,6 +21,15 @@ async def handle(task: Task) -> None:
 
     # "call me", "call me in 10 minutes and tell me …": a voice call with the Fish Audio voice
     if await calls.handle_chat(task):
+        return
+    if bots.parse(task.text):  # "make a bot called … that …"
+        await bots.create_flow(task, bots.parse(task.text))
+        return
+    if plans.parse(task.text):  # "subscribe me to plus"
+        await plans.handle(task, plans.parse(task.text))
+        return
+    if gpu_pool.parse(task.text):  # "run train.py on the gpu", "gpu status"
+        await gpu_chat(task, gpu_pool.parse(task.text))
         return
     if task.bee and await modes.peace(task):
         return

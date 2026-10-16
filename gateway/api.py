@@ -34,7 +34,8 @@ import os
 from hive.connectors import LANES, LAYERS, hub
 from hive.core import Task, now
 from hive.lab import lab
-from hive import cloud, system, usage
+from hive import bots, cloud, system, usage
+from hive.gpu_pool import GpuError, pool as gpu
 from hive.plan import plan
 from hive.calls import calls, twilio_signature_ok
 from hive.voice import VoiceError, voice
@@ -101,6 +102,8 @@ async def _bee_created(b: dict) -> None:
 
 async def _bee_deleted(b: dict) -> None:
     await cells.remove(b["id"])
+    if b.get("bot"):
+        bots.store.remove(b["id"])  # its knowledge and memories
     try:
         await cloud.machines.release_bee(b["id"])  # its own cloud server goes too: billing stops
     except cloud.CloudError as exc:
@@ -149,10 +152,15 @@ async def lifespan(app: FastAPI):
     lab.on_finish = lambda run: loop.create_task(_report(run))
     status.on_change = lambda: loop.create_task(broadcast({"type": "bees_changed"}))
     await lab.start()
+    import hive.cells as cells_mod
+    cells_mod.GPU_DOCKER = lab.gpu_local
     prepull = asyncio.create_task(_prepull_images())
     cloud.machines.on_change = lambda: loop.create_task(broadcast({"type": "bees_changed"}))
     calls.broadcast, calls.run, calls.notify_phones = broadcast, run_task, _ring_phones
     calls.start_loop()
+    gpu.deliver = _deliver_gpu_output
+    gpu.on_change = lambda: loop.create_task(broadcast({"type": "gpu_changed"}))
+    gpu.resume()
     yield
     calls.stop_loop()
     health.cancel()
@@ -387,8 +395,14 @@ async def set_plan(body: PlanBody):
         plan.set(body.plan)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    from hive import plans
+    try:
+        changed = await plans.apply(plan.name)  # every Bee gets the plan's computer
+    except (BeeError, RuntimeError) as exc:
+        changed = []
+        log("Queen", "plan", f"some computers didn't change: {exc}")
     await broadcast({"type": "plan_changed"})
-    return plan.view()
+    return {**plan.view(), "changed": changed}
 
 
 @api.get("/cloud")
@@ -1528,6 +1542,10 @@ async def ws_endpoint(ws: WebSocket):
                 task_id = str(msg.get("task") or f"t_{uuid.uuid4().hex[:10]}")[:40]
                 task = Task(task_id, str(msg.get("chat", ""))[:40], text, emit, effort=str(msg.get("effort") or "")[:12],
                             bee=str(msg.get("bee") or "")[:40] or None, mode=str(msg.get("mode") or "")[:8])
+                hist = msg.get("history") if isinstance(msg.get("history"), list) else []
+                task.history = [{"role": "bot" if h.get("role") == "bot" else "user", "text": str(h.get("text", ""))[:4000]}
+                                for h in hist[-24:] if isinstance(h, dict)]
+                task.user_name = str(msg.get("name") or "")[:40]
                 TASKS[task_id] = (task, asyncio.create_task(run_task(task)))
 
             elif kind == "action":
@@ -1567,6 +1585,245 @@ async def _run_task(task: Task) -> None:
         TASKS.pop(task.id, None)
 
 
+# ---------- the brain, bots you make, the Hive's free GPU and free cloud ----------
+@api.get("/brain")
+def brain_settings():
+    from hive.brain import brain
+    return brain.view()
+
+
+@api.put("/brain")
+def brain_update(body: dict):
+    from hive.brain import brain
+    try:
+        return brain.update(body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@api.post("/brain/test")
+async def brain_test():
+    from hive.brain import BrainNotConnected, brain
+    try:
+        reply = await brain.chat([{"role": "user", "content": "Reply with just: OK"}], max_tokens=20)
+    except (BrainNotConnected, httpx.HTTPError) as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"ok": True, "reply": reply[:200]}
+
+
+def _bot(bot_id: str) -> dict:
+    b = registry.get(bot_id)
+    if not bots.is_bot(b):
+        raise HTTPException(404, "No such bot")
+    return b
+
+
+def _bot_view(b: dict) -> dict:
+    return {**bee_view(b), "knowledge": bots.store.files(b["id"]), "memories": len(bots.store.memories(b["id"]))}
+
+
+@api.get("/bots")
+def list_bots():
+    return [_bot_view(b) for b in BEES if bots.is_bot(b)]
+
+
+@api.get("/bots/templates")
+def bot_templates():
+    return {"templates": bots.TEMPLATES, "tones": bots.TONES, "knowledge_types": sorted(bots.KNOWLEDGE_TYPES)}
+
+
+class BotBody(BaseModel):
+    name: str | None = Field(default=None, max_length=24)
+    tagline: str = Field(default="", max_length=90)
+    profile: dict = Field(default_factory=dict)
+    knowledge: dict[str, str] = Field(default_factory=dict)
+    remix_of: str | None = Field(default=None, max_length=40)
+
+
+@api.post("/bots")
+async def new_bot(body: BotBody):
+    if not body.name:
+        raise HTTPException(400, "A bot needs a name")
+    try:
+        b = await bots.create_bot(body.name, body.tagline, body.profile, knowledge=body.knowledge)
+        if body.remix_of and bots.is_bot(registry.get(body.remix_of)):
+            bots.store.copy(body.remix_of, b["id"])
+    except (BeeError, bots.BotError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await broadcast({"type": "bees_changed"})
+    return _bot_view(b)
+
+
+@api.put("/bots/{bot_id}")
+async def edit_bot(bot_id: str, body: BotBody):
+    try:
+        b = bots.update_bot(_bot(bot_id), {"profile": body.profile, "tagline": body.tagline})
+    except bots.BotError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await broadcast({"type": "bees_changed"})
+    return _bot_view(b)
+
+
+@api.post("/bots/{bot_id}/knowledge")
+async def bot_knowledge(bot_id: str, request: Request, name: str):
+    _bot(bot_id)
+    data = await request.body()
+    try:
+        return bots.store.add_file(bot_id, name, data)
+    except bots.BotError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@api.delete("/bots/{bot_id}/knowledge/{name}")
+def bot_knowledge_remove(bot_id: str, name: str):
+    _bot(bot_id)
+    bots.store.remove_file(bot_id, name)
+    return {"ok": True}
+
+
+@api.get("/bots/{bot_id}/memory")
+def bot_memory(bot_id: str):
+    _bot(bot_id)
+    return bots.store.memories(bot_id)
+
+
+@api.delete("/bots/{bot_id}/memory")
+def bot_forget(bot_id: str):
+    _bot(bot_id)
+    return {"forgot": bots.store.forget(bot_id)}
+
+
+@api.get("/bots/{bot_id}/export")
+def bot_export(bot_id: str):
+    return bots.export(_bot(bot_id))
+
+
+@api.post("/bots/import")
+async def bot_import(body: dict):
+    if body.get("mnx_bot") != 1 or not body.get("name"):
+        raise HTTPException(400, "That isn't an exported Mnx bot")
+    name = str(body["name"])[:24]
+    while registry.get(re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")):
+        name = (name[:20] + " 2") if not name.endswith(" 2") else name[:-2] + " 3"
+    try:
+        b = await bots.create_bot(name, str(body.get("tagline") or ""), body.get("profile") or {},
+                                  knowledge={k: str(v) for k, v in (body.get("knowledge") or {}).items()})
+    except (BeeError, bots.BotError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await broadcast({"type": "bees_changed"})
+    return _bot_view(b)
+
+
+async def _deliver_gpu_output(bee_id: str, rel: str, data: bytes) -> None:
+    """A GPU job's output files go back into the Bee's computer (gpu-out/<job>/…)."""
+    b = registry.get(bee_id)
+    if not b:
+        return
+    cell = cells.get(b["id"], b["name"], b["computer"])
+    if cell.mode == "remote":
+        await cell.rwrite(rel, data)
+        return
+    p = cell.safe_path(rel)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(data)
+
+
+@api.get("/gpu")
+def gpu_status():
+    return gpu.view()
+
+
+class GpuJob(BaseModel):
+    bee: str = Field(max_length=40)
+    command: str = Field(min_length=1, max_length=500)
+    files: list[str] = Field(default_factory=list, max_length=50)
+
+
+@api.post("/gpu/jobs")
+async def gpu_job(body: GpuJob):
+    from hive.gpu_chat import read_bee_file
+    b = registry.get(body.bee)
+    if not b:
+        raise HTTPException(404, "No such Bee")
+    try:
+        files = {rel: await read_bee_file(b, rel) for rel in body.files}
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        raise HTTPException(400, f"Not in the Bee's computer: {exc}") from exc
+    try:
+        return await gpu.submit(b["id"], body.command, files)
+    except GpuError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@api.get("/gpu/jobs/{job_id}/files/{name:path}")
+def gpu_file(job_id: str, name: str):
+    try:
+        return FileResponse(gpu.output_path(job_id, name))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "No such output") from exc
+
+
+@api.get("/cloud/free")
+async def free_cloud():
+    """The Hive's free cloud: what's set up (free GPU, free servers) and the Hive's SSH key to paste."""
+    return {"gpu": {k: v for k, v in gpu.view().items() if k != "jobs"}, "kaggle_user": lab._secrets.get("KAGGLE_USERNAME", ""),
+            "pool": cloud.pool_view(), "hive_key": await lab.hive_key(), "plan": plan.view()}
+
+
+class KaggleBody(BaseModel):
+    username: str = Field(min_length=1, max_length=60, pattern=r"^[A-Za-z0-9_-]+$")
+    token: str = Field(default="", max_length=200)
+
+
+@api.post("/cloud/kaggle")
+async def free_gpu_setup(body: KaggleBody):
+    lab.set_secret("KAGGLE_USERNAME", body.username)
+    if body.token:
+        lab.set_secret("KAGGLE_API_TOKEN" if not re.fullmatch(r"[0-9a-f]{32}", body.token) else "KAGGLE_KEY", body.token.strip())
+    try:
+        await gpu.check()
+    except GpuError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True}
+
+
+class PoolBody(BaseModel):
+    host: str = Field(min_length=3, max_length=200)
+    user: str = Field(default="ubuntu", max_length=32)
+
+
+POOL_JOBS: dict[str, asyncio.Task] = {}
+
+
+@api.post("/cloud/pool")
+async def free_server_add(body: PoolBody):
+    if body.host in POOL_JOBS:
+        raise HTTPException(409, "That server is already being set up")
+
+    async def go():
+        try:
+            t = await cloud.add_pool_server(body.host.strip(), body.user.strip() or "ubuntu")
+            log("GPU", "cloud", f"Hive cloud server ready: {t['name']} · {t.get('setup')}")
+            await broadcast({"type": "cloud_ready", "text": f"{t['name']} is ready: {t.get('setup')}"})
+        except Exception as exc:
+            await broadcast({"type": "cloud_error", "text": str(exc)[:300]})
+        finally:
+            POOL_JOBS.pop(body.host, None)
+    POOL_JOBS[body.host] = asyncio.create_task(go())
+    return {"ok": True, "text": "Setting it up: checking SSH, installing Docker and Node. This takes a few minutes."}
+
+
+@api.delete("/cloud/pool/{tid}")
+def free_server_remove(tid: str):
+    t = lab.targets.get(tid)
+    if not t or not t.get("pool"):
+        raise HTTPException(404, "No such Hive cloud server")
+    if any(b["computer"].get("where") == tid for b in BEES):
+        raise HTTPException(409, "Bees still run on it; move them home first (“bring the bees back home”)")
+    lab.remove_target(tid)
+    return {"ok": True}
+
+
 # ---------- voice (Fish Audio) and calls ----------
 async def _ring_phones(call) -> None:
     """A paired phone (drone.py) vibrates and shows who's calling; it opens the Hive when MNX_PUBLIC_URL is set."""
@@ -1594,6 +1851,7 @@ async def voice_update(body: dict):
 
 class SpeakBody(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
+    bee: str | None = Field(default=None, max_length=40)  # a bot speaks with its own voice
 
 
 @api.post("/voice/tts")
@@ -1602,7 +1860,8 @@ async def voice_tts(body: SpeakBody):
     if not voice.fish_ready:
         raise HTTPException(409, "No Fish Audio key yet (Settings → Voice)")
     try:
-        audio = await voice.tts(body.text)
+        from hive.voice import voice_for
+        audio = await voice.tts(body.text, voice_for(body.bee))
     except (VoiceError, httpx.HTTPError) as exc:
         raise HTTPException(502, str(exc)) from exc
     return Response(audio, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
@@ -1764,6 +2023,35 @@ async def bee_new_child(body: ChildBee, request: Request):
     except BeeError as exc:
         raise HTTPException(400, str(exc)) from exc
     return bee_view(child)
+
+
+class BeeGpuJob(BaseModel):
+    command: str = Field(min_length=1, max_length=500)
+    files: dict[str, str] = Field(default_factory=dict)  # name → base64
+
+
+@app.post("/bee-api/gpu")
+async def bee_gpu(body: BeeGpuJob, request: Request):
+    """A Bee sends a job to the Hive's GPU from its own computer (mnx-bee gpu …)."""
+    import base64
+    b = _calling_bee(request)
+    try:
+        files = {k: base64.b64decode(v) for k, v in body.files.items()}
+    except ValueError as exc:
+        raise HTTPException(400, "Files must be base64") from exc
+    try:
+        return await gpu.submit(b["id"], body.command, files)
+    except GpuError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/bee-api/gpu/{job_id}")
+def bee_gpu_job(job_id: str, request: Request):
+    b = _calling_bee(request)
+    job = gpu.jobs.get(job_id)
+    if not job or job["bee"] != b["id"]:
+        raise HTTPException(404, "No such job")
+    return job
 
 
 @app.get("/drone.py")

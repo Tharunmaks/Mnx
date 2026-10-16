@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0f">
+  <title>Free cloud · Mnx Hive</title>
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/mnx.css">
+</head>
+<body>
+<div class="app">
+  <main class="main">
+    <header class="topbar">
+      <a class="icon-btn" href="index.html" aria-label="Back to chat"><span data-icon="back"></span></a>
+      <h1>Free cloud · Plus</h1>
+      <span class="conn" id="conn"><i></i><span>Connecting</span></span>
+    </header>
+
+    <div class="scroll">
+      <div class="page" id="page">
+        <p class="hint">Plus is free. Every Bee and bot gets 4 CPUs, 16 GB RAM, 100 GB disk and a GPU with 16 GB VRAM. Users never bring a GPU or a key: the Hive gives them, from the free cloud below. The Hive's owner sets it up once (about 10 minutes, no payment); after that the Hive runs it by itself.</p>
+
+        <div class="step-card" id="stepPlan">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <h2>Plus plan</h2>
+            <p class="hint" id="planText"></p>
+            <button class="btn primary" id="subscribe" type="button">Subscribe to Plus · ₹0</button>
+          </div>
+        </div>
+
+        <div class="step-card" id="stepGpu">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <h2>Free GPU · 16 GB VRAM</h2>
+            <p class="hint">Kaggle gives every account a free NVIDIA GPU with 16 GB VRAM (T4 or P100), about 30 hours a week. The Hive sends Bees' GPU jobs there and brings the results back into their computers.</p>
+            <ol class="howto">
+              <li>Sign up free at <a href="https://www.kaggle.com" target="_blank" rel="noopener">kaggle.com</a> and verify your phone number (needed for GPUs).</li>
+              <li>Open <a href="https://www.kaggle.com/settings" target="_blank" rel="noopener">Settings → API</a> and press <b>Generate New Token</b>; copy it.</li>
+              <li>Paste your Kaggle user name and the token here.</li>
+            </ol>
+            <form class="row-inline" id="kaggleForm">
+              <label class="field">Kaggle user name <input name="username" required pattern="[A-Za-z0-9_-]+" autocomplete="off"></label>
+              <label class="field">API token <input name="token" type="password" autocomplete="off" placeholder="KGAT_… (or the 32-letter key)"></label>
+              <button class="btn primary" type="submit">Connect GPU</button>
+            </form>
+            <p class="hint" id="gpuText"></p>
+          </div>
+        </div>
+
+        <div class="step-card" id="stepServer">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <h2>Free server · 24 GB RAM, 200 GB disk</h2>
+            <p class="hint">Oracle Cloud's Always Free machine (ARM, 4 CPUs, 24 GB RAM, 200 GB disk) costs nothing, forever. The Hive puts Plus Bees on it: two 16 GB Bees per machine (memory limits are ceilings, so they share it well). Add more machines for more Bees.</p>
+            <ol class="howto">
+              <li>Sign up free at <a href="https://www.oracle.com/cloud/free/" target="_blank" rel="noopener">oracle.com/cloud/free</a> (a card is asked to check you're real; Always Free isn't charged).</li>
+              <li>Create a compute instance: image <b>Ubuntu</b>, shape <b>VM.Standard.A1.Flex</b> with 4 OCPUs and 24 GB, boot volume 200 GB.</li>
+              <li>Under <b>Add SSH keys → Paste public keys</b>, paste the Hive's key:
+                <div class="keybox"><code id="hiveKey">…</code><button class="btn" id="copyKey" type="button">Copy</button></div></li>
+              <li>When it's running, copy its <b>Public IP address</b> and paste it here.</li>
+            </ol>
+            <form class="row-inline" id="poolForm">
+              <label class="field">Public IP <input name="host" required placeholder="e.g. 140.238.1.2" inputmode="decimal"></label>
+              <label class="field" style="max-width:140px">User <input name="user" value="ubuntu"></label>
+              <button class="btn primary" type="submit">Add to the Hive</button>
+            </form>
+            <div id="poolList"></div>
+          </div>
+        </div>
+
+        <div class="section-title"><h2>GPU jobs</h2><span class="hint" id="jobNote"></span></div>
+        <div class="usage-card"><div class="utable" id="jobs"></div></div>
+        <p class="hint">From a Bee's computer: <code>python3 .mnx/mnx-bee gpu train.py data.csv</code> · in a Bee's chat: “run train.py on the gpu”, “gpu status”. Kaggle's rules apply (no crypto mining; about 30 GPU hours a week).</p>
+      </div>
+    </div>
+  </main>
+</div>
+<script type="module" src="js/freecloud.js"></script>
+</body>
+</html>

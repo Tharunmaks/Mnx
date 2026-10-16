@@ -34,6 +34,8 @@
     </div>
 
     <div class="rail-foot">
+      <a class="rail-btn" href="bots.html"><span data-icon="chat"></span>Bots · make your own</a>
+      <a class="rail-btn" href="freecloud.html"><span data-icon="globe"></span>Free cloud · Plus</a>
       <a class="rail-btn" href="hive.html"><span data-icon="hive"></span>Hive <span class="count" id="beeCount"></span></a>
       <a class="rail-btn" href="usage.html"><span data-icon="gauge"></span>Usage</a>
       <button class="rail-btn" id="openSettings"><span data-icon="gear"></span>Settings</button>
@@ -120,6 +122,15 @@
         <select name="effort" id="setEffort"></select>
       </label>
       <p class="hint" id="effortHint"></p>
+      <h3 class="dlg-sub">Brain · what the Hive and your bots think with</h3>
+      <select id="bPreset" class="input"></select>
+      <label class="field">Server URL (OpenAI-compatible) <input id="bUrl" placeholder="e.g. http://127.0.0.1:11434 (Ollama)" inputmode="url"></label>
+      <div class="row-inline">
+        <label class="field">Model <input id="bModel" placeholder="e.g. llama3.2"></label>
+        <label class="field">API key <input id="bKey" type="password" autocomplete="off"></label>
+        <button type="button" class="btn" id="bTest">Test</button>
+      </div>
+      <p class="hint" id="bHint"></p>
       <h3 class="dlg-sub">Voice · Fish Audio</h3>
       <label class="check"><input type="checkbox" name="speak"> Speak replies aloud with the Fish Audio voice</label>
       <label class="field">Fish Audio API key

@@ -157,15 +157,15 @@ class Voice:
             return VoiceError("Fish Audio doesn't know that voice id")
         return VoiceError(f"Fish Audio answered {r.status_code}: {r.text[:200]}")
 
-    async def tts(self, text: str) -> bytes:
-        """Speak `text` with the chosen Fish Audio voice. Returns MP3 bytes."""
+    async def tts(self, text: str, voice_id: str | None = None) -> bytes:
+        """Speak `text` with the chosen Fish Audio voice (or a bot's own voice). Returns MP3 bytes."""
         text = speakable(text)
         if not text:
             raise VoiceError("Nothing to say")
         body = {"text": text, "format": "mp3", "mp3_bitrate": 128, "normalize": True, "latency": "balanced",
                 "prosody": {"speed": float(self.s["speed"] or 1.0), "volume": 0}}
-        if self.s["voice_id"]:
-            body["reference_id"] = self.s["voice_id"]
+        if voice_id or self.s["voice_id"]:
+            body["reference_id"] = voice_id or self.s["voice_id"]
         async with httpx.AsyncClient(timeout=90, transport=self.transport) as c:
             r = await c.post(FISH_URL + "/v1/tts", json=body, headers=self._headers(model=self.s["model"] or "s1"))
         if r.status_code != 200:
@@ -215,6 +215,13 @@ def speakable(text: str) -> str:
         cut = t[:MAX_TTS_CHARS]
         t = cut[:cut.rfind(". ") + 1] if ". " in cut else cut
     return t
+
+
+def voice_for(bee_id: str | None) -> str | None:
+    """A bot's own Fish Audio voice, if it has one."""
+    from .bees import registry
+    b = registry.get(bee_id) if bee_id else None
+    return ((b or {}).get("bot") or {}).get("voice_id") or None
 
 
 def public_url() -> str:

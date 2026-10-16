@@ -46,10 +46,10 @@ function browserSay(text) {
 }
 
 // Read text aloud with the Fish Audio voice (the browser's voice when no key is set). Used by "Speak replies".
-export async function speak(text) {
+export async function speak(text, bee) {
   if (!text) return;
   try {
-    await playBlob(await audioBlob("/api/voice/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }));
+    await playBlob(await audioBlob("/api/voice/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, bee }) }));
   } catch {
     await browserSay(text.slice(0, 600));
   }

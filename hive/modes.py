@@ -61,7 +61,11 @@ async def peace(task: Task) -> bool:
         await task.answer("That Bee isn't in the Hive any more.")
         return True
     name = b["name"]
+    from . import bots
     cmd = shell_command(task.text)
+    if cmd and bots.is_bot(b) and not b["bot"].get("computer", True):
+        await task.answer("I'm a chat-only bot: my computer is switched off. Turn it on in Bots → Edit if you want me to run commands.")
+        return True
     if cmd:
         s = await task.step("running", f"$ {cmd[:120]}", bee=name)
         try:
@@ -73,6 +77,8 @@ async def peace(task: Task) -> bool:
         await task.finish_step(s, status="done" if code == 0 else "error", text=f"exit {code}")
         await task.emit("output", bee=name, command=cmd, code=code, text=_tail(out) or "(no output)")
         await task.answer(f"Ran it on my computer: exit {code}." if code == 0 else f"It exited with {code}; the output is above.")
+        return True
+    if bots.is_bot(b) and await bots.handle(task, b):
         return True
     if WHO.match(task.text):
         await task.emit("result", bee=name, **_who(b))
@@ -88,6 +94,7 @@ def _who(b: dict) -> dict:
     cell = cells.cells.get(b["id"])
     kids = registry.children(b["id"])
     details = [["Skill", b["skill"]], ["Computer", v["computer_text"]],
+               *([["Personality", (b["bot"].get("personality") or "")[:160]]] if b.get("bot") else []),
                ["Made by", "built in" if b.get("builtin") else v["parent_name"] or "you"],
                ["Children", ", ".join(k["name"] for k in kids) or "none yet"]]
     if cell:
@@ -99,6 +106,10 @@ def _who(b: dict) -> dict:
 async def peace_fallback(task: Task) -> None:
     """Nothing in the Hive understood it: the Bee answers with its brain, or says what it can do."""
     b = registry.get(task.bee or "") or {"name": "Bee", "skill": ""}
+    from . import bots
+    if bots.is_bot(b):
+        await task.answer(bots.offline_reply(b))
+        return
     if brain.is_connected():
         await task.answer(await brain.ask(f"You are the {b['name']} Bee in the Mnx Hive. Your job: {b['skill']}. "
                                           f"Answer as yourself, briefly.\n\nUser: {task.text}", task.effort))

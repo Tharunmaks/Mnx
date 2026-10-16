@@ -65,6 +65,8 @@ class Task:
         self.bee = bee  # Peace mode: the Bee whose own chat this is; it answers as itself
         self.mode = mode if mode in ("rush", "peace") else None
         self.speaker: str | None = None  # Peace: the Bee's name, used in place of "Queen"
+        self.history: list[dict] = []  # Peace: the last turns of this chat ({role: user|bot, text}), for bots with a brain
+        self.user_name = ""
         self.chat_id = chat_id
         self.text = text
         self._emit = emit

@@ -119,18 +119,23 @@ def test_bees_saved_on_the_old_small_default_get_standard(tmp_path):
     assert r.get("tiny")["computer"]["size"] == "small"  # you chose Small on purpose: kept
 
 
-def test_gpus_need_the_paid_plan(tmp_path, monkeypatch):
+def test_gpus_come_with_the_free_plus_plan(tmp_path, monkeypatch):
     monkeypatch.delenv("MNX_PLAN", raising=False)
     monkeypatch.setattr(plan_mod.plan, "path", tmp_path / "plan.json")
     r = Registry(tmp_path / "hive.json", tmp_path / "keys.json")
     assert plan_mod.plan.name == "free"
-    with pytest.raises(BeeError, match="Paid plan"):
+    with pytest.raises(BeeError, match="Plus, which is free"):
         run(r.create("Trainer", "trains", computer={"gpu": True}))
     run(r.create("Scout", "watches"))
-    with pytest.raises(BeeError, match="Paid plan"):
+    with pytest.raises(BeeError, match="Plus, which is free"):
         run(r.set_computer("scout", {"gpu": True}))
-    plan_mod.plan.set("paid")
+    plan_mod.plan.set("paid")  # the old name still means Plus
+    assert plan_mod.plan.name == "plus"
     assert run(r.set_computer("scout", {"gpu": True}))["computer"]["gpu"]
+    plus = run(r.create("Trainer", "trains"))["computer"]  # on Plus every new Bee gets the Plus computer
+    assert (plus["size"], plus["cpus"], plus["memory_gb"], plus["disk_gb"], plus["gpu"]) == ("plus", 4, 16, 100, True)
+    assert "Plus · 4 CPUs, 16 GB RAM, 100 GB disk, GPU 16 GB VRAM" in bees.describe_computer(plus)
+    assert not run(r.set_computer("trainer", {"size": "standard"}))["computer"]["gpu"]  # leaving Plus drops its GPU
     monkeypatch.setenv("MNX_PLAN", "free")  # a hosted Hive locks the plan from its billing
     assert plan_mod.plan.name == "free" and plan_mod.plan.view()["locked"]
     with pytest.raises(ValueError, match="MNX_PLAN"):

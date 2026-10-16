@@ -79,7 +79,11 @@ hive/lpu.py       Virtual LPU: cycle-accurate chip simulator (SRAM, matrix/vecto
 hive/lpu_lab.py   "run my model on the lpu / on 8 lpu chips": plan card with compiled cycles, simulation, chip statistics
 hive/modes.py     Rush (every Bee together: fan-out commands, roll call, the board) and Peace (one chat per Bee)
 hive/cloud.py     Real cloud computers per Bee: Hetzner / DigitalOcean, cheapest 8 GB / 40 GB server, SSH, delete on remove
-hive/plan.py      Free / Paid plan (GPUs come with Paid)
+hive/plan.py      Free / Plus plans (both ₹0); hive/plans.py applies a plan to every Bee, "subscribe me to plus"
+hive/gpu_pool.py  The Hive's GPU: free Kaggle GPU (16 GB VRAM) jobs with the Bee's files, outputs back into its computer
+hive/bots.py      Bots you make: personality, tone, starters, knowledge search, memory, voice, export/import, templates
+hive/brain.py     The brain: any OpenAI-compatible server (Ollama, Groq, Gemini, OpenRouter, your Lab model)
+web/bots.html     Make, edit, explore, remix, export and import bots · web/freecloud.html: Plus and the free cloud
 hive/voice.py     Fish Audio: text to speech, speech to text, voice search; voice settings
 hive/calls.py     Calls: "call me …", ringing in the app or a real phone call (Twilio), cards answered by voice
 web/js/voice.js   The call screen, Talk mode, Fish voice playback and listening
@@ -109,7 +113,7 @@ the limit it runs under. Everything is measured; what can't be measured says "no
 - **Rented GPUs**: machines billing now with hours and cost so far (hours x the price RunPod reported), and the
   hours and cost of every finished rental, kept after the machine is gone. The invoice on runpod.io is the authority.
 - **Limits**: tokens per message, computer sizes, Bee limits and the upload size.
-- **Plan** (Free / Paid) and **Cloud computers**: each Bee's own cloud server with hours, price and cost so far.
+- **Plan** (Free / Plus, both free) and **Cloud computers**: each Bee's own cloud server with hours, price and cost so far.
 
 In the chat: **"show my usage"**, **"how many tokens have I used"**, **"what are my limits"**.
 
@@ -184,10 +188,66 @@ A Bee can have its own machine in the cloud (`hive/cloud.py`): the cheapest serv
   every cloud computer with hours, price per month and cost so far.
 - Provider keys (and the RunPod key) stay with the Hive: they are never passed to training code.
 
-**Plans** (`hive/plan.py`): on **Free** every Bee gets the Standard computer; **Paid** adds GPUs: a GPU on a
-Bee's computer, or **"give the Scout bee a cloud computer with a gpu"** (rented on RunPod after a price card).
-Pick the plan on the Usage page, or lock it with `MNX_PLAN=free|paid`. Payments aren't wired in yet: GPU and
-cloud providers bill your own accounts directly.
+These paid cloud computers are optional. The free way is **Plus** and the Hive's free cloud, below.
+
+## Plus: free 16 GB computers with a 16 GB GPU
+
+Two plans, both **₹0** (`hive/plan.py`, `hive/plans.py`):
+
+| Plan | Every Bee and bot gets |
+| --- | --- |
+| **Free** | Standard: 2 CPUs, 8 GB RAM, 40 GB disk |
+| **Plus** | 4 CPUs, 16 GB RAM, 100 GB disk and a GPU with 16 GB VRAM |
+
+Subscribe with one tap on the **Free cloud** page or the Usage page, or say **"subscribe me to plus"**. Every
+Bee moves to the Plus computer, except Bees whose computer you chose yourself and the whole-machine Bees
+(Cloud, GPU); **"switch back to free"** reverses it. A hosted Hive can lock the plan with `MNX_PLAN=free|plus`.
+
+**Users never bring a GPU or a key: the Hive gives them.** It runs on the Hive's own free cloud, which the Hive's
+owner sets up once on the **Free cloud** page (about 10 minutes, no payment):
+
+1. **Free GPU, 16 GB VRAM** (`hive/gpu_pool.py`): Kaggle gives every account a free NVIDIA T4 or P100 with
+   16 GB VRAM, about 30 hours a week. Paste your Kaggle user name and API token; the Hive installs nothing on
+   the Bees. A Bee's GPU job is its script plus its files, run on that GPU; the output files come back into the
+   Bee's computer under `gpu-out/<job>/`. From a Bee's terminal: `python3 .mnx/mnx-bee gpu train.py data.csv`;
+   in its chat: **"run train.py on the gpu"**, **"gpu status"**. The Hive tracks the weekly free hours. When the
+   Hive's own machine has an NVIDIA GPU, Plus Bees use it directly instead. Needs `pip install kaggle` on the Hive.
+2. **Free servers** (`hive/cloud.py`): Oracle Cloud's Always Free machine (ARM, 4 CPUs, 24 GB RAM, 200 GB disk)
+   costs nothing. Create it with the Hive's SSH key (shown on the page, with a Copy button) and paste its public
+   IP; the Hive logs in, installs Docker and Node and puts Plus Bees there by itself, two 16 GB Bees per machine
+   (memory limits are ceilings, so they share it well). Add more machines for more Bees. Until one is added,
+   Plus Bees run on the Hive's own machine with 16 GB limits (on a phone those can't be enforced).
+
+Kaggle's and Oracle's own rules apply: they're for your own work (no crypto mining; Kaggle's GPU has a weekly
+limit and sessions of up to about 12 hours). The Kaggle and cloud keys are Hive-only: never passed to training code.
+
+## Make your own bots
+
+Not premade: you make them (`hive/bots.py`, the **Bots** page, `web/js/bots.js`). Ideas from Grok's companions
+(a personality you talk to, its own voice, it remembers you), OpenAI's GPTs (instructions, knowledge files,
+conversation starters, a store to share and remix) and creative muse bots.
+
+- **Make one**: on the Bots page, or say **"make a bot called Maya that is a friendly Tamil tutor"** (a card lets
+  you shape it). Give it an emoji, a one-line description, its **personality and instructions**, a **tone**
+  (friendly, playful, professional, concise, caring), a **first message** and up to four **conversation starters**.
+- **Knowledge**: add text files (txt, md, csv, json, code; 2 MB each, 20 per bot). It answers from them and
+  names the file; without a brain it quotes the lines that match your question.
+- **Memory**: **"remember that I'm vegetarian"**, **"what do you remember about me"**, **"forget that …"**,
+  **"forget everything"**. With a brain it uses what it remembers in every answer.
+- **Voice**: pick a Fish Audio voice for it; its replies, Talk mode and **"call me"** use that voice.
+- **Its own computer**: a bot is a Bee, so "$ …" runs on its computer (switch it off for a chat-only bot).
+- **Explore**: start from an idea (Buddy, Tutor, Code Buddy, Muse, Coach, Language Buddy, Interview Coach,
+  Researcher) and make it yours; see bots shared on this Hive; **Remix** any bot (knowledge included);
+  **Export** a bot as a file and **Import** it into any Mnx Hive.
+- **Chat with it** in **Peace**: your bots are first in the list, each opens with its emoji, first message and
+  starters. With a brain it talks in character and sees the last turns of the chat.
+
+## The brain: what the Hive and your bots think with
+
+**Settings → Brain** (`hive/brain.py`): any OpenAI-compatible chat server. Free choices: **Ollama** on any
+computer (no key), your own model served from the Lab (llama.cpp), or the free tiers of **Groq**, **Google
+Gemini** and **OpenRouter** (paste a key). **Test** asks it to say OK. The key stays on the server
+(`data/brain.json`, mode 600). Without a brain everything that doesn't need one keeps working.
 
 ## Voice: Fish Audio, Talk mode and calls
 
@@ -580,5 +640,5 @@ await phone.get().call("tap_text", {"text": "Book"})
 ## Connecting Mnx later
 
 1. Serve your model with an OpenAI-compatible server (e.g. llama.cpp `llama-server`).
-2. In `hive/brain.py`, make `is_connected()` check it and `ask()` call it.
+2. Put its URL in Settings → Brain (or `MNX_BRAIN_URL`); bots, Peace and Rush start using it at once.
 3. In `hive/queen.py`, replace the placeholder with real planning and Bee calls.

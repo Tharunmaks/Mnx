@@ -359,3 +359,68 @@ async def take_back(bee_id: str) -> None:
     if b and b["computer"].get("cloud"):
         await registry.set_computer(bee_id, {"where": "here", "cloud": None})
     await machines.release_bee(bee_id)
+
+
+# ---------------------------------------------------------------- the Hive's own free cloud (for Plus computers)
+# You add a free server once (Oracle Cloud's Always Free machine: 4 CPUs, 24 GB RAM, 200 GB disk); the Hive sets
+# it up and places Plus Bees on it by itself. Users never bring a server or a key.
+OVERCOMMIT = 2.0  # memory limits are ceilings, not reservations: a 24 GB machine holds three 16 GB Bees
+SETUP = r"""set -e
+if command -v apt-get >/dev/null; then PM="sudo apt-get install -y"; sudo apt-get update -y >/dev/null
+elif command -v dnf >/dev/null; then PM="sudo dnf install -y"; else PM=""; fi
+command -v docker >/dev/null || { [ -n "$PM" ] && ($PM docker.io || $PM docker || $PM podman-docker) >/dev/null; } || true
+sudo systemctl enable --now docker >/dev/null 2>&1 || true
+sudo usermod -aG docker "$USER" >/dev/null 2>&1 || true
+command -v python3 >/dev/null || $PM python3 >/dev/null || true
+command -v git >/dev/null || $PM git >/dev/null || true
+command -v node >/dev/null || (curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - >/dev/null && $PM nodejs make g++ >/dev/null) || true
+mkdir -p ~/mnx
+echo "MNX_READY docker=$(command -v docker >/dev/null && echo yes || echo no) node=$(command -v node >/dev/null && echo yes || echo no)"
+"""
+
+
+def pool_servers() -> list[dict]:
+    from .lab import lab
+    return [t for t in lab.targets.values() if t.get("pool")]
+
+
+def slots(t: dict) -> int:
+    ram_gb = int((t.get("info") or {}).get("ram_mb") or 0) / 1024
+    return max(1, int(ram_gb * OVERCOMMIT // 16)) if ram_gb else 1
+
+
+def pool_place() -> str | None:
+    """A Hive cloud server with room for one more Plus Bee, or None."""
+    from .bees import registry
+    for t in pool_servers():
+        if t.get("status") != "ok":
+            continue
+        used = sum(1 for b in registry.bees if b["computer"].get("where") == t["id"])
+        if used < slots(t):
+            return t["id"]
+    return None
+
+
+async def add_pool_server(host: str, user: str = "ubuntu") -> dict:
+    """Add a free server to the Hive's cloud: check SSH with the Hive's key, install Docker and Node, mark it."""
+    from .lab import lab
+    t = lab.add_target(f"Hive cloud · {host}", host, 22, user, "~/mnx", None)
+    t = await lab.test_target(t["id"])
+    if t["status"] != "ok":
+        lab.remove_target(t["id"])
+        raise CloudError("The Hive couldn't log in. Paste the Hive's SSH key into the server first (shown on this page), "
+                         f"and check the user name ({user}): {(t.get('error') or '')[-200:]}")
+    code, out = await lab.ssh(t, SETUP, 900)
+    text = out.decode(errors="replace") if isinstance(out, bytes) else str(out)
+    t["pool"] = True
+    t["setup"] = (text.strip().splitlines() or [""])[-1][:200] if code == 0 else f"setup failed: {text.strip()[-200:]}"
+    lab._save_targets()
+    return t
+
+
+def pool_view() -> list[dict]:
+    from .bees import registry
+    return [{"id": t["id"], "name": t["name"], "host": t.get("host"), "status": t.get("status"), "setup": t.get("setup"),
+             "ram_gb": round(int((t.get("info") or {}).get("ram_mb") or 0) / 1024, 1), "cpus": (t.get("info") or {}).get("cpus"),
+             "slots": slots(t), "bees": [b["name"] for b in registry.bees if b["computer"].get("where") == t["id"]]}
+            for t in pool_servers()]

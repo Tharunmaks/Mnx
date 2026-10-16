@@ -50,13 +50,14 @@ SIZES = {
     "small": {"cpus": 1, "memory_gb": 1, "disk_gb": 10, "label": "Small"},
     "medium": {"cpus": 2, "memory_gb": 4, "disk_gb": 20, "label": "Medium"},
     "standard": {"cpus": 2, "memory_gb": 8, "disk_gb": 40, "label": "Standard"},
+    "plus": {"cpus": 4, "memory_gb": 16, "disk_gb": 100, "gpu_vram_gb": 16, "label": "Plus"},
     "large": {"cpus": 4, "memory_gb": 16, "disk_gb": 80, "label": "Large"},
     "xl": {"cpus": 8, "memory_gb": 32, "disk_gb": 160, "label": "XL"},
     "max": {"cpus": None, "memory_gb": None, "disk_gb": None, "label": "Max (the whole machine)"},
 }
 DEFAULT_SIZE = "standard"
 SIZE_WORDS = {"small": "small", "tiny": "small", "medium": "medium", "standard": "standard", "normal": "standard", "default": "standard",
-              "large": "large", "big": "large",
+              "plus": "plus", "large": "large", "big": "large",
               "xl": "xl", "huge": "xl", "extra large": "xl", "max": "max", "maximum": "max", "biggest": "max",
               "most powerful": "max", "powerful": "max", "very powerful": "max", "strongest": "max", "full": "max"}
 ID_RE = re.compile(r"^[a-z0-9_]{1,40}$")
@@ -70,10 +71,24 @@ OS_CHOICES = {"vortex": "Vortex OS", "plain": "Plain Linux"}
 DEFAULT_OS = "vortex"
 
 
+def plan_size() -> str:
+    """Standard on the Free plan, Plus (16 GB, 100 GB, GPU) on Plus."""
+    from .plan import plan
+    return plan.size if plan.size in SIZES else DEFAULT_SIZE
+
+
 def default_computer() -> dict:
-    z = SIZES[DEFAULT_SIZE]
-    return {"size": DEFAULT_SIZE, "cpus": z["cpus"], "memory_gb": z["memory_gb"], "disk_gb": z["disk_gb"], "gpu": False,
-            "where": "here", "os": DEFAULT_OS}
+    size = plan_size()
+    z = SIZES[size]
+    where = "here"
+    if size == "plus":  # Plus computers go to the Hive's own cloud when it has room
+        try:
+            from .cloud import pool_place
+            where = pool_place() or "here"
+        except Exception:
+            where = "here"
+    return {"size": size, "cpus": z["cpus"], "memory_gb": z["memory_gb"], "disk_gb": z["disk_gb"], "gpu": bool(z.get("gpu_vram_gb")),
+            "where": where, "os": DEFAULT_OS}
 
 
 def normalize_computer(c: dict | None, base: dict | None = None) -> dict:
@@ -86,6 +101,11 @@ def normalize_computer(c: dict | None, base: dict | None = None) -> dict:
             raise BeeError(f"Unknown size {c['size']!r}: use one of {', '.join(SIZES)}")
         out["size"] = size
         out["cpus"], out["memory_gb"], out["disk_gb"] = SIZES[size]["cpus"], SIZES[size]["memory_gb"], SIZES[size]["disk_gb"]
+        if "gpu" not in c:  # Plus comes with its GPU and takes it away when you leave it; other sizes keep what the Bee had
+            if SIZES[size].get("gpu_vram_gb"):
+                out["gpu"] = True
+            elif (base or {}).get("size") == "plus":
+                out["gpu"] = False
     for key, lo, hi in (("cpus", 0.25, 512), ("memory_gb", 0.25, 4096), ("disk_gb", 1, 65536)):
         if c.get(key) is not None:
             v = float(c[key])
@@ -125,17 +145,19 @@ def describe_computer(c: dict, where_name: str | None = None) -> str:
         if c.get("disk_gb"):
             parts.append(f"{c['disk_gb']:g} GB disk")
     if c.get("gpu"):
-        parts.append("GPU")
+        vram = SIZES.get(c.get("size"), {}).get("gpu_vram_gb")
+        parts.append(f"GPU {vram} GB VRAM" if vram else "GPU")
     label = SIZES.get(c["size"], {}).get("label", "Custom")
     return (f"{label} · {', '.join(parts)} · {OS_CHOICES.get(c.get('os') or DEFAULT_OS, 'Vortex OS')} · "
             f"{where_name or ('this server' if c.get('where', 'here') == 'here' else c['where'])}")
 
 
 def check_plan(c: dict) -> None:
-    """GPUs come with the Paid plan (hive/plan.py)."""
+    """GPUs and the Plus computer come with the Plus plan (free: hive/plan.py)."""
     from .plan import plan
-    if c.get("gpu") and not plan.allows_gpu():
-        raise BeeError("GPUs come with the Paid plan; this Hive is on the Free plan (switch it on the Usage page)")
+    if (c.get("gpu") or c.get("size") == "plus") and not plan.allows_gpu():
+        raise BeeError("GPUs and the Plus computer come with Plus, which is free: subscribe on the Usage page "
+                       "or say “subscribe me to plus”")
 
 
 def slug(name: str) -> str:
@@ -293,7 +315,7 @@ class Registry:
             await self.on_deleted(b)
         return adopted
 
-    async def set_computer(self, bee_id: str, change: dict) -> dict:
+    async def set_computer(self, bee_id: str, change: dict, by_you: bool = True) -> dict:
         b = self.get(bee_id)
         if not b:
             raise BeeError("No such Bee")
@@ -301,10 +323,11 @@ class Registry:
         new = normalize_computer(change, old)
         if new == old:
             return b
-        if new.get("gpu") and not old.get("gpu"):
+        if (new.get("gpu") and not old.get("gpu")) or (new.get("size") == "plus" and old.get("size") != "plus"):
             check_plan(new)
         b["computer"] = new
-        b["computer_set"] = True  # your choice from now on, whatever the built-in default becomes
+        if by_you:
+            b["computer_set"] = True  # your choice from now on, whatever the built-in default or the plan becomes
         self.save()
         if self.on_computer:
             try:
@@ -322,7 +345,9 @@ HELPER = r'''#!/usr/bin/env python3
 
   python3 .mnx/mnx-bee me
   python3 .mnx/mnx-bee children
-  python3 .mnx/mnx-bee new "Name" "one-line skill" [small|medium|standard|large|xl|max]
+  python3 .mnx/mnx-bee new "Name" "one-line skill" [small|medium|standard|plus|large|xl|max]
+  python3 .mnx/mnx-bee gpu train.py data.csv          run "python train.py" on the Hive's GPU (16 GB VRAM)
+  python3 .mnx/mnx-bee gpu --cmd "bash go.sh" go.sh   any command; the files listed go with it
 """
 import json, os, sys, urllib.request
 
@@ -367,6 +392,28 @@ elif a[0] == "children":
 elif a[0] == "new" and len(a) >= 3:
     c = call("POST", "/children", {"name": a[1], "skill": a[2], "size": a[3] if len(a) > 3 else None})
     print(f"Created {c['name']} Bee ({c['computer_text']})")
+elif a[0] == "gpu" and len(a) >= 2:
+    import base64, time
+    rest = a[1:]
+    cmd = None
+    if rest[0] == "--cmd" and len(rest) >= 2:
+        cmd, rest = rest[1], rest[2:]
+    elif rest[0].endswith(".py"):
+        cmd = "python " + " ".join(rest)
+    else:
+        cmd = " ".join(rest)
+    files = {}
+    for f in rest:
+        if os.path.isfile(f):
+            files[f] = base64.b64encode(open(f, "rb").read()).decode()
+    job = call("POST", "/gpu", {"command": cmd, "files": files})
+    print(f"GPU job {job['id']} on {job['gpu']}: {cmd}")
+    while job["status"] in ("queued", "running"):
+        time.sleep(20)
+        job = call("GET", "/gpu/" + job["id"])
+        print(f"  {job['status']}…", flush=True)
+    print((job.get("log") or "")[-3000:])
+    print(f"{job['status']}" + (f": {job['error']}" if job.get("error") else "") + f" · outputs in gpu-out/{job['id']}/")
 else:
     sys.exit(__doc__)
 '''

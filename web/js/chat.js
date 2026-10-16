@@ -93,7 +93,7 @@ client.addEventListener("event", (e) => {
   found.turn.events.push(ev);
   if (ev.type === "bee_created") loadBees();
   if (ev.type === "tokens" && found.chat.id === activeId) updateChatTokens(found.chat);
-  if (ev.type === "answer" && ev.text && getSettings().speak && found.chat.id === activeId) speak(ev.text);
+  if (ev.type === "answer" && ev.text && getSettings().speak && found.chat.id === activeId) speak(ev.text, found.chat.bee);
   found.chat.updated = Date.now();
   saveChats();
   if (found.chat.id === activeId) {
@@ -130,7 +130,7 @@ function send(text) {
   chat.updated = Date.now();
 
   const ok = client.send({ type: "user_message", chat: chat.id, task, text, name: getSettings().name || undefined, effort: getSettings().effort,
-    mode: chat.bee ? "peace" : "rush", bee: chat.bee || undefined });
+    mode: chat.bee ? "peace" : "rush", bee: chat.bee || undefined, history: chat.bee ? historyOf(chat) : undefined });
   if (!ok) {
     turn.events.push(
       { task, type: "error", text: "Can't reach the Mnx Hive gateway", detail: "check that the server is running, or set its URL in Settings" },
@@ -139,6 +139,16 @@ function send(text) {
   }
   saveChats();
   renderAll();
+}
+
+// Peace: the last turns of this chat, so a bot with a brain knows what was said.
+function historyOf(chat) {
+  const out = [];
+  for (const t of chat.turns.slice(0, -2)) {  // everything before the message being sent now
+    if (t.role === "user") out.push({ role: "user", text: t.text });
+    else { const a = (t.events || []).find((e) => e.type === "answer"); if (a && a.text) out.push({ role: "bot", text: a.text }); }
+  }
+  return out.slice(-12);
 }
 
 function titleFrom(text) {
@@ -223,7 +233,11 @@ function rerenderTurn(turn, scroll = true) {
   const nearBottom = isNearBottom();
   const el = renderRun(buildModel(turn.events), { onAction: onAction(turn), cardCache: run.cardCache });
   const owner = turn.bee && bees.find((b) => b.id === turn.bee);
-  if (owner) el.querySelector(".logo")?.replaceWith(Object.assign(document.createElement("span"), { className: "logo", innerHTML: beeHex(owner.name, owner.color) }));
+  if (owner) {
+    const badge = owner.bot ? Object.assign(document.createElement("span"), { className: "logo emoji", textContent: owner.bot.emoji || "🤖" })
+      : Object.assign(document.createElement("span"), { className: "logo", innerHTML: beeHex(owner.name, owner.color) });
+    el.querySelector(".logo")?.replaceWith(badge);
+  }
   run.el.replaceChildren(el);
   if (scroll && nearBottom) scrollDown();
 }
@@ -358,6 +372,7 @@ function openSettings(focusName) {
   $("effortHint").textContent = effortInfo(s.effort).note;
   f.speak.checked = !!s.speak;
   loadVoice();
+  loadBrain();
   $("settingsDlg").showModal();
   if (focusName) f.name.focus();
 }
@@ -378,6 +393,7 @@ $("settingsDlg").addEventListener("close", () => {
     speak: f.speak.checked,
   });
   saveVoice();
+  saveBrain();
   applyProfile();
   applyEffort();
   const now = getSettings();
@@ -467,11 +483,12 @@ for (const btn of $("modeSwitch").querySelectorAll("button")) {
 // Peace: each Bee in the rail, with the last thing said in its chat.
 function renderBeeList(box) {
   if (!bees.length) { box.append(h("div", { class: "empty-note" }, "No Bees yet")); return; }
-  for (const b of bees) {
+  const ordered = [...bees.filter((b) => b.bot), ...bees.filter((b) => !b.bot)];  // your bots first
+  for (const b of ordered) {
     const chat = chats.find((c) => c.id === `peace_${b.id}`);
     const last = chat && [...chat.turns].reverse().find((t) => t.role === "user" || (t.events || []).some((e) => e.type === "answer"));
     const preview = !last ? b.skill : last.role === "user" ? `You: ${last.text}` : (last.events.find((e) => e.type === "answer") || {}).text || "";
-    const icon = h("span", { class: "bee-mini", html: beeHex(b.name, b.color) });
+    const icon = b.bot ? h("span", { class: "bee-mini emoji" }, b.bot.emoji || "🤖") : h("span", { class: "bee-mini", html: beeHex(b.name, b.color) });
     box.append(h("button", {
       class: `rail-btn${b.id === peaceBee ? " active" : ""}`, title: `${b.name}: ${b.skill}`,
       onclick: () => { peaceBee = b.id; syncActive(); saveChats(); renderAll(); closeRail(); input.focus(); },
@@ -491,6 +508,13 @@ function renderWelcome(pb) {
     return;
   }
   head.replaceChildren();
+  if (pb.bot) {
+    head.append(h("div", { class: "emoji-big" }, pb.bot.emoji || "🤖"), h("h2", { class: "wordmark" }, pb.name), h("div", { class: "skill" }, pb.skill),
+      pb.bot.greeting ? h("div", { class: "greet" }, pb.bot.greeting) : "",
+      h("div", { class: "starters" }, ...(pb.bot.starters || []).map((t) => h("button", { type: "button", onclick: () => send(t) }, t))),
+      h("div", { class: "comp" }, h("a", { href: `bots.html#edit=${encodeURIComponent(pb.id)}` }, "Edit this bot →"), "  ·  “remember that …”  ·  “call me”"));
+    return;
+  }
   head.insertAdjacentHTML("beforeend", beeHex(pb.name, pb.color));
   head.append(h("h2", { class: "wordmark" }, pb.name), h("div", { class: "skill" }, pb.skill),
     h("div", { class: "comp" }, pb.computer_text || ""),
@@ -592,4 +616,29 @@ $("vTest").addEventListener("click", async () => {
   voiceSeen = null;
   await loadVoice();
   speak(`Hi${getSettings().name ? " " + getSettings().name : ""}, this is your Hive speaking with the Fish Audio voice.`);
+});
+
+// Settings → Brain: the model the Hive and your bots think with.
+async function loadBrain() {
+  try {
+    const b = await api("/api/brain");
+    $("bUrl").value = b.url || "";
+    $("bModel").value = b.model || "";
+    $("bKey").value = "";
+    $("bKey").placeholder = b.key_set ? "Saved · type a new key to replace it" : "Only if the server needs one";
+    $("bPreset").replaceChildren(h("option", { value: "" }, "Pick a free option…"), ...b.presets.map((p) => h("option", { value: p.id }, p.label)));
+    $("bPreset").onchange = () => { const p = b.presets.find((x) => x.id === $("bPreset").value); if (p) { $("bUrl").value = p.url; $("bModel").value = p.model; } };
+    $("bHint").textContent = b.connected ? `Connected: ${b.model || ""} at ${b.url}` : "No brain yet: bots answer from their knowledge and memory until you connect one.";
+  } catch { /* offline */ }
+}
+async function saveBrain() {
+  const body = { url: $("bUrl").value.trim() || "-", model: $("bModel").value.trim() || "-" };
+  if ($("bKey").value.trim()) body.key = $("bKey").value.trim();
+  try { await api("/api/brain", { method: "PUT", body }); } catch (e) { toast(`Brain: ${e.message}`, "error"); }
+}
+$("bTest").addEventListener("click", async () => {
+  await saveBrain();
+  $("bHint").textContent = "Asking the brain…";
+  try { const r = await api("/api/brain/test", { method: "POST" }); $("bHint").textContent = `It answered: “${r.reply}”`; }
+  catch (e) { $("bHint").textContent = `No answer: ${e.message}`; }
 });

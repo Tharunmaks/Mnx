@@ -158,9 +158,8 @@ function render(u) {
     h("div", { class: "plan-row" }, ...pl.plans.map((x) => h("button", {
       class: `plan-opt${x.id === pl.plan ? " on" : ""}`, disabled: pl.locked || x.id === pl.plan,
       onclick: async () => {
-        if (x.id === "paid" && !confirm("Switch to the Paid plan? Bee computers may then get GPUs. Payments aren't wired into the Hive yet: you pay your GPU provider directly.")) return;
         try { await api("/api/plan", { method: "PUT", body: { plan: x.id } }); load(); } catch (e) { alert(e.message); }
-      } }, h("b", {}, x.label), h("span", {}, x.computer)))));
+      } }, h("b", {}, `${x.label} · ${x.price}`), h("span", {}, x.computer), x.id === pl.plan ? h("span", {}, "Your plan") : h("span", {}, x.id === "plus" ? "Subscribe, free" : "Switch")))));
   $("planNote").textContent = pl.locked ? "Set by the server (MNX_PLAN)" : `Now: ${pl.label}`;
 
   // ----- cloud computers (one per Bee)

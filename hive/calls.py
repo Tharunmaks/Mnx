@@ -385,7 +385,8 @@ class Calls:
         entry = {"who": "bee", "text": text, "n": n, "at": now(), "audio": False}
         if voice.fish_ready:
             try:
-                call.audio[n] = await voice.tts(text)
+                from .voice import voice_for
+                call.audio[n] = await voice.tts(text, voice_for(call.bee_id))
                 entry["audio"] = True
                 for old in [k for k in call.audio if k < n - 30]:
                     call.audio.pop(old, None)

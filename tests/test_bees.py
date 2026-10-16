@@ -40,7 +40,7 @@ def paid(tmp_path, monkeypatch):
     from hive import plan as plan_mod
     monkeypatch.delenv("MNX_PLAN", raising=False)
     monkeypatch.setattr(plan_mod.plan, "path", tmp_path / "plan.json")
-    plan_mod.plan.set("paid")
+    plan_mod.plan.set("plus")
     return plan_mod.plan
 
 
@@ -132,7 +132,7 @@ def test_computers(reg, paid):
     b = run(reg.set_computer("scout", {"size": "xl", "gpu": True}))
     assert b["computer"]["cpus"] == 8 and b["computer"]["gpu"]
     (bee_id, old, new), = reg.calls["computer"]
-    assert bee_id == "scout" and old["size"] == "standard" and new["size"] == "xl"
+    assert bee_id == "scout" and old["size"] == "plus" and new["size"] == "xl"  # Plus is every Bee's computer on the Plus plan
 
 
 def test_a_failed_move_keeps_the_old_computer(reg):
@@ -159,8 +159,11 @@ def test_docker_limits_follow_the_computer(monkeypatch, tmp_path):
     monkeypatch.setattr(cells_mod, "CELLS", tmp_path)
     monkeypatch.setattr(cells_mod, "machine", lambda: {"cpus": 4, "memory_gb": 8.0})
     cell = cells_mod.Cell("scout", "Scout", "docker", {"size": "xl", "cpus": 8, "memory_gb": 32, "gpu": True})
+    monkeypatch.setattr(cells_mod, "GPU_DOCKER", True)
     flags = cell._limits()
     assert flags[flags.index("--cpus") + 1] == "4" and flags[flags.index("--memory") + 1] == "7.20g" and "--gpus" in flags
+    monkeypatch.setattr(cells_mod, "GPU_DOCKER", False)  # no GPU here: the container starts, its GPU comes from the pool
+    assert "--gpus" not in cell._limits()
     cell.computer = {"size": "max", "cpus": None, "memory_gb": None, "gpu": False}
     assert cell._limits() == []
     assert (tmp_path / "scout" / "work" / ".mnx" / "mnx-bee").read_text().startswith("#!/usr/bin/env python3")
