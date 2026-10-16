@@ -1,12 +1,28 @@
 // Mnx Hive — Free cloud: the free Plus plan, the free GPU (Kaggle) and free servers (Oracle Always Free).
 
-import { ICONS, HiveClient, api, connLabel, h, installTokenPrompt, toast } from "./shared.js";
+import { ICONS, HiveClient, api, connLabel, h, installTokenPrompt, toast, whoami } from "./shared.js";
 import { installVoice } from "./voice.js";
 
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll("[data-icon]").forEach((el) => { el.outerHTML = ICONS[el.dataset.icon]; });
 
+async function loadUser() {
+  const [st, mine] = await Promise.all([api("/api/cloud/status"), api("/api/plan")]);
+  const plus = mine.plan === "plus";
+  $("planText").textContent = plus ? "You're on Plus. Every Bee has the Plus computer." : `You're on Free (${mine.computer}). Plus is free too.`;
+  $("subscribe").textContent = plus ? "On Plus ✓" : "Subscribe to Plus · ₹0";
+  $("subscribe").disabled = plus || mine.locked;
+  $("userStatus").textContent = (st.gpu_ready ? `Free GPU ready (${st.hours_week.toFixed(1)} of ${st.weekly_limit} hours used this week). ` : "The free GPU isn't set up yet. ")
+    + (st.servers ? `${st.servers} Hive server${st.servers === 1 ? "" : "s"} running your Bees.` : "Your Bees run on the Hive's own machine for now.");
+}
+
 async function load() {
+  if ((await whoami()) !== "owner") {
+    document.documentElement.classList.remove("is-owner");
+    try { await loadUser(); } catch { $("planText").textContent = "Couldn't reach the Hive."; }
+    return;
+  }
+  $("userNote").classList.add("hidden");
   let s;
   try { s = await api("/api/cloud/free"); } catch { $("planText").textContent = "Couldn't reach the Hive."; return; }
   const plus = s.plan.plan === "plus";

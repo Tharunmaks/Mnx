@@ -4,7 +4,7 @@
 
 import {
   EFFORT, ICONS, HiveClient, api, beeHex, connLabel, countTokens, effortInfo, fmtTokens, getSettings, h, installTokenPrompt, logoSVG,
-  saveSettings, store, toast, uid,
+  saveSettings, store, toast, uid, whoami,
 } from "./shared.js";
 import { buildModel, renderRun } from "./render.js";
 import { askNotifications, installVoice, speak, startTalk, stopSpeaking } from "./voice.js";
@@ -360,6 +360,14 @@ function applyProfile() {
 }
 applyProfile();
 
+// Credentials (Brain, Voice keys, Twilio) are the owner's: users don't see them.
+async function applyRole() {
+  const owner = (await whoami()) === "owner";
+  document.querySelectorAll(".owner-only").forEach((el) => el.classList.toggle("hidden", !owner));
+  return owner;
+}
+client.addEventListener("state", (e) => { if (e.detail === "online") applyRole(); });
+
 function openSettings(focusName) {
   const f = $("settingsForm");
   const s = getSettings();
@@ -371,8 +379,7 @@ function openSettings(focusName) {
   f.effort.value = s.effort;
   $("effortHint").textContent = effortInfo(s.effort).note;
   f.speak.checked = !!s.speak;
-  loadVoice();
-  loadBrain();
+  applyRole().then((owner) => { if (owner) { loadVoice(); loadBrain(); } });
   $("settingsDlg").showModal();
   if (focusName) f.name.focus();
 }
@@ -392,8 +399,8 @@ $("settingsDlg").addEventListener("close", () => {
     effort: f.effort.value,
     speak: f.speak.checked,
   });
-  saveVoice();
-  saveBrain();
+  if (voiceSeen) saveVoice();
+  if ($("bUrl").value !== undefined && !$("bUrl").closest(".owner-only").classList.contains("hidden")) saveBrain();
   applyProfile();
   applyEffort();
   const now = getSettings();

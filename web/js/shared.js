@@ -321,3 +321,19 @@ export function countTokens(text) {
   return n;
 }
 export const fmtTokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(n));
+
+
+// "owner" (can enter credentials and set the Hive up) or "user" (can't see any of it). Cached for the page.
+let rolePromise = null;
+export function whoami() {
+  if (!rolePromise) rolePromise = api("/api/whoami").then((r) => r.role).catch(() => null);
+  return rolePromise;
+}
+
+// Anything marked class="owner-only" (credentials, servers, setup) shows only for the owner.
+if (typeof document !== "undefined") {
+  const mark = () => whoami().then((r) => document.documentElement.classList.toggle("is-owner", r === "owner"));
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mark); else mark();
+  window.addEventListener("mnx-auth", () => { rolePromise = null; });
+  window.addEventListener("storage", () => { rolePromise = null; mark(); });
+}

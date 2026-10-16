@@ -22,7 +22,7 @@
 
     <div class="scroll">
       <div class="page" id="page">
-        <p class="hint">Plus is free. Every Bee and bot gets 4 CPUs, 16 GB RAM, 100 GB disk and a GPU with 16 GB VRAM. Users never bring a GPU or a key: the Hive gives them, from the free cloud below. The Hive's owner sets it up once (about 10 minutes, no payment); after that the Hive runs it by itself.</p>
+        <p class="hint">Plus is free. Every Bee and bot gets 4 CPUs, 16 GB RAM, 100 GB disk and a GPU with 16 GB VRAM. Nobody but the Hive's owner ever adds a key or an account: the Hive gives users the GPU and the servers.</p>
 
         <div class="step-card" id="stepPlan">
           <div class="step-num">1</div>
@@ -33,7 +33,9 @@
           </div>
         </div>
 
-        <div class="step-card" id="stepGpu">
+        <div class="user-note" id="userNote"><b>Status</b><p class="hint" id="userStatus">Checking…</p><p class="hint">The Hive's owner sets up the GPU and servers. You never need to add a key or an account: just subscribe above, and your Bees get the Plus computer and the GPU.</p></div>
+
+        <div class="step-card owner-only" id="stepGpu">
           <div class="step-num">2</div>
           <div class="step-body">
             <h2>Free GPU · 16 GB VRAM</h2>
@@ -52,7 +54,7 @@
           </div>
         </div>
 
-        <div class="step-card" id="stepServer">
+        <div class="step-card owner-only" id="stepServer">
           <div class="step-num">3</div>
           <div class="step-body">
             <h2>Free server · 24 GB RAM, 200 GB disk</h2>
@@ -73,7 +75,7 @@
           </div>
         </div>
 
-        <div class="step-card" id="stepIota">
+        <div class="step-card owner-only" id="stepIota">
           <div class="step-num">4</div>
           <div class="step-body">
             <h2>Iotamine VPS (India)</h2>

@@ -314,7 +314,7 @@ async def _docker_stats() -> dict:
 
 
 @api.get("/usage")
-async def usage_report():
+async def usage_report(request: Request):
     from hive.bees import MAX_BEES, MAX_CHILDREN, MAX_DEPTH, SIZES
     from hive.lab import MODELS
     stats = system.stats()
@@ -366,7 +366,7 @@ async def usage_report():
                     "note": "Cost is hours x the price RunPod reported for that machine; the invoice on runpod.io is the authority."},
         "limits": {"efforts": efforts, "sizes": SIZES, "upload_mb": 200, "file_mb": 200},
         "plan": plan.view(),
-        "cloud": _cloud_view(),
+        "cloud": _cloud_view() if _is_owner(request) else {"providers": [], "machines": [], "month": 0, "currencies": [], "note": ""},
     }
 
 
@@ -382,6 +382,29 @@ def _cloud_view() -> dict:
 # ---------- plan (Free / Paid) and real cloud computers ----------
 class PlanBody(BaseModel):
     plan: str = Field(max_length=12)
+
+
+def _token_of(request: Request) -> str | None:
+    h = request.headers.get("authorization", "")
+    return h[7:].strip() if h.lower().startswith("bearer ") else request.query_params.get("token")
+
+
+def _is_owner(request: Request) -> bool:
+    return auth.role(_token_of(request)) == "owner"
+
+
+@api.get("/whoami")
+def whoami(request: Request):
+    """"owner" or "user": the pages hide setup and credentials from users."""
+    return {"role": auth.role(_token_of(request))}
+
+
+@api.get("/cloud/status")
+def cloud_public_status():
+    """What users may see of the free cloud: whether the plan, the GPU and servers are ready. No keys, no addresses."""
+    g = gpu.view()
+    return {"plan": plan.view(), "gpu_ready": bool(g["source"]), "gpu_source": g["source"], "hours_week": g["hours_week"],
+            "weekly_limit": g["weekly_limit"], "servers": sum(1 for t in cloud.pool_servers() if t.get("status") == "ok")}
 
 
 @api.get("/plan")
@@ -405,12 +428,12 @@ async def set_plan(body: PlanBody):
     return {**plan.view(), "changed": changed}
 
 
-@api.get("/cloud")
+@api.get("/cloud", dependencies=[Depends(auth.require_owner)])
 def cloud_status():
     return _cloud_view()
 
 
-@api.get("/cloud/quote")
+@api.get("/cloud/quote", dependencies=[Depends(auth.require_owner)])
 async def cloud_quote(provider: str | None = None):
     try:
         q = await cloud.machines.quote(provider or None)
@@ -422,7 +445,7 @@ async def cloud_quote(provider: str | None = None):
 CLOUD_JOBS: dict[str, asyncio.Task] = {}
 
 
-@api.post("/bees/{bee_id}/cloud")
+@api.post("/bees/{bee_id}/cloud", dependencies=[Depends(auth.require_owner)])
 async def bee_cloud(bee_id: str, provider: str | None = None):
     """Give the Bee its own cloud computer (8 GB RAM, 40 GB disk). Starts in the background; takes a few minutes."""
     b = registry.get(bee_id)
@@ -449,7 +472,7 @@ async def bee_cloud(bee_id: str, provider: str | None = None):
     return {"ok": True, "starting": cloud.describe_quote(q)}
 
 
-@api.delete("/bees/{bee_id}/cloud")
+@api.delete("/bees/{bee_id}/cloud", dependencies=[Depends(auth.require_owner)])
 async def bee_cloud_release(bee_id: str):
     try:
         await cloud.take_back(bee_id)
@@ -515,7 +538,7 @@ async def bee_computer(bee_id: str, body: Computer):
 
 
 @api.get("/computers")
-def computer_options():
+def computer_options(request: Request):
     """What a Bee's computer can be: the sizes, this server's capacity, and every connected cloud server."""
     servers = [{"id": "here", "name": "This server", **machine(), "gpu": lab.gpu_local, "status": "ok"}]
     for t in lab.targets.values():
@@ -523,7 +546,8 @@ def computer_options():
         servers.append({"id": t["id"], "name": t["name"], "cpus": info.get("cpus"), "memory_gb": round(int(info.get("ram_mb") or 0) / 1024, 1) or None,
                         "gpu": bool(t.get("gpu")), "gpus": info.get("gpus") or [], "status": t.get("status")})
     from hive.bees import OS_CHOICES
-    return {"sizes": SIZES, "servers": servers, "cell_mode": cells.mode, "os": OS_CHOICES, "cloud": cloud.machines.configured(), "plan": plan.view(),
+    return {"sizes": SIZES, "servers": servers, "cell_mode": cells.mode, "os": OS_CHOICES,
+            "cloud": cloud.machines.configured() if _is_owner(request) else [], "plan": plan.view(),
             "limits": "enforced" if cells.mode == "docker" else "not enforced on this server (no Docker); remote servers give the whole machine"}
 
 
@@ -981,12 +1005,13 @@ def _upload_path(upload_id: str) -> Path:
 
 
 @api.get("/lab")
-async def lab_overview():
+async def lab_overview(request: Request):
     runs = sorted(lab.runs.values(), key=lambda r: r["created"], reverse=True)
     return {
         "recipes": list(lab.recipes.values()), "targets": lab.target_views(),
         "runs": [lab.run_view(r) for r in runs], "models": sorted(lab.models.values(), key=lambda m: m["created"], reverse=True),
-        "deployments": lab.deployments, "secrets": lab.secret_names(), "hive_key": await lab.hive_key(),
+        "deployments": lab.deployments, "secrets": lab.secret_names() if _is_owner(request) else [],
+        "hive_key": await lab.hive_key() if _is_owner(request) else "",
         "gpu_local": lab.gpu_local,
     }
 
@@ -1197,7 +1222,7 @@ class NewTarget(BaseModel):
     private_key: str | None = Field(default=None, max_length=20000)
 
 
-@api.post("/lab/targets")
+@api.post("/lab/targets", dependencies=[Depends(auth.require_owner)])
 async def lab_add_target(body: NewTarget):
     try:
         t = lab.add_target(body.name, body.host.strip(), body.port, body.user.strip(), body.workdir.strip() or "mnx-runs", body.private_key)
@@ -1206,14 +1231,14 @@ async def lab_add_target(body: NewTarget):
     return await lab.test_target(t["id"])
 
 
-@api.post("/lab/targets/{tid}/test")
+@api.post("/lab/targets/{tid}/test", dependencies=[Depends(auth.require_owner)])
 async def lab_test_target(tid: str):
     if tid not in lab.targets:
         raise HTTPException(404, "No such server")
     return await lab.test_target(tid)
 
 
-@api.delete("/lab/targets/{tid}")
+@api.delete("/lab/targets/{tid}", dependencies=[Depends(auth.require_owner)])
 def lab_remove_target(tid: str):
     if tid not in lab.targets:
         raise HTTPException(404, "No such server")
@@ -1246,7 +1271,7 @@ class RentBody(BaseModel):
     disk_gb: int = Field(default=100, ge=20, le=2000)
 
 
-@api.post("/lab/providers/runpod/rent")
+@api.post("/lab/providers/runpod/rent", dependencies=[Depends(auth.require_owner)])
 async def lab_rent(body: RentBody):
     try:
         pod = await lab.rent_runpod(body.gpu_type, body.count, body.disk_gb)
@@ -1269,7 +1294,7 @@ async def _attach(pod_id: str) -> None:
             await broadcast({"type": "lab_changed"})
 
 
-@api.post("/lab/providers/runpod/pods/{pod_id}/stop")
+@api.post("/lab/providers/runpod/pods/{pod_id}/stop", dependencies=[Depends(auth.require_owner)])
 async def lab_stop_pod(pod_id: str):
     if pod_id not in lab.pods:
         raise HTTPException(404, "No such rented machine")
@@ -1286,7 +1311,7 @@ class SecretBody(BaseModel):
     value: str = Field(default="", max_length=10000)
 
 
-@api.post("/lab/secrets")
+@api.post("/lab/secrets", dependencies=[Depends(auth.require_owner)])
 def lab_secret(body: SecretBody):
     try:
         lab.set_secret(body.name.strip(), body.value)
@@ -1587,12 +1612,15 @@ async def _run_task(task: Task) -> None:
 
 # ---------- the brain, bots you make, the Hive's free GPU and free cloud ----------
 @api.get("/brain")
-def brain_settings():
+def brain_settings(request: Request):
     from hive.brain import brain
-    return brain.view()
+    v = brain.view()
+    if _is_owner(request):
+        return v
+    return {"connected": v["connected"], "model": v["model"]}  # users learn whether bots can talk, never where or how
 
 
-@api.put("/brain")
+@api.put("/brain", dependencies=[Depends(auth.require_owner)])
 def brain_update(body: dict):
     from hive.brain import brain
     try:
@@ -1601,7 +1629,7 @@ def brain_update(body: dict):
         raise HTTPException(400, str(exc)) from exc
 
 
-@api.post("/brain/test")
+@api.post("/brain/test", dependencies=[Depends(auth.require_owner)])
 async def brain_test():
     from hive.brain import BrainNotConnected, brain
     try:
@@ -1763,7 +1791,7 @@ def gpu_file(job_id: str, name: str):
         raise HTTPException(404, "No such output") from exc
 
 
-@api.get("/cloud/free")
+@api.get("/cloud/free", dependencies=[Depends(auth.require_owner)])
 async def free_cloud():
     """The Hive's free cloud: what's set up (free GPU, free servers) and the Hive's SSH key to paste."""
     return {"gpu": {k: v for k, v in gpu.view().items() if k != "jobs"}, "kaggle_user": lab._secrets.get("KAGGLE_USERNAME", ""),
@@ -1775,7 +1803,7 @@ class KaggleBody(BaseModel):
     token: str = Field(default="", max_length=200)
 
 
-@api.post("/cloud/kaggle")
+@api.post("/cloud/kaggle", dependencies=[Depends(auth.require_owner)])
 async def free_gpu_setup(body: KaggleBody):
     lab.set_secret("KAGGLE_USERNAME", body.username)
     if body.token:
@@ -1795,7 +1823,7 @@ class PoolBody(BaseModel):
 POOL_JOBS: dict[str, asyncio.Task] = {}
 
 
-@api.post("/cloud/pool")
+@api.post("/cloud/pool", dependencies=[Depends(auth.require_owner)])
 async def free_server_add(body: PoolBody):
     if body.host in POOL_JOBS:
         raise HTTPException(409, "That server is already being set up")
@@ -1818,7 +1846,7 @@ class IotamineKey(BaseModel):
     key: str = Field(min_length=8, max_length=200)
 
 
-@api.post("/cloud/iotamine/key")
+@api.post("/cloud/iotamine/key", dependencies=[Depends(auth.require_owner)])
 async def iotamine_key(body: IotamineKey):
     from hive.iotamine import IotamineError, iotamine
     lab.set_secret("IOTAMINE_API_KEY", body.key.strip())
@@ -1828,7 +1856,7 @@ async def iotamine_key(body: IotamineKey):
         return {"ok": False, "error": str(exc)}
 
 
-@api.get("/cloud/iotamine")
+@api.get("/cloud/iotamine", dependencies=[Depends(auth.require_owner)])
 async def iotamine_servers():
     from hive.iotamine import IotamineError, iotamine
     if not lab._secrets.get("IOTAMINE_API_KEY"):
@@ -1848,7 +1876,7 @@ class IotamineDeploy(BaseModel):
     confirm: bool = False
 
 
-@api.post("/cloud/iotamine/deploy")
+@api.post("/cloud/iotamine/deploy", dependencies=[Depends(auth.require_owner)])
 async def iotamine_deploy(body: IotamineDeploy):
     """Without confirm: the price. With confirm: deploys (real money), then adds it to the Hive's cloud."""
     from hive.iotamine import IotamineError, iotamine
@@ -1871,7 +1899,7 @@ async def iotamine_deploy(body: IotamineDeploy):
     return {"quote": q, "deploying": True}
 
 
-@api.delete("/cloud/pool/{tid}")
+@api.delete("/cloud/pool/{tid}", dependencies=[Depends(auth.require_owner)])
 def free_server_remove(tid: str):
     t = lab.targets.get(tid)
     if not t or not t.get("pool"):
@@ -1895,11 +1923,13 @@ async def _ring_phones(call) -> None:
 
 
 @api.get("/voice")
-def voice_settings():
-    return voice.view()
+def voice_settings(request: Request):
+    if _is_owner(request):
+        return voice.view()
+    return {"fish_ready": voice.fish_ready, "voice_name": voice.s.get("voice_name", "")}
 
 
-@api.put("/voice")
+@api.put("/voice", dependencies=[Depends(auth.require_owner)])
 async def voice_update(body: dict):
     try:
         return voice.update(body)

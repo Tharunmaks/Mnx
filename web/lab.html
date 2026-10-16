@@ -30,7 +30,7 @@
           <button class="tab active" data-tab="train" type="button">Train</button>
           <button class="tab" data-tab="runs" type="button">Runs <span id="runCount"></span></button>
           <button class="tab" data-tab="models" type="button">Models <span id="modelCount"></span></button>
-          <button class="tab" data-tab="servers" type="button">Servers</button>
+          <button class="tab owner-only" data-tab="servers" type="button">Servers</button>
         </div>
 
         <!-- Train -->
@@ -85,7 +85,7 @@
         </section>
 
         <!-- Servers -->
-        <section id="tab-servers" class="lab-pane hidden">
+        <section id="tab-servers" class="lab-pane owner-only hidden">
           <div id="targets" class="conn-list"></div>
 
           <form id="targetForm" class="card">

@@ -122,6 +122,8 @@
         <select name="effort" id="setEffort"></select>
       </label>
       <p class="hint" id="effortHint"></p>
+      <label class="check"><input type="checkbox" name="speak"> Speak replies aloud (the Hive's Fish Audio voice)</label>
+      <div class="owner-only">
       <h3 class="dlg-sub">Brain · what the Hive and your bots think with</h3>
       <select id="bPreset" class="input"></select>
       <label class="field">Server URL (OpenAI-compatible) <input id="bUrl" placeholder="e.g. http://127.0.0.1:11434 (Ollama)" inputmode="url"></label>
@@ -132,7 +134,6 @@
       </div>
       <p class="hint" id="bHint"></p>
       <h3 class="dlg-sub">Voice · Fish Audio</h3>
-      <label class="check"><input type="checkbox" name="speak"> Speak replies aloud with the Fish Audio voice</label>
       <label class="field">Fish Audio API key
         <input name="fish_key" id="vFishKey" type="password" placeholder="From fish.audio → API keys" autocomplete="off">
       </label>
@@ -158,6 +159,7 @@
       <label class="field">Twilio number (calls come from it) <input name="twilio_from" id="vFrom" placeholder="+1…" inputmode="tel"></label>
       <label class="field">Time zone for “call me at 9am” <input name="timezone" id="vTz" placeholder="Asia/Kolkata"></label>
       <p class="hint" id="vPhoneHint">Without Twilio, calls ring in the Hive app on every open page.</p>
+      </div>
       <button type="button" class="btn danger" id="clearChats">Delete all chats on this device</button>
     </div>
     <div class="dlg-foot">

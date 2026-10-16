@@ -80,6 +80,7 @@ hive/lpu_lab.py   "run my model on the lpu / on 8 lpu chips": plan card with com
 hive/modes.py     Rush (every Bee together: fan-out commands, roll call, the board) and Peace (one chat per Bee)
 hive/cloud.py     Real cloud computers per Bee: Hetzner / DigitalOcean, cheapest 8 GB / 40 GB server, SSH, delete on remove
 hive/plan.py      Free / Plus plans (both ₹0); hive/plans.py applies a plan to every Bee, "subscribe me to plus"
+hive/admin.py     Owner commands: set / list / unset credentials, owner token, user tokens (never in git)
 hive/iotamine.py  Iotamine VPS API: list your VPSes, price and deploy one with the Hive's SSH key, add it to the Hive's cloud
 hive/gpu_pool.py  The Hive's GPU: free Kaggle GPU (16 GB VRAM) jobs with the Bee's files, outputs back into its computer
 hive/bots.py      Bots you make: personality, tone, starters, knowledge search, memory, voice, export/import, templates
@@ -227,6 +228,27 @@ owner sets up once on the **Free cloud** page (about 10 minutes, no payment):
 
 Kaggle's and Oracle's own rules apply: they're for your own work (no crypto mining; Kaggle's GPU has a weekly
 limit and sessions of up to about 12 hours). The Kaggle and cloud keys are Hive-only: never passed to training code.
+
+## Owner and users: only the owner enters credentials
+
+Two kinds of access token (`gateway/auth.py`):
+- **Owner** (you): the token the Hive prints on start (`python3 -m hive.admin token`). Only it can enter or see
+  credentials (Iotamine, Kaggle, Hetzner, DigitalOcean, RunPod, Fish Audio, Twilio, the brain), add servers, rent or
+  deploy machines, or read the Hive's SSH key. Those pages and settings are hidden from users, and the server answers
+  users **403** if they try.
+- **Users**: a token each (`python3 -m hive.admin user-token`; or `MNX_USER_TOKENS`). They chat, make bots, run their
+  Bees, subscribe to Plus and use the GPU, and never see or add a key, an account or a server. The Free cloud page shows
+  them only a status line.
+
+Credentials never go into the code or git. Enter them once, on the Hive's own machine:
+
+```bash
+python3 -m hive.admin set IOTAMINE_API_KEY        # asks for the value, hidden as you type
+python3 -m hive.admin set KAGGLE_USERNAME <name>
+python3 -m hive.admin list                        # names only
+```
+
+They are kept in `data/lab/secrets.json` (owner-only file, `data/` is git-ignored) and are never passed to training code.
 
 ## Make your own bots
 

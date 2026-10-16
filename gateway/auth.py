@@ -1,8 +1,12 @@
-"""Owner access token.
+"""Access tokens: the owner's and the users'.
 
-The gateway can drive a browser and your phone, so every API call and socket
-needs this token. Set MNX_TOKEN, or one is generated on first run and saved
-to data/token.txt (printed in the server log).
+The gateway can drive a browser and your phone, so every API call and socket needs a token.
+  owner token   yours: set MNX_TOKEN, or one is generated on first run and saved to data/token.txt (printed in
+                the server log). Only it can enter or change credentials (API keys for the GPU, cloud, voice and
+                brain), add servers, and see the Hive's setup.
+  user tokens   for everyone else: MNX_USER_TOKENS (comma separated) or one per line in data/user_tokens.txt
+                (make one with  python3 -m hive.admin user-token). They can chat, make bots, run Bees, subscribe to
+                Plus and use the GPU, but never see or change a credential.
 """
 
 from __future__ import annotations
@@ -35,17 +39,48 @@ def _load() -> str:
 
 
 TOKEN = _load()
+USER_TOKENS_FILE = DATA / "user_tokens.txt"
 print(f"[mnx] Access token: {TOKEN}  (enter it in the web app's Settings)", flush=True)
 
 
+def user_tokens() -> list[str]:
+    out = [t.strip() for t in os.getenv("MNX_USER_TOKENS", "").split(",") if t.strip()]
+    try:
+        out += [t.strip() for t in USER_TOKENS_FILE.read_text().splitlines() if t.strip() and not t.startswith("#")]
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def role(token: str | None) -> str | None:
+    """"owner", "user", or None."""
+    if not token:
+        return None
+    if secrets.compare_digest(token, TOKEN):
+        return "owner"
+    return "user" if any(secrets.compare_digest(token, t) for t in user_tokens()) else None
+
+
 def valid(token: str | None) -> bool:
-    return bool(token) and secrets.compare_digest(token, TOKEN)
+    return role(token) is not None
+
+
+def _given(authorization: str | None, token: str | None) -> str | None:
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return token
 
 
 def require(authorization: str | None = Header(default=None), token: str | None = Query(default=None)) -> None:
-    """FastAPI dependency: accept 'Authorization: Bearer <token>' or ?token=."""
-    given = token
-    if authorization and authorization.lower().startswith("bearer "):
-        given = authorization[7:].strip()
-    if not valid(given):
+    """FastAPI dependency: accept 'Authorization: Bearer <token>' or ?token= (owner or user)."""
+    if not valid(_given(authorization, token)):
         raise HTTPException(401, "Missing or wrong access token")
+
+
+def require_owner(authorization: str | None = Header(default=None), token: str | None = Query(default=None)) -> None:
+    """Credentials and the Hive's setup: the owner only."""
+    r = role(_given(authorization, token))
+    if r is None:
+        raise HTTPException(401, "Missing or wrong access token")
+    if r != "owner":
+        raise HTTPException(403, "Only the Hive's owner can do that")
