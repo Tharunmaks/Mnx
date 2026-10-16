@@ -171,7 +171,7 @@ def coerce_params(recipe: dict, given: dict[str, Any]) -> dict[str, Any]:
 
 
 # Keys the Hive itself uses to rent machines: never handed to training code.
-HIVE_ONLY_SECRETS = {"RUNPOD_API_KEY", "HCLOUD_TOKEN", "DIGITALOCEAN_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY", "KAGGLE_API_TOKEN"}
+HIVE_ONLY_SECRETS = {"RUNPOD_API_KEY", "HCLOUD_TOKEN", "DIGITALOCEAN_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY", "KAGGLE_API_TOKEN", "IOTAMINE_API_KEY"}
 
 
 class Lab:

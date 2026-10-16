@@ -1813,6 +1813,64 @@ async def free_server_add(body: PoolBody):
     return {"ok": True, "text": "Setting it up: checking SSH, installing Docker and Node. This takes a few minutes."}
 
 
+# ----- Iotamine (iotamine.com): your VPSes as the Hive's cloud -----
+class IotamineKey(BaseModel):
+    key: str = Field(min_length=8, max_length=200)
+
+
+@api.post("/cloud/iotamine/key")
+async def iotamine_key(body: IotamineKey):
+    from hive.iotamine import IotamineError, iotamine
+    lab.set_secret("IOTAMINE_API_KEY", body.key.strip())
+    try:
+        return {"ok": True, "servers": await iotamine.servers()}
+    except IotamineError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@api.get("/cloud/iotamine")
+async def iotamine_servers():
+    from hive.iotamine import IotamineError, iotamine
+    if not lab._secrets.get("IOTAMINE_API_KEY"):
+        return {"connected": False, "servers": []}
+    try:
+        used = {t.get("host") for t in cloud.pool_servers()}
+        return {"connected": True, "servers": [{**v, "in_hive": v["ip"] in used} for v in await iotamine.servers()]}
+    except IotamineError as exc:
+        return {"connected": True, "servers": [], "error": str(exc)}
+
+
+class IotamineDeploy(BaseModel):
+    cores: int = Field(default=2, ge=1, le=64)
+    ram_gb: int = Field(default=8, ge=1, le=512)
+    disk_gb: int = Field(default=40, ge=10, le=4000)
+    pop: int | None = None
+    confirm: bool = False
+
+
+@api.post("/cloud/iotamine/deploy")
+async def iotamine_deploy(body: IotamineDeploy):
+    """Without confirm: the price. With confirm: deploys (real money), then adds it to the Hive's cloud."""
+    from hive.iotamine import IotamineError, iotamine
+    try:
+        q = await iotamine.quote(body.cores, body.ram_gb, body.disk_gb, body.pop)
+    except IotamineError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not body.confirm:
+        return {"quote": q}
+
+    async def go():
+        try:
+            v = await iotamine.deploy(f"mnx-hive-{uuid.uuid4().hex[:6]}", body.cores, body.ram_gb, body.disk_gb, q["pop"])
+            await broadcast({"type": "cloud_ready", "text": f"Iotamine VPS {v['name']} is up at {v['ip']}; setting it up for the Hive"})
+            t = await cloud.add_pool_server(v["ip"], "root")
+            await broadcast({"type": "cloud_ready", "text": f"{t['name']} is in the Hive's cloud: {t.get('setup')}"})
+        except Exception as exc:
+            await broadcast({"type": "cloud_error", "text": f"Iotamine: {exc}"[:300]})
+    POOL_JOBS[f"iotamine-{time.time()}"] = asyncio.create_task(go())
+    return {"quote": q, "deploying": True}
+
+
 @api.delete("/cloud/pool/{tid}")
 def free_server_remove(tid: str):
     t = lab.targets.get(tid)

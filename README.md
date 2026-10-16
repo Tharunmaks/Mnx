@@ -80,6 +80,7 @@ hive/lpu_lab.py   "run my model on the lpu / on 8 lpu chips": plan card with com
 hive/modes.py     Rush (every Bee together: fan-out commands, roll call, the board) and Peace (one chat per Bee)
 hive/cloud.py     Real cloud computers per Bee: Hetzner / DigitalOcean, cheapest 8 GB / 40 GB server, SSH, delete on remove
 hive/plan.py      Free / Plus plans (both ₹0); hive/plans.py applies a plan to every Bee, "subscribe me to plus"
+hive/iotamine.py  Iotamine VPS API: list your VPSes, price and deploy one with the Hive's SSH key, add it to the Hive's cloud
 hive/gpu_pool.py  The Hive's GPU: free Kaggle GPU (16 GB VRAM) jobs with the Bee's files, outputs back into its computer
 hive/bots.py      Bots you make: personality, tone, starters, knowledge search, memory, voice, export/import, templates
 hive/brain.py     The brain: any OpenAI-compatible server (Ollama, Groq, Gemini, OpenRouter, your Lab model)
@@ -217,6 +218,12 @@ owner sets up once on the **Free cloud** page (about 10 minutes, no payment):
    IP; the Hive logs in, installs Docker and Node and puts Plus Bees there by itself, two 16 GB Bees per machine
    (memory limits are ceilings, so they share it well). Add more machines for more Bees. Until one is added,
    Plus Bees run on the Hive's own machine with 16 GB limits (on a phone those can't be enforced).
+
+3. **Iotamine VPS** (`hive/iotamine.py`, iotamine.com, India): paste an Iotamine API key (scope “Read & write” to
+   deploy). The Hive lists your VPSes; **Use for the Hive** adds one (it needs the Hive's SSH key in root's
+   `authorized_keys`), and **Price and deploy** makes a new Ubuntu VPS with the Hive's key already on it, after
+   showing the hourly and monthly price from Iotamine's own rates (the IP is a monthly charge). Upgrade a VPS on
+   Iotamine (say 10 vCPUs, 20 GB) and the Hive places more Bees on it: two Plus Bees per 16 GB.
 
 Kaggle's and Oracle's own rules apply: they're for your own work (no crypto mining; Kaggle's GPU has a weekly
 limit and sessions of up to about 12 hours). The Kaggle and cloud keys are Hive-only: never passed to training code.

@@ -73,6 +73,26 @@
           </div>
         </div>
 
+        <div class="step-card" id="stepIota">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <h2>Iotamine VPS (India)</h2>
+            <p class="hint">Use your <a href="https://iotamine.com" target="_blank" rel="noopener">Iotamine</a> VPSes as the Hive's cloud. Make an API key on Iotamine → API Keys (scope “Read & write” to let the Hive deploy) and paste it. The key stays on the Hive; the page never shows it again.</p>
+            <form class="row-inline" id="iotaForm">
+              <label class="field">Iotamine API key <input name="key" type="password" autocomplete="off" placeholder="Paste the key"></label>
+              <button class="btn primary" type="submit">Connect</button>
+            </form>
+            <p class="hint" id="iotaText"></p>
+            <div id="iotaList"></div>
+            <form class="row-inline hidden" id="iotaDeploy">
+              <label class="field" style="max-width:90px">vCPUs <input name="cores" type="number" min="1" value="2"></label>
+              <label class="field" style="max-width:100px">RAM GB <input name="ram_gb" type="number" min="1" value="8"></label>
+              <label class="field" style="max-width:100px">Disk GB <input name="disk_gb" type="number" min="10" value="40"></label>
+              <button class="btn" type="submit">Price and deploy</button>
+            </form>
+          </div>
+        </div>
+
         <div class="section-title"><h2>GPU jobs</h2><span class="hint" id="jobNote"></span></div>
         <div class="usage-card"><div class="utable" id="jobs"></div></div>
         <p class="hint">From a Bee's computer: <code>python3 .mnx/mnx-bee gpu train.py data.csv</code> · in a Bee's chat: “run train.py on the gpu”, “gpu status”. Kaggle's rules apply (no crypto mining; about 30 GPU hours a week).</p>

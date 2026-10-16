@@ -31,6 +31,7 @@ async function load() {
       try { await api(`/api/cloud/pool/${p.id}`, { method: "DELETE" }); load(); } catch (e) { toast(e.message, "error"); }
     } }, "Remove"))));
 
+  loadIota();
   const gpu = await api("/api/gpu").catch(() => ({ jobs: [] }));
   $("jobNote").textContent = gpu.jobs.length ? `${gpu.jobs.length} recent` : "";
   const t = $("jobs");
@@ -38,6 +39,44 @@ async function load() {
     h("span", {}, j.bee), h("span", {}, j.command), h("span", {}, j.status), h("span", { class: "hint" }, j.error || (j.outputs || []).slice(0, 3).join(", ") || "")))
     : [h("p", { class: "hint" }, "No GPU jobs yet.")]));
 }
+
+// ---------- Iotamine ----------
+async function loadIota() {
+  const d = await api("/api/cloud/iotamine").catch(() => ({ connected: false, servers: [] }));
+  $("iotaDeploy").classList.toggle("hidden", !d.connected);
+  $("stepIota").classList.toggle("done", d.servers.some((v) => v.in_hive));
+  $("iotaText").textContent = !d.connected ? "Not connected yet." : d.error ? d.error
+    : d.servers.length ? `${d.servers.length} VPS on your account.` : "No VPS on your account yet: deploy one below.";
+  $("iotaList").replaceChildren(...d.servers.map((v) => h("div", { class: "pool-row" },
+    h("b", {}, v.name), h("span", { class: "hint" }, `${v.cores ?? "?"} vCPU · ${v.ram_gb ?? "?"} GB · ${v.disk_gb ?? "?"} GB disk · ${v.ip || "no IP yet"} · ${v.status || ""}`),
+    v.in_hive ? h("span", { class: "chip" }, "In the Hive ✓") : h("button", { class: "btn primary", type: "button", disabled: !v.ip, onclick: async () => {
+      if (!confirm(`Add ${v.name} (${v.ip}) to the Hive's cloud? It needs the Hive's SSH key (step 3) in root's ~/.ssh/authorized_keys. A VPS the Hive deployed has it already.`)) return;
+      try { const r = await api("/api/cloud/pool", { method: "POST", body: { host: v.ip, user: "root" } }); toast(r.text); } catch (e) { toast(e.message, "error"); }
+    } }, "Use for the Hive"))));
+}
+
+$("iotaForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("iotaText").textContent = "Checking the key with Iotamine…";
+  try {
+    const r = await api("/api/cloud/iotamine/key", { method: "POST", body: { key: e.target.key.value.trim() } });
+    e.target.key.value = "";
+    if (!r.ok) $("iotaText").textContent = r.error;
+    loadIota();
+  } catch (err) { $("iotaText").textContent = err.message; }
+});
+
+$("iotaDeploy").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = { cores: +f.cores.value, ram_gb: +f.ram_gb.value, disk_gb: +f.disk_gb.value };
+  try {
+    const { quote: q } = await api("/api/cloud/iotamine/deploy", { method: "POST", body });
+    if (!confirm(`Deploy on Iotamine (${q.region}): ${q.cores} vCPU, ${q.ram_gb} GB RAM, ${q.disk_gb} GB disk.\n\nAbout ₹${q.hourly} per hour (≈ ₹${q.monthly} a month, including the IP at ₹${q.ip_monthly}/month), from Iotamine's own rates; your plan's free credit may cover it.\n\nThe Hive puts its SSH key on it and adds it to its cloud.`)) return;
+    await api("/api/cloud/iotamine/deploy", { method: "POST", body: { ...body, pop: q.pop, confirm: true } });
+    toast("Deploying: it shows up here in a few minutes");
+  } catch (err) { toast(err.message, "error"); }
+});
 
 $("subscribe").addEventListener("click", async () => {
   try { const r = await api("/api/plan", { method: "PUT", body: { plan: "plus" } }); toast(`You're on Plus. ${r.changed.length} Bees got the Plus computer.`); load(); }
