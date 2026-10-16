@@ -44,15 +44,19 @@ DEFAULT_BEES = [
     {"id": "eval", "name": "Eval", "skill": "Tests finished models with held-out prompts and reports back", "tools": ["lab"], "approval": False, "builtin": True},
 ]
 
-# Computer sizes. "max" sets no limits: the Cell may use the whole machine it runs on.
+# Computer sizes. Standard (8 GB memory, 40 GB disk) is what every Bee gets unless told otherwise.
+# "max" sets no limits: the Cell may use the whole machine it runs on.
 SIZES = {
-    "small": {"cpus": 1, "memory_gb": 1, "label": "Small"},
-    "medium": {"cpus": 2, "memory_gb": 4, "label": "Medium"},
-    "large": {"cpus": 4, "memory_gb": 16, "label": "Large"},
-    "xl": {"cpus": 8, "memory_gb": 32, "label": "XL"},
-    "max": {"cpus": None, "memory_gb": None, "label": "Max (the whole machine)"},
+    "small": {"cpus": 1, "memory_gb": 1, "disk_gb": 10, "label": "Small"},
+    "medium": {"cpus": 2, "memory_gb": 4, "disk_gb": 20, "label": "Medium"},
+    "standard": {"cpus": 2, "memory_gb": 8, "disk_gb": 40, "label": "Standard"},
+    "large": {"cpus": 4, "memory_gb": 16, "disk_gb": 80, "label": "Large"},
+    "xl": {"cpus": 8, "memory_gb": 32, "disk_gb": 160, "label": "XL"},
+    "max": {"cpus": None, "memory_gb": None, "disk_gb": None, "label": "Max (the whole machine)"},
 }
-SIZE_WORDS = {"small": "small", "tiny": "small", "medium": "medium", "normal": "medium", "large": "large", "big": "large",
+DEFAULT_SIZE = "standard"
+SIZE_WORDS = {"small": "small", "tiny": "small", "medium": "medium", "standard": "standard", "normal": "standard", "default": "standard",
+              "large": "large", "big": "large",
               "xl": "xl", "huge": "xl", "extra large": "xl", "max": "max", "maximum": "max", "biggest": "max",
               "most powerful": "max", "powerful": "max", "very powerful": "max", "strongest": "max", "full": "max"}
 ID_RE = re.compile(r"^[a-z0-9_]{1,40}$")
@@ -67,7 +71,9 @@ DEFAULT_OS = "vortex"
 
 
 def default_computer() -> dict:
-    return {"size": "small", "cpus": 1, "memory_gb": 1, "gpu": False, "where": "here", "os": DEFAULT_OS}
+    z = SIZES[DEFAULT_SIZE]
+    return {"size": DEFAULT_SIZE, "cpus": z["cpus"], "memory_gb": z["memory_gb"], "disk_gb": z["disk_gb"], "gpu": False,
+            "where": "here", "os": DEFAULT_OS}
 
 
 def normalize_computer(c: dict | None, base: dict | None = None) -> dict:
@@ -79,8 +85,8 @@ def normalize_computer(c: dict | None, base: dict | None = None) -> dict:
         if size not in SIZES:
             raise BeeError(f"Unknown size {c['size']!r}: use one of {', '.join(SIZES)}")
         out["size"] = size
-        out["cpus"], out["memory_gb"] = SIZES[size]["cpus"], SIZES[size]["memory_gb"]
-    for key, lo, hi in (("cpus", 0.25, 512), ("memory_gb", 0.25, 4096)):
+        out["cpus"], out["memory_gb"], out["disk_gb"] = SIZES[size]["cpus"], SIZES[size]["memory_gb"], SIZES[size]["disk_gb"]
+    for key, lo, hi in (("cpus", 0.25, 512), ("memory_gb", 0.25, 4096), ("disk_gb", 1, 65536)):
         if c.get(key) is not None:
             v = float(c[key])
             if not lo <= v <= hi:
@@ -101,6 +107,12 @@ def normalize_computer(c: dict | None, base: dict | None = None) -> dict:
         out["os"] = os_name
     if out.get("os") not in OS_CHOICES:  # a Hive saved before the OS existed
         out["os"] = DEFAULT_OS
+    if "disk_gb" not in out:  # saved before disks had a size
+        out["disk_gb"] = SIZES.get(out.get("size"), {}).get("disk_gb")
+    if c.get("cloud") is not None or "cloud" in out:  # the cloud machine this Bee owns (hive/cloud.py), if any
+        out["cloud"] = c["cloud"] if "cloud" in c else out.get("cloud")
+        if not out["cloud"]:
+            out.pop("cloud")
     return out
 
 
@@ -109,12 +121,21 @@ def describe_computer(c: dict, where_name: str | None = None) -> str:
     if c["size"] == "max":
         parts = ["the whole machine"]
     else:
-        parts = [f"{c['cpus']:g} CPU{'s' if c['cpus'] != 1 else ''}", f"{c['memory_gb']:g} GB"]
+        parts = [f"{c['cpus']:g} CPU{'s' if c['cpus'] != 1 else ''}", f"{c['memory_gb']:g} GB RAM"]
+        if c.get("disk_gb"):
+            parts.append(f"{c['disk_gb']:g} GB disk")
     if c.get("gpu"):
         parts.append("GPU")
     label = SIZES.get(c["size"], {}).get("label", "Custom")
     return (f"{label} · {', '.join(parts)} · {OS_CHOICES.get(c.get('os') or DEFAULT_OS, 'Vortex OS')} · "
             f"{where_name or ('this server' if c.get('where', 'here') == 'here' else c['where'])}")
+
+
+def check_plan(c: dict) -> None:
+    """GPUs come with the Paid plan (hive/plan.py)."""
+    from .plan import plan
+    if c.get("gpu") and not plan.allows_gpu():
+        raise BeeError("GPUs come with the Paid plan; this Hive is on the Free plan (switch it on the Usage page)")
 
 
 def slug(name: str) -> str:
@@ -137,7 +158,10 @@ class Registry:
             b.setdefault("created_by", None if b.get("builtin") else "you")
             if b.get("builtin") and not b.get("computer_set") and b["id"] in defaults:
                 b["computer"] = defaults[b["id"]].get("computer")  # never chosen by you: follows the built-in default
-            b["computer"] = normalize_computer(b.get("computer"))
+            old = b.get("computer") or {}
+            if old.get("size") == "small" and "disk_gb" not in old and not b.get("computer_set"):
+                old = {**{k: v for k, v in old.items() if k not in ("cpus", "memory_gb")}, "size": DEFAULT_SIZE}  # saved on the old Small default: every Bee now gets Standard
+            b["computer"] = normalize_computer(old)
         try:
             self.keys: dict[str, str] = json.loads(keys_file.read_text())
         except (FileNotFoundError, json.JSONDecodeError):
@@ -235,13 +259,15 @@ class Registry:
                 raise BeeError(f"Bees can only go {MAX_DEPTH} generations deep")
             if len(self.children(created_by)) >= MAX_CHILDREN:
                 raise BeeError(f"{parent['name']} already has {MAX_CHILDREN} children, its limit")
-            # a child starts small, on the same machine as its parent, unless told otherwise
+            # a child gets a Standard computer on the same machine as its parent, unless told otherwise
             base = normalize_computer({"where": parent["computer"].get("where", "here")})
         else:
             base = default_computer()
+        computer = normalize_computer(computer, base)
+        check_plan(computer)
         record = {"id": bee_id, "name": name, "skill": skill, "tools": list(tools or [])[:20], "schedule": schedule or None,
                   "approval": bool(approval), "builtin": False, "created_by": created_by,
-                  "computer": normalize_computer(computer, base)}
+                  "computer": computer}
         self.bees.append(record)
         self.save()
         self.key_for(bee_id)
@@ -275,6 +301,8 @@ class Registry:
         new = normalize_computer(change, old)
         if new == old:
             return b
+        if new.get("gpu") and not old.get("gpu"):
+            check_plan(new)
         b["computer"] = new
         b["computer_set"] = True  # your choice from now on, whatever the built-in default becomes
         self.save()
@@ -294,7 +322,7 @@ HELPER = r'''#!/usr/bin/env python3
 
   python3 .mnx/mnx-bee me
   python3 .mnx/mnx-bee children
-  python3 .mnx/mnx-bee new "Name" "one-line skill" [small|medium|large|xl|max]
+  python3 .mnx/mnx-bee new "Name" "one-line skill" [small|medium|standard|large|xl|max]
 """
 import json, os, sys, urllib.request
 

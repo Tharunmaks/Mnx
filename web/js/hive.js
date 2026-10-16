@@ -1,6 +1,7 @@
 // Mnx Hive — Hive control screen: every Bee's state, add/remove Bees, activity log.
 
-import { ICONS, HiveClient, api, beeHex, connLabel, h, installTokenPrompt, timeShort } from "./shared.js";
+import { ICONS, HiveClient, api, beeHex, connLabel, h, installTokenPrompt, timeShort, toast } from "./shared.js";
+import { installVoice } from "./voice.js";
 
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll("[data-icon]").forEach((el) => { el.outerHTML = ICONS[el.dataset.icon]; });
@@ -19,7 +20,7 @@ function fill(select, options, value) {
 }
 
 function sizeOptions() {
-  return Object.entries(COMPUTERS.sizes).map(([k, v]) => [k, v.cpus ? `${v.label} · ${v.cpus} CPU${v.cpus > 1 ? "s" : ""}, ${v.memory_gb} GB` : v.label]);
+  return Object.entries(COMPUTERS.sizes).map(([k, v]) => [k, v.cpus ? `${v.label} · ${v.cpus} CPU${v.cpus > 1 ? "s" : ""}, ${v.memory_gb} GB RAM, ${v.disk_gb} GB disk` : v.label]);
 }
 
 function osOptions() {
@@ -27,7 +28,27 @@ function osOptions() {
 }
 
 function serverOptions() {
-  return COMPUTERS.servers.map((s) => [s.id, `${s.name}${s.cpus ? ` · ${s.cpus} CPUs` : ""}${s.memory_gb ? `, ${s.memory_gb} GB` : ""}${s.gpu ? " · GPU" : ""}${s.status && s.status !== "ok" ? ` (${s.status})` : ""}`]);
+  const own = (COMPUTERS.cloud || []).length ? [["cloud", "Its own cloud computer (8 GB RAM, 40 GB disk; your cloud account pays)"]] : [];
+  return [...own, ...COMPUTERS.servers.map((s) => [s.id, `${s.name}${s.cpus ? ` · ${s.cpus} CPUs` : ""}${s.memory_gb ? `, ${s.memory_gb} GB` : ""}${s.gpu ? " · GPU" : ""}${s.status && s.status !== "ok" ? ` (${s.status})` : ""}`])];
+}
+
+// GPUs come with the Paid plan; the box says so on the Free plan.
+function gpuBox(form) {
+  const paid = !COMPUTERS.plan || COMPUTERS.plan.gpu;
+  form.gpu.disabled = !paid;
+  form.gpu.parentElement.title = paid ? "" : "GPUs come with the Paid plan (switch it on the Usage page)";
+  form.gpu.parentElement.style.opacity = paid ? "" : ".55";
+}
+
+// Rent a cloud computer for the Bee: shows the price first.
+async function giveCloud(bee) {
+  let q;
+  try { q = await api("/api/cloud/quote"); } catch (e) { throw new Error(e.message); }
+  const inr = q.inr_month ? ` (about ₹${q.inr_month.toLocaleString()} a month)` : "";
+  if (!confirm(`Rent a cloud computer for ${bee.name}?\n\n${q.text}${inr}\n\nBilling starts now and stops when you remove the Bee or move it home.`)) return false;
+  await api(`/api/bees/${encodeURIComponent(bee.id)}/cloud`, { method: "POST" });
+  toast(`${bee.name}'s cloud computer is starting; it moves there in a few minutes`);
+  return true;
 }
 
 async function loadBees() {
@@ -63,7 +84,10 @@ async function loadBees() {
     const family = h("div", { class: "cell-line" },
       h("span", { class: "chip" }, b.builtin ? "Built in" : `Made by ${b.parent_name || "you"}`),
       b.children && b.children.length ? h("span", { class: "chip" }, `${b.children.length} child${b.children.length > 1 ? "ren" : ""}`) : null,
-      h("span", { class: "chip", title: "This Bee's computer" }, `🖥 ${b.computer_text}`));
+      h("span", { class: "chip", title: "This Bee's computer" }, `🖥 ${b.computer_text}`),
+      b.cloud_starting ? h("span", { class: "chip", title: "Its own cloud computer is starting" }, "☁ cloud computer starting…") : "",
+      b.cloud_machine ? h("span", { class: "chip", title: `${b.cloud_machine.provider} ${b.cloud_machine.type}, ${b.cloud_machine.region}` },
+        `☁ own cloud computer · ${b.cloud_machine.ip || "starting"}`) : "");
     const c = b.cell;
     const cellLine = h("div", { class: "cell-line" },
       h("span", { class: "chip" }, !c || c.container === "missing" ? "Cell starts on first use" : c.mode === "docker" ? `Container ${c.container}` : "Local Cell"),
@@ -105,7 +129,8 @@ async function openAdd() {
   $("beeErr").textContent = "";
   await loadComputers();
   fill($("beeParent"), [["you", "You"], ...BEES.map((b) => [b.id, `${b.name} Bee`])], "you");
-  fill($("beeSize"), sizeOptions(), "small");
+  fill($("beeSize"), sizeOptions(), "standard");
+  gpuBox($("beeForm"));
   fill($("beeWhere"), serverOptions(), "here");
   fill($("beeOs"), osOptions(), "vortex");
   $("beeDlg").showModal();
@@ -120,8 +145,9 @@ async function openComputer(b) {
   $("compTitle").textContent = `${b.name} Bee's computer`;
   $("compNow").textContent = `Now: ${b.computer_text}.${COMPUTERS.limits ? ` Limits on this server: ${COMPUTERS.limits}.` : ""}`;
   const c = b.computer || {};
-  fill($("compSize"), sizeOptions(), c.size in COMPUTERS.sizes ? c.size : "small");
+  fill($("compSize"), sizeOptions(), c.size in COMPUTERS.sizes ? c.size : "standard");
   fill($("compWhere"), serverOptions(), c.where || "here");
+  gpuBox($("compForm"));
   fill($("compOs"), osOptions(), c.os || "vortex");
   $("compForm").gpu.checked = !!c.gpu;
   $("compDlg").showModal();
@@ -133,7 +159,12 @@ $("compForm").addEventListener("submit", async (e) => {
   const f = e.target;
   $("compErr").textContent = "Applying…";
   try {
-    await api(`/api/bees/${encodeURIComponent(compBee.id)}/computer`, { method: "PUT", body: { size: f.size.value, where: f.where.value, gpu: f.gpu.checked, os: f.os.value } });
+    if (f.where.value === "cloud") {
+      await api(`/api/bees/${encodeURIComponent(compBee.id)}/computer`, { method: "PUT", body: { size: f.size.value, gpu: f.gpu.checked, os: f.os.value } });
+      if (!(await giveCloud(compBee))) { $("compErr").textContent = ""; return; }
+    } else {
+      await api(`/api/bees/${encodeURIComponent(compBee.id)}/computer`, { method: "PUT", body: { size: f.size.value, where: f.where.value, gpu: f.gpu.checked, os: f.os.value } });
+    }
     $("compDlg").close();
     loadBees();
   } catch (err) {
@@ -148,7 +179,8 @@ $("beeForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target;
   try {
-    await api("/api/bees", {
+    const toCloud = f.where.value === "cloud";
+    const made = await api("/api/bees", {
       method: "POST",
       body: {
         name: f.name.value.trim(),
@@ -157,10 +189,11 @@ $("beeForm").addEventListener("submit", async (e) => {
         schedule: f.schedule.value.trim() || null,
         approval: f.approval.checked,
         created_by: f.parent.value || "you",
-        computer: { size: f.size.value, where: f.where.value, gpu: f.gpu.checked, os: f.os.value },
+        computer: { size: f.size.value, where: toCloud ? "here" : f.where.value, gpu: f.gpu.checked, os: f.os.value },
       },
     });
     $("beeDlg").close();
+    if (toCloud) await giveCloud(made).catch((err) => toast(`No cloud computer: ${err.message}`, "error"));
     loadBees();
   } catch (err) {
     $("beeErr").textContent = `Couldn't add the Bee (${err.message}).`;
@@ -169,6 +202,7 @@ $("beeForm").addEventListener("submit", async (e) => {
 
 // Live updates
 const client = new HiveClient();
+installVoice(client); // a Bee's call rings on this page too
 client.addEventListener("state", (e) => {
   connLabel($("conn"), e.detail);
   if (e.detail === "online") { loadBees(); loadLog(); }

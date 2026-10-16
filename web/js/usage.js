@@ -1,6 +1,7 @@
 // Mnx Hive: Usage and limits. Every number comes from /api/usage and is measured; what can't be measured says so.
 
 import { ICONS, HiveClient, api, connLabel, fmtDuration, fmtSize, h, installTokenPrompt } from "./shared.js";
+import { installVoice } from "./voice.js";
 
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll("[data-icon]").forEach((el) => { el.outerHTML = ICONS[el.dataset.icon]; });
@@ -151,12 +152,41 @@ function render(u) {
   rows.push(h("p", { class: "hint", style: "margin-top:10px" }, r.note + (r.unpriced ? ` ${r.unpriced} rental${r.unpriced === 1 ? " has" : "s have"} no recorded price.` : "")));
   $("rentals").replaceChildren(...rows);
 
+  // ----- plan
+  const pl = u.plan;
+  $("plan").replaceChildren(
+    h("div", { class: "plan-row" }, ...pl.plans.map((x) => h("button", {
+      class: `plan-opt${x.id === pl.plan ? " on" : ""}`, disabled: pl.locked || x.id === pl.plan,
+      onclick: async () => {
+        if (x.id === "paid" && !confirm("Switch to the Paid plan? Bee computers may then get GPUs. Payments aren't wired into the Hive yet: you pay your GPU provider directly.")) return;
+        try { await api("/api/plan", { method: "PUT", body: { plan: x.id } }); load(); } catch (e) { alert(e.message); }
+      } }, h("b", {}, x.label), h("span", {}, x.computer)))));
+  $("planNote").textContent = pl.locked ? "Set by the server (MNX_PLAN)" : `Now: ${pl.label}`;
+
+  // ----- cloud computers (one per Bee)
+  const cl = u.cloud;
+  const crow = [];
+  if (cl.machines.length) {
+    const el = h("div", { class: "utable" });
+    const money = (m, v) => `${{ EUR: "€", USD: "$" }[m.currency] || ""}${Number(v).toFixed(2)}`;
+    table(el, [{ h: "Bee", w: "1.2fr" }, { h: "Machine", w: "2fr" }, { h: "Running for", num: true }, { h: "Per month", num: true }, { h: "Cost so far", num: true }],
+      cl.machines.map((m) => [m.bee, `${m.type} · ${m.cpus} CPU, ${m.memory_gb} GB, ${m.disk_gb} GB · ${m.region} · ${m.status}`,
+        hours(m.hours), money(m, m.price_month), money(m, m.cost_so_far)]));
+    crow.push(el);
+  } else {
+    crow.push(h("p", { class: "hint" }, "No Bee has its own cloud computer yet. Say “give every bee a real cloud computer” in the chat, or pick “Its own cloud computer” in a Bee's Computer dialog."));
+  }
+  crow.push(h("p", { class: "hint", style: "margin-top:8px" },
+    cl.providers.map((p) => `${p.label}: ${p.connected ? "connected" : `save ${p.secret} in Cloud Bee · Lab → Secrets`}`).join(" · ") + `. ${cl.note}`));
+  $("cloudBox").replaceChildren(...crow);
+  $("cloudNote").textContent = cl.machines.length ? `${cl.machines.length} running` : "";
+
   // ----- limits
   const lim = u.limits;
   $("limits").replaceChildren(
     h("div", { class: "meter-row" }, h("span", { class: "lbl" }, "Tokens per message"), h("span"), h("span", { class: "val" }, levels.map(([, x]) => `${x.label} ${num(x.tokens)}`).join(" · "))),
     h("div", { class: "meter-row" }, h("span", { class: "lbl" }, "Bee computers"), h("span"),
-      h("span", { class: "val" }, Object.values(lim.sizes).map((x) => x.cpus ? `${x.label} ${x.cpus} CPU, ${x.memory_gb} GB` : x.label).join(" · "))),
+      h("span", { class: "val" }, Object.values(lim.sizes).map((x) => x.cpus ? `${x.label} ${x.cpus} CPU, ${x.memory_gb} GB RAM, ${x.disk_gb} GB disk` : x.label).join(" · "))),
     h("div", { class: "meter-row" }, h("span", { class: "lbl" }, "Bees"), h("span"), h("span", { class: "val" }, `${b.limit} in all · ${b.max_depth} generations · ${b.max_children} children each`)),
     h("div", { class: "meter-row" }, h("span", { class: "lbl" }, "File upload"), h("span"), h("span", { class: "val" }, `${lim.upload_mb} MB each`)));
 }
@@ -168,6 +198,7 @@ async function load() {
 $("viewToggle").addEventListener("click", () => { tableView = !tableView; if (last) { drawChart(last.tokens); $("viewToggle").textContent = tableView ? "Chart" : "Table"; } });
 
 const client = new HiveClient();
+installVoice(client); // a Bee's call rings on this page too
 client.addEventListener("state", (e) => { connLabel($("conn"), e.detail); if (e.detail === "online") load(); });
 installTokenPrompt(() => client.reconnectNow());
 client.connect();

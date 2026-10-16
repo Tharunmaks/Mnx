@@ -59,8 +59,12 @@ def _auto_choice(card_type: str, card: dict) -> tuple[str, dict, str] | None:
 
 
 class Task:
-    def __init__(self, task_id: str, chat_id: str, text: str, emit: Emit, effort: str | None = None):
+    def __init__(self, task_id: str, chat_id: str, text: str, emit: Emit, effort: str | None = None,
+                 bee: str | None = None, mode: str | None = None):
         self.id = task_id
+        self.bee = bee  # Peace mode: the Bee whose own chat this is; it answers as itself
+        self.mode = mode if mode in ("rush", "peace") else None
+        self.speaker: str | None = None  # Peace: the Bee's name, used in place of "Queen"
         self.chat_id = chat_id
         self.text = text
         self._emit = emit
@@ -80,6 +84,8 @@ class Task:
         event = {"task": self.id, "id": event_id, "type": type, "at": now(), **fields}
         if text is not None:
             event["text"] = text
+        if bee == "Queen" and self.speaker:
+            bee = self.speaker
         if bee:
             event["bee"] = bee
         self.tokens_out += tokens.count_event(event)

@@ -472,6 +472,11 @@ class Cell:
             self._disk = (time.monotonic(), await asyncio.to_thread(self.disk_usage))
         return self._disk[1]
 
+    def over_quota(self) -> bool:
+        """The Bee's files have filled its disk (40 GB on a Standard computer). Checked from the cached size."""
+        quota = self.computer.get("disk_gb")
+        return bool(quota) and self.mode != "remote" and self._disk[1] >= float(quota) * 1024 ** 3
+
     def disk_usage(self) -> int:
         if self.mode == "remote":
             return 0  # lives on the remote server; its own disk
@@ -535,6 +540,11 @@ class Cell:
             return -1
         await self.ensure_up()
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if self.over_quota():
+            self._log(job_id, f"\n=== {stamp} not started: the disk is full ({self.computer.get('disk_gb'):g} GB); delete some files\n")
+            job["last_exit"] = 28  # ENOSPC
+            self.save_jobs()
+            return 28
         self._log(job_id, f"\n=== {stamp} start: {job['command']}\n")
         job["last_start"], job["runs"] = int(time.time()), job["runs"] + 1
         self.save_jobs()
@@ -659,6 +669,8 @@ class Cell:
             "terminal": bool(self.terminal and self.terminal.alive),
             "browser": self.browser.running,
             "jobs": len(self.jobs), "running": len(self.running), "failed": failed,
+            "disk_gb": self.computer.get("disk_gb"), "disk_used": self._disk[1], "over_quota": self.over_quota(),
+            "cloud": self.computer.get("cloud"),
         }
 
     def job_views(self) -> list[dict]:

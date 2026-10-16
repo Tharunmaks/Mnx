@@ -6,12 +6,16 @@
   "give the Scout bee a large computer" · "give Scout a gpu" · "move Scout to my RunPod server"
   "give Scout the most powerful computer"   → this server's max, a connected GPU server, or rent one
   "list my bees" · "delete the Scout bee"
+  "give every bee a real cloud computer" · "give Scout its own cloud computer" · "… with a gpu" (Paid plan)
+  "bring the bees back home"                → delete their cloud servers
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
 
+from . import cloud
 from .bees import OS_CHOICES as OS_LABELS, SIZE_WORDS, SIZES, BeeError, describe_computer, registry
 from .core import Task
 
@@ -31,6 +35,12 @@ COMPUTER = re.compile(r"\b(?:give|set|upgrade|move|put|resize|make|switch|change
                       r"small|medium|large|xl|max|powerful|bigger|pod|runpod|vortex|os|linux|desktop)\b", re.I)
 OS_RE = re.compile(r"\b(?P<v>vortex(?:\s*os)?)\b|\b(?P<p>plain(?:\s+linux)?|no desktop|terminal only)\b", re.I)
 DESKTOP = re.compile(r"\b(?:open|start|show|launch|give me)\b.*\bdesktop\b|\bdesktop\b.*\b(?:open|start|link)\b", re.I)
+CLOUD_RE = re.compile(r"\b(?:real|own|dedicated|separate|new)?\s*cloud\s+(?:computers?|pcs?|servers?|machines?|vms?|boxes)\b"
+                      r"|\b(?:move|put|send)\b.*\bto\s+(?:the|a|its own)\s+cloud\b", re.I)
+CLOUD_BACK = re.compile(r"\b(?:bring|move|take)\b.*\b(?:back\s+home|back\s+here|off\s+(?:the|its)\s+cloud|home)\b"
+                        r"|\b(?:delete|remove|stop|cancel)\b.*\bcloud\s+(?:computer|pc|server|machine)\b", re.I)
+EVERY = re.compile(r"\b(?:every|each|all(?:\s+(?:the|my))?)\s+bees?\b|\b(?:the|my)\s+bees\b|\ball of them\b|\beveryone\b", re.I)
+NOT_A_BEE = re.compile(r"\b(?:the|its|a)\s+cloud\b(?!\s+bee)|\bcloud\s+(?:computers?|pcs?|servers?|machines?|vms?)\b", re.I)
 LIST = re.compile(r"\b(?:list|show|see)\b.*\bbees\b|\bmy bees\b|\bhow many bees\b|\bwhich bees\b|\bbee (?:family|tree)\b", re.I)
 DELETE = re.compile(r"\b(?:delete|remove|kill|destroy)\s+(?:the\s+|my\s+)?(?P<b>[\w -]{1,30}?)\s+bee\b", re.I)
 STOP = {"a", "an", "the", "my", "and", "of", "for", "to", "that", "which", "who", "every", "all", "it", "its", "me", "i"}
@@ -88,17 +98,30 @@ def parse(text: str) -> dict | None:
         name = nm.group("n").strip() if nm else ""
         sm = SKILL.search(rest[nm.end():] if nm else rest)
         skill = (sm.group("s") if sm else "").strip(" .!?")
-        skill = re.sub(r"\s*\b(?:with|using|on)\s+(?:a\s+|an\s+|the\s+|my\s+)?(?:[\w.-]+\s+){0,2}(?:gpus?|computer|machine|server|pod)\b", "", skill, flags=re.I).strip(" ,.")
+        skill = re.sub(r"\s*\b(?:with|using|on)\s+(?:a\s+|an\s+|the\s+|my\s+|its\s+)?(?:[\w.-]+\s+){0,3}(?:gpus?|computer|machine|server|pod)\b", "", skill, flags=re.I).strip(" ,.")
         adj = (m.group("adj") or "").lower()
         size = _size(t) or next((SIZE_WORDS[w] for w in adj.split() if w in SIZE_WORDS), None)
         gpu = bool(GPU_RE.search(t)) or " gpu" in adj
         om = OS_RE.search(t)
         return {"kind": "create", "parent": parent, "name": name, "skill": skill, "size": size, "gpu": gpu,
-                "where": _where(t) if WHERE_RE.search(t) else None, "os": ("vortex" if om.group("v") else "plain") if om else None}
+                "where": "cloud" if CLOUD_RE.search(t) else _where(t) if WHERE_RE.search(t) else None, "os": ("vortex" if om.group("v") else "plain") if om else None}
     if DESKTOP.search(t):
         b = _bee_named(t)
         if b:
             return {"kind": "desktop", "bee": b["id"]}
+    if CLOUD_BACK.search(t) and re.search(r"\bcloud\b|\bback\s+(?:home|here)\b", t, re.I):
+        b = None if EVERY.search(t) else _bee_named(NOT_A_BEE.sub(" ", t))
+        if b or EVERY.search(t):
+            return {"kind": "cloud_back", "bee": b["id"] if b else None}
+    if CLOUD_RE.search(t) and not CREATE.search(t):
+        w = NOT_A_BEE.sub(" ", t)
+        b = None if EVERY.search(t) else _bee_named(w)
+        named = re.search(r"\b(?:the\s+|my\s+)?([\w-]+)\s+bee\b", w, re.I)
+        if not b and not EVERY.search(t) and named:
+            return {"kind": "cloud", "bee": None, "missing": named.group(1)}
+        if b or EVERY.search(t):
+            w2 = re.sub(rf"\b(?:{re.escape(b['name'])}|{re.escape(b['id'])})\s+bee(?:'s)?\b", " ", w, flags=re.I) if b else w
+            return {"kind": "cloud", "bee": b["id"] if b else None, "gpu": bool(re.search(r"\bgpus?\b", w2, re.I))}
     dm = DELETE.search(t)
     if dm:
         return {"kind": "delete", "bee": dm.group("b").strip()}
@@ -140,7 +163,8 @@ def _server_options() -> list[dict]:
     return opts
 
 
-SIZE_OPTS = [{"value": k, "label": f"{v['label']}" + ("" if k == "max" else f" · {v['cpus']} CPU{'s' if v['cpus'] > 1 else ''}, {v['memory_gb']} GB")}
+SIZE_OPTS = [{"value": k, "label": f"{v['label']}" + ("" if k == "max" else f" · {v['cpus']} CPU{'s' if v['cpus'] > 1 else ''}, "
+                                                                           f"{v['memory_gb']} GB RAM, {v['disk_gb']} GB disk")}
              for k, v in SIZES.items()]
 
 
@@ -192,6 +216,9 @@ async def handle(task: Task, text: str) -> None:
                                  ["Its Cell", f"/cell.html?bee={b['id']}#desktop"]])
         await task.answer(f"{b['name']}'s Vortex OS desktop is running. Open its Cell's Desktop tab and press Open desktop; sign in as {st['user']}.")
         return
+    if kind in ("cloud", "cloud_back"):
+        await _cloud_flow(task, bee, intent)
+        return
     if kind == "delete":
         b = registry.find(intent["bee"])
         if not b:
@@ -212,7 +239,7 @@ async def handle(task: Task, text: str) -> None:
         await task.answer(f"Removed the {b['name']} Bee." + (f" {', '.join(k['name'] for k in kids)} now belong to its parent." if kids else ""))
         return
     if kind == "create":
-        parent_id = "you"
+        parent_id = task.bee if getattr(task, "bee", None) and registry.get(task.bee) else "you"  # Peace: a child of this Bee
         if intent.get("parent"):
             p = registry.find(intent["parent"])
             if not p:
@@ -221,9 +248,12 @@ async def handle(task: Task, text: str) -> None:
             parent_id = p["id"]
         skill = intent.get("skill") or ""
         name = intent.get("name") or (_auto_name(skill) if skill else "")
-        computer = {"size": intent.get("size") or "small", "gpu": bool(intent.get("gpu")), "os": intent.get("os") or "vortex"}
+        computer = {"size": intent.get("size") or "standard", "gpu": bool(intent.get("gpu")), "os": intent.get("os") or "vortex"}
         where = intent.get("where") or (registry.get(parent_id)["computer"].get("where", "here") if parent_id != "you" else "here")
         opts = [o for o in _server_options() if o["value"] != "rent"]
+        quote = await _cloud_quote()
+        if quote:
+            opts.append({"value": "cloud", "label": f"Its own cloud computer · {cloud.describe_quote(quote)}"})
         if where not in [o["value"] for o in opts]:
             where = "here"
         maker = "you" if parent_id == "you" else registry.get(parent_id)["name"]
@@ -247,11 +277,16 @@ async def handle(task: Task, text: str) -> None:
         if not name or not skill:
             await task.answer("A Bee needs a name and a one-line skill. Try again with both, e.g. “create a bee called Scout that watches prices”.")
             return
+        to_cloud = computer["where"] == "cloud"
+        if to_cloud:
+            computer["where"] = "here"  # it starts here and moves when its cloud computer is up
         try:
             b = await registry.create(name, skill, parent_id, computer=computer)
         except BeeError as exc:
             await task.answer(f"I couldn't create it: {exc}.")
             return
+        if to_cloud and quote:
+            await _provision(task, bee, [b], quote)
         view = registry.view(b)
         await task.emit("result", parent=bee, service="Hive", title=f"{b['name']} Bee is ready", badge="New Bee",
                         details=[["Skill", b["skill"]], ["Made by", view["parent_name"]], ["Computer", view["computer_text"]],
@@ -320,6 +355,127 @@ async def handle(task: Task, text: str) -> None:
                           " Its files and jobs are kept; the computer restarted with the new size."))
         return
     await task.answer("Say “create a bee called … that …”, “give the … bee a large computer” or “list my bees”.")
+
+
+# ---------------------------------------------------------------- real cloud computers (hive/cloud.py)
+async def _cloud_quote() -> dict | None:
+    try:
+        return await cloud.machines.quote() if cloud.machines.configured() else None
+    except Exception:
+        return None
+
+
+async def _provision(task: Task, parent: str, bs: list[dict], quote: dict) -> list[dict]:
+    """Start a cloud computer for each Bee, four at a time, each with its own step."""
+    gate = asyncio.Semaphore(4)
+    done: list[dict] = []
+
+    async def one(b: dict) -> None:
+        async with gate:
+            s = await task.step("running", f"Starting {b['name']}'s cloud computer", bee="GPU", parent=parent,
+                                detail=f"{quote['provider_label']} {quote['type']} in {quote['region']}")
+            try:
+                rec = await cloud.give_bee(b["id"], quote)
+            except Exception as exc:
+                await task.finish_step(s, status="error", text=str(exc)[:200])
+                return
+            done.append(rec)
+            await task.finish_step(s, text=f"{b['name']} is on {rec['ip']} · {registry.view(registry.get(b['id']))['computer_text']}")
+    await asyncio.gather(*(one(b) for b in bs))
+    return done
+
+
+async def _cloud_flow(task: Task, parent: str, intent: dict) -> None:
+    from .cloud_chat import ask
+    from .plan import plan
+    every = not intent.get("bee")
+    if intent.get("missing"):
+        await task.answer(f"I don't have a Bee called {intent['missing']}. Say “list my bees” to see them.")
+        return
+    if intent["kind"] == "cloud_back":
+        bs = [b for b in registry.bees if b["computer"].get("cloud")] if every else [registry.get(intent["bee"])]
+        bs = [b for b in bs if b and (b["computer"].get("cloud") or cloud.machines.for_bee(b["id"]))]
+        if not bs:
+            await task.answer("No Bee has its own cloud computer right now.")
+            return
+        reply = await ask(task, "confirm", parent=parent, title="Delete cloud computers?", service="Hive", ask_anyway=True,
+                          details=[[b["name"], registry.view(b)["computer_text"]] for b in bs],
+                          text="Each Bee moves back to this server and its cloud server is deleted, so billing stops. "
+                               "Files on the cloud server are deleted with it; copy what you need first.",
+                          actions=[{"id": "go", "label": "Delete them", "style": "danger"}, {"id": "cancel", "label": "Keep them"}])
+        if reply["action"] != "go":
+            await task.answer("Okay, they keep their cloud computers.")
+            return
+        for b in bs:
+            s = await task.step("running", f"Bringing {b['name']} home", bee="GPU", parent=parent)
+            try:
+                await cloud.take_back(b["id"])
+                await task.finish_step(s, text="cloud server deleted")
+            except Exception as exc:
+                await task.finish_step(s, status="error", text=str(exc)[:200])
+        await task.answer(f"Done: {', '.join(b['name'] for b in bs)} {'are' if len(bs) > 1 else 'is'} back on this server and the cloud servers are deleted.")
+        return
+
+    if intent.get("gpu"):
+        if not plan.allows_gpu():
+            await task.answer("GPU computers come with the Paid plan; this Hive is on the Free plan. Every Bee still gets a Standard "
+                              "computer (2 CPUs, 8 GB RAM, 40 GB disk). Switch the plan on the Usage page to add GPUs.")
+            return
+        if every:
+            await task.answer("GPU machines cost a lot per hour, so I rent them one Bee at a time. Say “give the … bee a cloud computer with a gpu”.")
+            return
+        b = registry.get(intent["bee"])
+        from .lab import lab
+        if not lab._secrets.get("RUNPOD_API_KEY"):
+            await task.answer("Cloud GPUs are rented on RunPod. Save RUNPOD_API_KEY in Cloud Bee · Lab → Secrets, then ask again.")
+            return
+        tid = await _rent(task, parent)
+        if not tid:
+            await task.answer(f"Nothing was rented, so {b['name']}'s computer is unchanged.")
+            return
+        b = await registry.set_computer(b["id"], {"where": tid, "gpu": True, "size": "max"})
+        await task.answer(f"{b['name']} now runs on its own GPU machine: {registry.view(b)['computer_text']}. "
+                          "Stop the rental in the Lab when it's done, or say “stop renting”.")
+        return
+
+    bs = [b for b in registry.bees if not cloud.machines.for_bee(b["id"])] if every else [registry.get(intent["bee"])]
+    if not every and cloud.machines.for_bee(bs[0]["id"]):
+        await task.answer(f"{bs[0]['name']} already has its own cloud computer: {registry.view(bs[0])['computer_text']}.")
+        return
+    if not bs:
+        await task.answer("Every Bee already has its own cloud computer.")
+        return
+    s = await task.step("searching", "Finding the cheapest server with 8 GB RAM and 40 GB disk", bee="GPU", parent=parent)
+    try:
+        quote = await cloud.machines.quote()
+    except cloud.CloudError as exc:
+        await task.finish_step(s, status="error", text=str(exc)[:200])
+        await task.answer(f"{exc}. Hetzner (Singapore) is the cheapest; DigitalOcean has Bangalore. Then say "
+                          "“give every bee a real cloud computer” again.")
+        return
+    await task.finish_step(s, text=cloud.describe_quote(quote))
+    sym = {"EUR": "€", "USD": "$"}.get(quote["currency"], "")
+    total = quote["price_month"] * len(bs)
+    inr = cloud.to_rupees(total, quote["currency"])
+    reply = await ask(task, "confirm", parent=parent, title=f"Rent {len(bs)} cloud computer{'s' if len(bs) > 1 else ''}?", service="GPU",
+                      ask_anyway=True,
+                      details=[["Each", cloud.describe_quote(quote)], ["Bees", ", ".join(b["name"] for b in bs)],
+                               ["Total", f"{sym}{total:.2f} per month" + (f" (about ₹{inr:,})" if inr else "")
+                                + f", {sym}{quote['price_hour'] * len(bs):.3f} per hour"]],
+                      text=f"This spends real money on your {quote['provider_label']} account, from now until a Bee is removed or you say "
+                           "“bring the bees back home”. Each Bee moves to its own server with Docker and Vortex OS; files already "
+                           "on this server stay here.",
+                      actions=[{"id": "go", "label": "Rent them"}, {"id": "cancel", "label": "Cancel", "style": "danger"}])
+    if reply["action"] != "go":
+        await task.answer("Okay, nothing rented.")
+        return
+    done = await _provision(task, parent, bs, quote)
+    failed = len(bs) - len(done)
+    await task.emit("result", parent=parent, service="GPU", title=f"{len(done)} cloud computer{'s' if len(done) != 1 else ''} running",
+                    badge="Cloud", details=[[registry.get(m["bee"])["name"], f"{m['ip']} · {m['type']} · {m['region']}"] for m in done])
+    await task.answer(f"{len(done)} Bee{'s' if len(done) != 1 else ''} now run on their own cloud computers "
+                      f"({quote['cpus']} CPUs, {quote['memory_gb']:g} GB RAM, {quote['disk_gb']:g} GB disk each)."
+                      + (f" {failed} didn't start; their steps say why, and nothing is billed for them." if failed else ""))
 
 
 def describe(b: dict) -> str:

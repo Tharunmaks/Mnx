@@ -4,9 +4,10 @@
 
 import {
   EFFORT, ICONS, HiveClient, api, beeHex, connLabel, countTokens, effortInfo, fmtTokens, getSettings, h, installTokenPrompt, logoSVG,
-  saveSettings, store, uid,
+  saveSettings, store, toast, uid,
 } from "./shared.js";
 import { buildModel, renderRun } from "./render.js";
+import { askNotifications, installVoice, speak, startTalk, stopSpeaking } from "./voice.js";
 
 const $ = (id) => document.getElementById(id);
 const CHATS_KEY = "mnx.chats";
@@ -20,8 +21,17 @@ $("pillLogo").innerHTML = logoSVG();
 
 // ---------- state ----------
 let chats = store.get(CHATS_KEY, []);
-let activeId = store.get(ACTIVE_KEY, null);
-if (!chats.find((c) => c.id === activeId)) activeId = null;
+// Rush: every Bee works together on one page (the Queen's chats). Peace: a separate chat with each Bee.
+let mode = store.get("mnx.mode", "rush") === "peace" ? "peace" : "rush";
+let rushId = store.get(ACTIVE_KEY, null);
+let peaceBee = store.get("mnx.peaceBee", null);
+let activeId = null;
+let bees = [];
+const boardState = new Map(); // Rush board: Bee name → { text, state }
+if (!chats.find((c) => c.id === rushId && !c.bee)) rushId = null;
+syncActive();
+
+function syncActive() { activeId = mode === "peace" ? (peaceBee ? `peace_${peaceBee}` : null) : rushId; }
 
 // A task still "running" after a reload lost its stream; close it out.
 for (const c of chats) {
@@ -37,7 +47,9 @@ function saveChats() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     store.set(CHATS_KEY, chats);
-    store.set(ACTIVE_KEY, activeId);
+    store.set(ACTIVE_KEY, rushId);
+    store.set("mnx.peaceBee", peaceBee);
+    store.set("mnx.mode", mode);
   }, 150);
 }
 const activeChat = () => chats.find((c) => c.id === activeId) || null;
@@ -72,6 +84,8 @@ installTokenPrompt(() => client.reconnectNow());
 client.addEventListener("event", (e) => {
   const ev = e.detail;
   if (ev.type === "bee_status" || ev.type === "bees_changed") { loadBees(); return; }
+  if (ev.bee) boardEvent(ev);
+  if (ev.type === "task_done" || ev.type === "task_error") boardSettle();
   if (ev.type === "tools_changed" || ev.type === "phones_changed") { loadTools(); return; }
   if (!ev.task) return;
   const found = findTurn(ev.task);
@@ -79,6 +93,7 @@ client.addEventListener("event", (e) => {
   found.turn.events.push(ev);
   if (ev.type === "bee_created") loadBees();
   if (ev.type === "tokens" && found.chat.id === activeId) updateChatTokens(found.chat);
+  if (ev.type === "answer" && ev.text && getSettings().speak && found.chat.id === activeId) speak(ev.text);
   found.chat.updated = Date.now();
   saveChats();
   if (found.chat.id === activeId) {
@@ -87,6 +102,7 @@ client.addEventListener("event", (e) => {
   }
 });
 
+installVoice(client);
 client.connect();
 $("conn").addEventListener("click", () => client.reconnectNow());
 
@@ -96,18 +112,25 @@ function send(text) {
   if (!text || runningTask()) return;
 
   let chat = activeChat();
-  if (!chat) {
+  if (!chat && mode === "peace") {
+    const b = bees.find((x) => x.id === peaceBee);
+    if (!b) return;
+    chat = { id: `peace_${b.id}`, bee: b.id, title: b.name, created: Date.now(), updated: Date.now(), turns: [] };
+    chats.unshift(chat);
+  } else if (!chat) {
     chat = { id: uid("c_"), title: titleFrom(text), created: Date.now(), updated: Date.now(), turns: [] };
     chats.unshift(chat);
-    activeId = chat.id;
+    rushId = chat.id;
   }
+  syncActive();
   const task = uid("t_");
   chat.turns.push({ role: "user", text, at: new Date().toISOString() });
-  const turn = { role: "mnx", task, events: [] };
+  const turn = { role: "mnx", task, events: [], bee: chat.bee || undefined };
   chat.turns.push(turn);
   chat.updated = Date.now();
 
-  const ok = client.send({ type: "user_message", chat: chat.id, task, text, name: getSettings().name || undefined, effort: getSettings().effort });
+  const ok = client.send({ type: "user_message", chat: chat.id, task, text, name: getSettings().name || undefined, effort: getSettings().effort,
+    mode: chat.bee ? "peace" : "rush", bee: chat.bee || undefined });
   if (!ok) {
     turn.events.push(
       { task, type: "error", text: "Can't reach the Mnx Hive gateway", detail: "check that the server is running, or set its URL in Settings" },
@@ -161,8 +184,17 @@ function renderAll() {
   const slot = hasTurns ? $("bottomSlot") : $("welcomeSlot");
   slot.append(...composer.childNodes, ...[...$("welcomeSlot").childNodes, ...$("bottomSlot").childNodes].filter((n) => n.parentNode !== slot));
 
-  $("chatTitle").textContent = chat ? chat.title : "New chat";
-  document.title = chat ? `${chat.title} · Mnx Hive` : "Mnx Hive";
+  const pb = mode === "peace" ? bees.find((b) => b.id === peaceBee) : null;
+  $("chatTitle").textContent = pb ? pb.name : chat ? chat.title : "Rush";
+  document.title = `${pb ? pb.name : chat ? chat.title : "Rush"} · Mnx Hive`;
+  for (const btn of $("modeSwitch").querySelectorAll("button")) btn.classList.toggle("on", btn.dataset.mode === mode);
+  $("board").classList.toggle("hidden", mode !== "rush" || !bees.length);
+  $("newChat").classList.toggle("hidden", mode === "peace");
+  $("historyLabel").textContent = mode === "peace" ? "Bees · one chat each" : "Rush chats";
+  input.placeholder = pb ? `Message ${pb.name}… (“$ ls” runs on its computer)` : "Ask the whole Hive… (“roll call”, “everyone run …”)";
+  $("talkBtn").title = pb ? `Talk with ${pb.name} (Fish Audio voice)` : "Talk with the Hive (Fish Audio voice)";
+  renderWelcome(pb);
+  renderBoard();
   updateChatTokens(chat);
 
   const thread = $("thread");
@@ -190,6 +222,8 @@ function rerenderTurn(turn, scroll = true) {
   if (!run) return;
   const nearBottom = isNearBottom();
   const el = renderRun(buildModel(turn.events), { onAction: onAction(turn), cardCache: run.cardCache });
+  const owner = turn.bee && bees.find((b) => b.id === turn.bee);
+  if (owner) el.querySelector(".logo")?.replaceWith(Object.assign(document.createElement("span"), { className: "logo", innerHTML: beeHex(owner.name, owner.color) }));
   run.el.replaceChildren(el);
   if (scroll && nearBottom) scrollDown();
 }
@@ -206,7 +240,8 @@ function scrollDown(force) {
 function renderHistory() {
   const box = $("history");
   box.replaceChildren();
-  const sorted = [...chats].sort((a, b) => b.updated - a.updated);
+  if (mode === "peace") { renderBeeList(box); return; }
+  const sorted = chats.filter((c) => !c.bee).sort((a, b) => b.updated - a.updated);
   if (!sorted.length) {
     box.append(h("div", { class: "empty-note" }, "No chats yet"));
     return;
@@ -216,14 +251,15 @@ function renderHistory() {
       e.stopPropagation();
       if (!confirm(`Delete "${c.title}"?`)) return;
       chats = chats.filter((x) => x.id !== c.id);
-      if (activeId === c.id) activeId = null;
+      if (rushId === c.id) rushId = null;
+      syncActive();
       saveChats();
       renderAll();
     } });
     del.querySelector("svg").style.cssText = "width:15px;height:15px";
     box.append(h("button", {
       class: `rail-btn${c.id === activeId ? " active" : ""}`,
-      onclick: () => { activeId = c.id; saveChats(); renderAll(); closeRail(); },
+      onclick: () => { rushId = c.id; syncActive(); saveChats(); renderAll(); closeRail(); },
     }, h("span", {}, c.title), del));
   }
 }
@@ -292,7 +328,8 @@ $("composer").addEventListener("submit", (e) => {
 });
 
 $("newChat").addEventListener("click", () => {
-  activeId = null;
+  rushId = null;
+  syncActive();
   saveChats();
   renderAll();
   closeRail();
@@ -303,7 +340,6 @@ $("newChat").addEventListener("click", () => {
 function applyProfile() {
   const s = getSettings();
   const name = s.name.trim();
-  $("greeting").textContent = name ? `Hi ${name}, let's start?` : "Hi there, let's start?";
   $("avatar").textContent = name ? name.charAt(0).toUpperCase() : "?";
   $("profileName").textContent = name || "Profile";
   $("modelName").textContent = s.model || "Mnx 3B";
@@ -320,6 +356,8 @@ function openSettings(focusName) {
   f.enterToSend.checked = s.enterToSend;
   f.effort.value = s.effort;
   $("effortHint").textContent = effortInfo(s.effort).note;
+  f.speak.checked = !!s.speak;
+  loadVoice();
   $("settingsDlg").showModal();
   if (focusName) f.name.focus();
 }
@@ -337,7 +375,9 @@ $("settingsDlg").addEventListener("close", () => {
     gateway: f.gateway.value.trim(),
     enterToSend: f.enterToSend.checked,
     effort: f.effort.value,
+    speak: f.speak.checked,
   });
+  saveVoice();
   applyProfile();
   applyEffort();
   const now = getSettings();
@@ -350,7 +390,8 @@ $("settingsDlg").addEventListener("close", () => {
 $("clearChats").addEventListener("click", () => {
   if (!confirm("Delete every chat saved on this device?")) return;
   chats = [];
-  activeId = null;
+  rushId = null;
+  syncActive();
   saveChats();
   $("settingsDlg").close();
   renderAll();
@@ -374,8 +415,9 @@ async function loadTools() {
 
 // ---------- Bees side panel ----------
 async function loadBees() {
-  let bees = [];
   try { bees = await api("/api/bees"); } catch { /* offline */ }
+  if (mode === "peace" && !bees.find((b) => b.id === peaceBee) && bees.length) { peaceBee = (bees.find((b) => b.id === "chat") || bees[0]).id; syncActive(); }
+  renderAll();
   const list = $("beeList");
   list.replaceChildren();
   $("beeCount").textContent = bees.length || "";
@@ -408,3 +450,146 @@ fillEffortSelects();
 applyEffort();
 $("effortPill").addEventListener("change", () => { saveSettings({ effort: $("effortPill").value }); applyEffort(); });
 $("setEffort").addEventListener("change", () => { $("effortHint").textContent = effortInfo($("setEffort").value).note; });
+
+
+// ---------- Rush · Peace ----------
+for (const btn of $("modeSwitch").querySelectorAll("button")) {
+  btn.addEventListener("click", () => {
+    if (mode === btn.dataset.mode) return;
+    mode = btn.dataset.mode;
+    if (mode === "peace" && !peaceBee && bees.length) peaceBee = (bees.find((b) => b.id === "chat") || bees[0]).id;
+    syncActive();
+    saveChats();
+    renderAll();
+  });
+}
+
+// Peace: each Bee in the rail, with the last thing said in its chat.
+function renderBeeList(box) {
+  if (!bees.length) { box.append(h("div", { class: "empty-note" }, "No Bees yet")); return; }
+  for (const b of bees) {
+    const chat = chats.find((c) => c.id === `peace_${b.id}`);
+    const last = chat && [...chat.turns].reverse().find((t) => t.role === "user" || (t.events || []).some((e) => e.type === "answer"));
+    const preview = !last ? b.skill : last.role === "user" ? `You: ${last.text}` : (last.events.find((e) => e.type === "answer") || {}).text || "";
+    const icon = h("span", { class: "bee-mini", html: beeHex(b.name, b.color) });
+    box.append(h("button", {
+      class: `rail-btn${b.id === peaceBee ? " active" : ""}`, title: `${b.name}: ${b.skill}`,
+      onclick: () => { peaceBee = b.id; syncActive(); saveChats(); renderAll(); closeRail(); input.focus(); },
+    }, icon, h("span", { class: "two" }, h("span", {}, b.name), h("span", { class: "sub" }, preview || ""))));
+  }
+}
+
+function renderWelcome(pb) {
+  const head = $("peaceHead");
+  head.classList.toggle("hidden", !pb);
+  $("welcomeLogo").classList.toggle("hidden", !!pb);
+  $("wordmark").classList.toggle("hidden", !!pb);
+  $("greeting").classList.toggle("hidden", !!pb);
+  if (!pb) {
+    const name = getSettings().name.trim();
+    $("greeting").textContent = `${name ? `Hi ${name}` : "Hi there"}, Rush mode: every Bee works on what you ask, together.`;
+    return;
+  }
+  head.replaceChildren();
+  head.insertAdjacentHTML("beforeend", beeHex(pb.name, pb.color));
+  head.append(h("h2", { class: "wordmark" }, pb.name), h("div", { class: "skill" }, pb.skill),
+    h("div", { class: "comp" }, pb.computer_text || ""),
+    h("div", { class: "comp" }, h("a", { href: `cell.html?bee=${encodeURIComponent(pb.id)}` }, "Open its computer →"), "  ·  “$ ls” runs a command there  ·  “call me” rings you"));
+}
+
+// Rush board: one tile per Bee, showing what it's doing right now.
+function renderBoard() {
+  const board = $("board");
+  if (mode !== "rush") return;
+  const names = ["Queen", ...bees.map((b) => b.name)];
+  board.replaceChildren(...names.map((name) => {
+    const b = bees.find((x) => x.name === name);
+    const st = boardState.get(name) || { text: name === "Queen" ? "Hands out the work" : (b && b.status !== "idle" ? b.status : "Ready"), state: b && b.status === "busy" ? "busy" : "" };
+    const tile = h("div", { class: `tile ${st.state}`, "data-bee": name, title: st.text },
+      h("div", { class: "top", html: beeHex(name, b && b.color) }, h("span", {}, name)),
+      h("div", { class: "what" }, st.text));
+    return tile;
+  }));
+}
+
+function boardEvent(ev) {
+  if (mode !== "rush") return;
+  const prev = boardState.get(ev.bee) || {};
+  let state = prev.state || "";
+  if (["step", "planning", "searching", "reading", "running", "opening", "fetching", "writing", "waiting", "thinking"].includes(ev.type)) {
+    state = ev.status === "error" ? "error" : ev.status === "done" ? "done" : "busy";
+  } else if (ev.type === "output") state = ev.code ? "error" : "done";
+  else if (ev.type === "result" || ev.type === "done") state = "done";
+  else if (ev.type === "error") state = "error";
+  const text = ev.type === "output" ? `$ ${ev.command} → exit ${ev.code}` : ev.type === "result" ? (ev.title || "Reported") : (ev.text || prev.text || "");
+  boardState.set(ev.bee, { text, state });
+  const tile = $("board").querySelector(`[data-bee="${CSS.escape(ev.bee)}"]`);
+  if (tile) { tile.className = `tile ${state}`; tile.title = text; tile.querySelector(".what").textContent = text; }
+  else renderBoard();
+}
+
+function boardSettle() {
+  for (const [name, st] of boardState) if (st.state === "busy") boardState.set(name, { ...st, state: "done" });
+  renderBoard();
+}
+
+// ---------- voice ----------
+$("talkBtn").addEventListener("click", () => { stopSpeaking(); startTalk(mode === "peace" ? peaceBee : null); });
+
+// Settings → Voice: kept on the server (the key never comes back to the page).
+let voiceSeen = null;
+const VOICE_FIELDS = { vFishKey: "fish_key", vModel: "model", vLang: "language", vPhone: "phone", vSid: "twilio_sid", vTok: "twilio_token", vFrom: "twilio_from", vTz: "timezone" };
+async function loadVoice() {
+  let v;
+  try { v = await api("/api/voice"); } catch { $("vHint").textContent = "The gateway is offline, so voice settings can't load."; return; }
+  voiceSeen = v;
+  $("vModel").replaceChildren(...v.models.map((m) => h("option", { value: m }, m)));
+  for (const [id, key] of Object.entries(VOICE_FIELDS)) {
+    const el = $(id);
+    if (key === "fish_key") el.value = "", el.placeholder = v.fish_key_set ? "Saved · type a new key to replace it" : "From fish.audio → API keys";
+    else if (key === "twilio_token") el.value = "", el.placeholder = v.twilio_token_set ? "Saved" : "";
+    else el.value = v[key] ?? "";
+  }
+  const sel = $("vVoice");
+  sel.replaceChildren(h("option", { value: "" }, "Fish Audio's default voice"));
+  if (v.voice_id) sel.append(h("option", { value: v.voice_id, "data-name": v.voice_name || v.voice_id }, v.voice_name || v.voice_id));
+  sel.value = v.voice_id || "";
+  $("vHint").textContent = v.fish_ready ? "Replies and calls use the Fish Audio voice." : "No Fish Audio key yet: the browser's own voice stands in.";
+  $("vPhoneHint").textContent = v.twilio_ready ? `Calls ring your phone ${v.phone}.` : `Phone calls ${v.phone_calls}. Until then, calls ring in the Hive app on every open page.`;
+}
+async function saveVoice() {
+  if (!voiceSeen) return;
+  const change = {};
+  for (const [id, key] of Object.entries(VOICE_FIELDS)) {
+    const val = $(id).value.trim();
+    if (key === "fish_key" || key === "twilio_token") { if (val) change[key] = val; continue; }
+    if (val !== String(voiceSeen[key] ?? "")) change[key] = val;
+  }
+  const sel = $("vVoice");
+  if (sel.value !== (voiceSeen.voice_id || "")) {
+    change.voice_id = sel.value;
+    change.voice_name = sel.value ? (sel.selectedOptions[0]?.dataset.name || sel.selectedOptions[0]?.textContent || "") : "";
+  }
+  if (!Object.keys(change).length) return;
+  try { await api("/api/voice", { method: "PUT", body: change }); toast("Voice settings saved"); askNotifications(); }
+  catch (e) { toast(`Voice: ${e.message}`, "error"); }
+}
+$("vFind").addEventListener("click", async () => {
+  const keyTyped = $("vFishKey").value.trim();
+  if (keyTyped) await api("/api/voice", { method: "PUT", body: { fish_key: keyTyped } }).catch(() => {});
+  try {
+    const list = await api(`/api/voice/voices?q=${encodeURIComponent($("vSearch").value.trim())}`);
+    const sel = $("vVoice");
+    const keep = sel.value;
+    sel.replaceChildren(h("option", { value: "" }, "Fish Audio's default voice"),
+      ...list.map((x) => h("option", { value: x.id, "data-name": x.title }, `${x.title}${x.languages.length ? ` · ${x.languages.join(", ")}` : ""}`)));
+    sel.value = list[0] ? list[0].id : keep;
+    $("vHint").textContent = list.length ? `${list.length} voices found; pick one and press Save.` : "No voices matched.";
+  } catch (e) { $("vHint").textContent = `Couldn't search: ${e.message}`; }
+});
+$("vTest").addEventListener("click", async () => {
+  await saveVoice();
+  voiceSeen = null;
+  await loadVoice();
+  speak(`Hi${getSettings().name ? " " + getSettings().name : ""}, this is your Hive speaking with the Fish Audio voice.`);
+});

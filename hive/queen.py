@@ -6,16 +6,34 @@ reports that honestly instead of inventing an answer.
 
 from __future__ import annotations
 
-from . import brain, cloud_chat
+from . import brain, calls, cloud_chat, modes
+from .bees import registry
 from .core import Task
 
 
 async def handle(task: Task) -> None:
+    peace = task.bee and registry.get(task.bee)
+    if peace:
+        task.speaker = peace["name"]  # Peace mode: this Bee answers in its own chat
     received = await task.step("planning", "Reading your message", bee="Queen")
     await task.finish_step(received)
 
+    # "call me", "call me in 10 minutes and tell me …": a voice call with the Fish Audio voice
+    if await calls.handle_chat(task):
+        return
+    if task.bee and await modes.peace(task):
+        return
+    if task.mode == "rush" and await modes.rush(task):
+        return
+
     # Requests a Bee understands on its own (no AI needed), e.g. "train Qwen 2.5 Coder".
     if await cloud_chat.handle(task):
+        return
+
+    if task.bee:
+        await modes.peace_fallback(task)
+        return
+    if task.mode == "rush" and await modes.rush_plan(task):
         return
 
     if not brain.is_connected():
@@ -28,7 +46,9 @@ async def handle(task: Task) -> None:
         await task.answer(
             "I got your message, but my brain (the Mnx model) isn't connected to the Hive yet, "
             "so I can't plan or answer that yet. What already works without it: training and running models, "
-            "e.g. “train Qwen 2.5 Coder”, “how is my training going?”, “stop training”, “run my model”."
+            "e.g. “train Qwen 2.5 Coder”, “how is my training going?”, “stop training”, “run my model”, "
+            "“give every bee a real cloud computer”, “call me”"
+            + (", and in Rush: “everyone run …”, “roll call”." if task.mode == "rush" else ".")
         )
         return
 

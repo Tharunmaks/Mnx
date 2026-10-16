@@ -46,6 +46,10 @@ export function buildModel(events) {
       const item = { kind: "card", id, card: ev, children: [] };
       items.set(id, item);
       place(item, ev.parent);
+    } else if (t === "output" || t === "rush") {
+      const item = { kind: t, id: ev.id || `o${auto++}`, ev, children: [] };
+      items.set(item.id, item);
+      place(item, ev.parent);
     } else if (t === "resolved" || t === "_action") {
       model.resolved.set(ev.ref, ev);
     } else if (t === "answer_delta") {
@@ -133,12 +137,28 @@ function renderList(list, model, onAction, cardCache, top) {
       box.append(renderCard(it, model, onAction, cardCache));
       continue;
     }
+    if (it.kind === "output") { box.append(renderOutput(it.ev)); continue; }
+    if (it.kind === "rush") { box.append(renderRush(it.ev)); continue; }
     const group = h("div", { class: "step-group" });
     group.append(it.kind === "bee" ? renderBee(it) : renderStep(it));
     if (it.children.length) group.append(renderList(it.children, model, onAction, cardCache, false));
     box.append(group);
   }
   return box;
+}
+
+// What a command printed on a Bee's own computer (Peace "$ …", Rush "everyone run …").
+function renderOutput(ev) {
+  return h("div", { class: `term-out${ev.code ? " bad" : ""}` },
+    h("div", { class: "term-head" }, h("b", {}, ev.bee || "Bee"), h("code", {}, `$ ${ev.command || ""}`),
+      h("span", { class: "exit" }, `exit ${ev.code ?? "?"}`)),
+    h("pre", {}, ev.text || ""));
+}
+
+// Rush: who joined.
+function renderRush(ev) {
+  return h("div", { class: "rush-line" }, h("span", { class: "rush-tag" }, "Rush"), h("span", {}, ev.text || ""),
+    h("span", { class: "rush-bees" }, ...(ev.bees || []).map((b) => h("span", { class: "chip" }, b))));
 }
 
 function renderBee(it) {

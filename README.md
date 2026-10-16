@@ -77,6 +77,12 @@ hive/bee_chat.py  "create a bee called … that …", "give the … bee a large 
 hive/budget.py    GPU Bee budget planner: "I have 1500 INR, which GPU should I rent?" with live or approximate prices
 hive/lpu.py       Virtual LPU: cycle-accurate chip simulator (SRAM, matrix/vector units, links) + deterministic compiler + chip mesh
 hive/lpu_lab.py   "run my model on the lpu / on 8 lpu chips": plan card with compiled cycles, simulation, chip statistics
+hive/modes.py     Rush (every Bee together: fan-out commands, roll call, the board) and Peace (one chat per Bee)
+hive/cloud.py     Real cloud computers per Bee: Hetzner / DigitalOcean, cheapest 8 GB / 40 GB server, SSH, delete on remove
+hive/plan.py      Free / Paid plan (GPUs come with Paid)
+hive/voice.py     Fish Audio: text to speech, speech to text, voice search; voice settings
+hive/calls.py     Calls: "call me …", ringing in the app or a real phone call (Twilio), cards answered by voice
+web/js/voice.js   The call screen, Talk mode, Fish voice playback and listening
 hive/vortex.py    Vortex OS on every Bee's computer: Docker image, local Node process or SSH tunnel; accounts and ports
 drone/drone.py    Termux agent for your phone (served at /drone.py)
 services/         systemd unit to run the gateway 24/7
@@ -103,6 +109,7 @@ the limit it runs under. Everything is measured; what can't be measured says "no
 - **Rented GPUs**: machines billing now with hours and cost so far (hours x the price RunPod reported), and the
   hours and cost of every finished rental, kept after the machine is gone. The invoice on runpod.io is the authority.
 - **Limits**: tokens per message, computer sizes, Bee limits and the upload size.
+- **Plan** (Free / Paid) and **Cloud computers**: each Bee's own cloud server with hours, price and cost so far.
 
 In the chat: **"show my usage"**, **"how many tokens have I used"**, **"what are my limits"**.
 
@@ -130,14 +137,81 @@ python3 .mnx/mnx-bee children
 The key only opens `/bee-api` (create and list its own children); it can't reach your `/api`. Limits stop
 a runaway: 64 Bees in all, 4 generations, 12 children per Bee. Removing a Bee hands its children to its parent.
 
-**Computers** (`hive/bees.py`, `hive/cells.py`): Small (1 CPU, 1 GB), Medium (2, 4), Large (4, 16), XL (8, 32),
-Max (the whole machine), optional GPU. On this server they are Docker limits (`--cpus`, `--memory`,
-`--gpus all`), kept within what the server has; a new size restarts the container and keeps its files.
-Without Docker (a phone, say) the Cell is a folder and limits aren't enforced. On a cloud server (any SSH
-server in the Lab, including rented RunPod machines) the Bee's terminal, commands, jobs and files run over
-SSH in `<server folder>/cells/<bee>`, with the whole machine. A child starts small on its parent's machine.
+**Computers** (`hive/bees.py`, `hive/cells.py`): every Bee gets a **Standard** computer: 2 CPUs, 8 GB RAM and
+40 GB disk. Other sizes: Small (1 CPU, 1 GB, 10 GB), Medium (2, 4, 20), Large (4, 16, 80), XL (8, 32, 160) and
+Max (the whole machine). On this server CPU and memory are Docker limits (`--cpus`, `--memory`), kept within
+what the server has; the disk is watched by the Hive, and a Bee whose files fill its disk can't start jobs until
+some are deleted. A new size restarts the container and keeps its files. Without Docker (a phone, say) the Cell
+is a folder and CPU and memory limits aren't enforced. On a cloud server (any SSH server in the Lab, including
+rented machines) the Bee's terminal, commands, jobs and files run over SSH in `<server folder>/cells/<bee>`,
+with the whole machine. A child gets a Standard computer on its parent's machine. Bees saved on the old Small
+default move up to Standard; a size you chose yourself is kept.
 Every computer runs Vortex OS by default (below); choose Plain Linux (`MNX_CELL_IMAGE`) per Bee instead.
 Set `MNX_PUBLIC_URL` so Bees on remote servers can reach the Hive to make children.
+
+## Rush and Peace: two ways to work with the Bees
+
+The chat has a **Rush · Peace** switch at the top (`hive/modes.py`).
+
+**Rush**: every Bee works together on one page. The Queen gets your message and hands it to all of them at
+once. A board under the top bar has a tile for each Bee showing what it's doing right now, lit while it works.
+- **"everyone run pip install numpy"**, **"all bees run: df -h"**: the same command on every Bee's own computer
+  in parallel (8 at a time), after one confirmation. Each Bee's output appears under its name, with a summary.
+- **"roll call"**, **"everyone report"**: each Bee reports its skill, computer, jobs and children.
+- Everything else the Hive understands (train, create a model, create Bees, cloud computers …) runs with every
+  Bee it needs. With the Mnx brain connected, the Queen splits any goal between the Bees and merges their work.
+
+**Peace**: a separate chat with each Bee, like chatting with one bot. The rail lists the Bees with the last thing
+said; pick one and it answers as itself, under its own badge.
+- **"$ ls -la"**, **"run `df -h`"**: runs on that Bee's own computer.
+- **"who are you"**, **"status"**: its skill, computer, jobs and children.
+- **"create a bee called … that …"**: the new Bee is this Bee's child.
+- Everything else the Hive understands, answered by this Bee. With the brain connected it talks in its own voice.
+
+## Real cloud computers for every Bee
+
+A Bee can have its own machine in the cloud (`hive/cloud.py`): the cheapest server type with at least 8 GB RAM,
+40 GB disk and 2 CPUs, from **Hetzner Cloud** (`HCLOUD_TOKEN`, Singapore first, the nearest to India) or
+**DigitalOcean** (`DIGITALOCEAN_TOKEN`, Bangalore first). Save the token in Cloud Bee · Lab → Secrets, then:
+- **"give every bee a real cloud computer"**, **"give the Scout bee its own cloud computer"**, or *Its own cloud
+  computer* in a Bee's Computer dialog, or *Runs on → Its own cloud computer* when creating a Bee.
+- A card shows the machine, the price per month for all of them (and roughly in rupees) and asks first; it's
+  real money on your account.
+- The Hive starts each server with only its own SSH key allowed (no passwords), Docker and Node.js, waits for
+  SSH, adds it as a Lab server and moves the Bee there (Vortex OS runs on it). If a server can't be reached, it
+  is deleted at once so nothing bills for nothing.
+- **"bring the bees back home"** or removing a Bee deletes its server, so billing stops. The Usage page lists
+  every cloud computer with hours, price per month and cost so far.
+- Provider keys (and the RunPod key) stay with the Hive: they are never passed to training code.
+
+**Plans** (`hive/plan.py`): on **Free** every Bee gets the Standard computer; **Paid** adds GPUs: a GPU on a
+Bee's computer, or **"give the Scout bee a cloud computer with a gpu"** (rented on RunPod after a price card).
+Pick the plan on the Usage page, or lock it with `MNX_PLAN=free|paid`. Payments aren't wired in yet: GPU and
+cloud providers bill your own accounts directly.
+
+## Voice: Fish Audio, Talk mode and calls
+
+The Bees speak with a [Fish Audio](https://fish.audio) voice and hear you with Fish Audio speech to text
+(`hive/voice.py`, `hive/calls.py`, `web/js/voice.js`). In the chat's **Settings → Voice**: paste your Fish Audio
+API key, search fish.audio voices and pick one, choose the model (`s1`, `s2-pro`, `s2.1-pro`) and language.
+The key stays on the server (`data/voice.json`, mode 600); the page only gets the audio.
+
+- **Speak replies aloud**: every answer is read out with the Fish voice.
+- **Talk** (the microphone in the composer): a voice call with the Hive, or in Peace with that Bee. Say what you
+  want; it's run as a Hive request and the answer is spoken. A Hive call works in Rush (every Bee), a Bee's call
+  in that Bee's own chat.
+- **"call me"**, **"call me in 10 minutes"**, **"call me at 9am and remind me to stretch"**, **"have the Cloud bee
+  call me about my training"**, **"call me and tell me how my training is going"** (it finds out when you pick up
+  and says it). Times use your time zone (Settings → Voice, India by default); scheduled calls survive a restart.
+- The call rings on every open Hive page (and a phone running drone.py vibrates). Answer, and the Bee speaks
+  with the Fish voice, listens (it pauses while it speaks, so it doesn't hear itself) and does what you say.
+  Cards are read out: say **"yes"**, **"no"**, or a choice's name ("make it large"); cards that need typing stay
+  on screen. **"Stop"** stops what it's doing, **"bye"** hangs up. You can also type on the call screen.
+- **Real phone calls**: add your number and a Twilio account (SID, auth token, a Twilio number) and set
+  `MNX_PUBLIC_URL` to the Hive's public https address. The Bee then calls your phone; its lines are the Fish
+  Audio MP3s played into the call, and what you say is heard by Twilio's speech recognition. Twilio's webhooks are
+  checked with its signature and each call's own secret. **"call me on my phone"** forces a phone call.
+- Without a Fish Audio key, the browser's own voice and speech recognition stand in (Chrome on Android has both).
 
 ## Vortex OS on every Bee's computer
 
@@ -455,7 +529,7 @@ something to wait for.
 Browser → gateway (WebSocket `/ws`):
 
 ```json
-{"type": "user_message", "chat": "c_…", "task": "t_…", "text": "…"}
+{"type": "user_message", "chat": "c_…", "task": "t_…", "text": "…", "mode": "rush|peace", "bee": "<bee id, Peace only>"}
 {"type": "action", "task": "t_…", "ref": "<card id>", "action": "<button id>", "values": {}}
 {"type": "stop", "task": "t_…"}
 ```
@@ -471,9 +545,12 @@ Send the same `id` again to update a step; set `parent` to nest it under another
 | `clarify` | Form card | `fields: [{name, label, input: text/date/time/select/textarea, options, required}]` |
 | `confirm` | Confirm card | `service`, `details: [[label, value]]`, `actions` |
 | `result` | Success / failed card | `service`, `status`, `details`, `note` |
+| `output` | A command's output on a Bee's computer | `bee`, `command`, `code` |
+| `rush` | "Rush: N Bees on it" with their names | `bees` |
 | `answer` / `answer_delta` | Final answer text (set / stream) | |
 | `task_done` / `task_error` | Ends the task | |
 | `bees_changed` `tools_changed` `bee_status` | Refreshes the Bees panel / tools | |
+| `call` · `call_said` · `call_heard` · `call_event` | The call screen: state, a line the Bee spoke (`n`, `audio`), what you said, the request's steps | `call` |
 
 From Python, a Bee uses the `Task` it is given:
 

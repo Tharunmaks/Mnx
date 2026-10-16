@@ -35,12 +35,21 @@ def reg(tmp_path):
     return r
 
 
+@pytest.fixture
+def paid(tmp_path, monkeypatch):
+    from hive import plan as plan_mod
+    monkeypatch.delenv("MNX_PLAN", raising=False)
+    monkeypatch.setattr(plan_mod.plan, "path", tmp_path / "plan.json")
+    plan_mod.plan.set("paid")
+    return plan_mod.plan
+
+
 def run(coro):
     return asyncio.run(coro)
 
 
 def test_built_ins_are_there_and_saved_bees_load_back(reg, tmp_path):
-    assert reg.get("coding")["builtin"] and reg.get("coding")["computer"]["size"] == "small"
+    assert reg.get("coding")["builtin"] and reg.get("coding")["computer"]["size"] == "standard"
     run(reg.create("Scout", "watches prices"))
     again = Registry(tmp_path / "hive.json", tmp_path / "bee_keys.json")
     assert again.get("scout")["created_by"] == "you" and again.get("scout")["skill"] == "watches prices"
@@ -51,17 +60,17 @@ def test_create_and_family(reg):
     alert = run(reg.create("Price Alert", "sends alerts", created_by="scout"))
     assert scout["computer"]["cpus"] == 4 and scout["computer"]["memory_gb"] == 16
     assert alert["id"] == "price_alert" and alert["created_by"] == "scout"
-    assert alert["computer"]["size"] == "small"  # children start small …
+    assert alert["computer"]["size"] == "standard"  # children get a Standard computer …
     assert [c["id"] for c in reg.children("scout")] == ["price_alert"]
     assert reg.depth("price_alert") == 2 and reg.calls["created"] == ["scout", "price_alert"]
     view = reg.view(alert)
-    assert view["parent_name"] == "Scout" and "Small" in view["computer_text"]
+    assert view["parent_name"] == "Scout" and "Standard · 2 CPUs, 8 GB RAM, 40 GB disk" in view["computer_text"]
 
 
 def test_children_start_on_their_parents_machine(reg):
     run(reg.create("Big", "does heavy work", computer={"size": "xl", "where": "gpu-box"}))
     kid = run(reg.create("Kid", "helps", created_by="big"))
-    assert kid["computer"]["where"] == "gpu-box" and kid["computer"]["size"] == "small"
+    assert kid["computer"]["where"] == "gpu-box" and kid["computer"]["size"] == "standard"
 
 
 def test_built_in_bees_can_make_bees(reg):
@@ -112,7 +121,7 @@ def test_keys_are_secret_per_bee_and_stored_owner_only(reg, tmp_path):
     assert "key" not in reg.view(reg.get("scout")) and k1 not in json.dumps(reg.view(reg.get("scout")))
 
 
-def test_computers(reg):
+def test_computers(reg, paid):
     assert normalize_computer({"size": "max"})["cpus"] is None
     assert normalize_computer({"cpus": 3})["size"] == "custom"
     with pytest.raises(BeeError):
@@ -123,7 +132,7 @@ def test_computers(reg):
     b = run(reg.set_computer("scout", {"size": "xl", "gpu": True}))
     assert b["computer"]["cpus"] == 8 and b["computer"]["gpu"]
     (bee_id, old, new), = reg.calls["computer"]
-    assert bee_id == "scout" and old["size"] == "small" and new["size"] == "xl"
+    assert bee_id == "scout" and old["size"] == "standard" and new["size"] == "xl"
 
 
 def test_a_failed_move_keeps_the_old_computer(reg):
@@ -238,7 +247,7 @@ def test_not_bee_phrases(text):
 
 def test_cloud_and_gpu_bees_default_to_the_whole_machine(reg, tmp_path):
     assert reg.get("cloud")["computer"]["size"] == "max" and reg.get("gpu")["computer"]["size"] == "max"
-    assert reg.get("cloud")["computer"]["cpus"] is None and reg.get("coding")["computer"]["size"] == "small"
+    assert reg.get("cloud")["computer"]["cpus"] is None and reg.get("coding")["computer"]["size"] == "standard"
     assert "whole machine" in reg.view(reg.get("gpu"))["computer_text"]
 
 
@@ -250,7 +259,7 @@ def test_saved_built_ins_follow_the_default_until_you_choose(tmp_path):
         b["computer"] = bees.default_computer()
     old.save()
     again = Registry(state, keys)
-    assert again.get("cloud")["computer"]["size"] == "max" and again.get("coding")["computer"]["size"] == "small"
+    assert again.get("cloud")["computer"]["size"] == "max" and again.get("coding")["computer"]["size"] == "standard"
     # you choose Small for Cloud on purpose: that sticks
     run(again.set_computer("cloud", {"size": "small"}))
     assert Registry(state, keys).get("cloud")["computer"]["size"] == "small"

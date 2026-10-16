@@ -4,6 +4,7 @@ import {
   HiveClient, ICONS, api, beeHex, connLabel, fillIcons, fmtDuration, fmtSize, gatewayBase, getSettings, h,
   installTokenPrompt, toast, uploadFile,
 } from "./shared.js";
+import { installVoice } from "./voice.js";
 import { drawCharts, playgroundFor, forgetPlayground } from "./labui.js";
 
 const $ = (id) => document.getElementById(id);
@@ -504,6 +505,7 @@ $("secretForm").addEventListener("submit", async (e) => {
 
 // ---------- live updates ----------
 const client = new HiveClient();
+installVoice(client); // a Bee's call rings on this page too
 client.addEventListener("state", (e) => { connLabel($("conn"), e.detail); if (e.detail === "online") load(); });
 client.addEventListener("event", (e) => { if (e.detail.type === "lab_changed") loadSoon(); });
 client.connect();

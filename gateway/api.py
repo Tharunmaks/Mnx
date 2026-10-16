@@ -34,7 +34,10 @@ import os
 from hive.connectors import LANES, LAYERS, hub
 from hive.core import Task, now
 from hive.lab import lab
-from hive import system, usage
+from hive import cloud, system, usage
+from hive.plan import plan
+from hive.calls import calls, twilio_signature_ok
+from hive.voice import VoiceError, voice
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -53,7 +56,8 @@ def bee_view(b: dict) -> dict:
     training = b["id"] == "cloud" and any(r["status"] in ("queued", "preparing", "running") for r in lab.runs.values())
     st = BEE_STATUS.get(b["id"]) or status.busy.get(b["id"]) or ("busy" if training else None) or cells.busy(b["id"]) or ("scheduled" if b.get("schedule") else "idle")
     cell = cells.cells.get(b["id"])
-    return {**registry.view(b), "status": st, "cell": cell.view() if cell else None}
+    return {**registry.view(b), "status": st, "cell": cell.view() if cell else None,
+            "cloud_machine": cloud.machines.for_bee(b["id"]), "cloud_starting": b["id"] in CLOUD_JOBS}
 
 
 # ---------- each Bee's computer: here, or on a cloud server the Lab reaches over SSH ----------
@@ -97,12 +101,23 @@ async def _bee_created(b: dict) -> None:
 
 async def _bee_deleted(b: dict) -> None:
     await cells.remove(b["id"])
+    try:
+        await cloud.machines.release_bee(b["id"])  # its own cloud server goes too: billing stops
+    except cloud.CloudError as exc:
+        log(b["name"], "cloud_error", f"its cloud server wasn't deleted: {exc}")
     log(b["name"], "cell_deleted", "computer, files, browser storage and jobs removed")
     await broadcast({"type": "bees_changed"})
 
 
 async def _bee_computer(b: dict, old: dict) -> None:
     await cells.reconfigure(b["id"], b["name"], b["computer"], old)
+    if old.get("cloud") and b["computer"].get("where") != old.get("where"):  # moved off its own cloud server
+        b["computer"].pop("cloud", None)
+        registry.save()
+        try:
+            await cloud.machines.release(old["cloud"])
+        except cloud.CloudError as exc:
+            log(b["name"], "cloud_error", f"its old cloud server wasn't deleted: {exc}")
     log(b["name"], "computer", registry.view(b)["computer_text"])
     await broadcast({"type": "bees_changed", "bee": b["id"]})
 
@@ -135,7 +150,11 @@ async def lifespan(app: FastAPI):
     status.on_change = lambda: loop.create_task(broadcast({"type": "bees_changed"}))
     await lab.start()
     prepull = asyncio.create_task(_prepull_images())
+    cloud.machines.on_change = lambda: loop.create_task(broadcast({"type": "bees_changed"}))
+    calls.broadcast, calls.run, calls.notify_phones = broadcast, run_task, _ring_phones
+    calls.start_loop()
     yield
+    calls.stop_loop()
     health.cancel()
     prepull.cancel()
     await lab.shutdown()
@@ -338,7 +357,91 @@ async def usage_report():
                     "recent": past[-8:][::-1],
                     "note": "Cost is hours x the price RunPod reported for that machine; the invoice on runpod.io is the authority."},
         "limits": {"efforts": efforts, "sizes": SIZES, "upload_mb": 200, "file_mb": 200},
+        "plan": plan.view(),
+        "cloud": _cloud_view(),
     }
+
+
+def _cloud_view() -> dict:
+    ms = cloud.machines.views()
+    return {"providers": [{"id": k, "label": v.label, "secret": v.secret, "connected": k in cloud.machines.configured()}
+                          for k, v in cloud.PROVIDERS.items()],
+            "machines": ms, "month": round(sum(m["price_month"] for m in ms), 2),
+            "currencies": sorted({m["currency"] for m in ms}),
+            "note": "Cost is hours x the price the provider listed; its invoice is the authority."}
+
+
+# ---------- plan (Free / Paid) and real cloud computers ----------
+class PlanBody(BaseModel):
+    plan: str = Field(max_length=12)
+
+
+@api.get("/plan")
+def get_plan():
+    return plan.view()
+
+
+@api.put("/plan")
+async def set_plan(body: PlanBody):
+    try:
+        plan.set(body.plan)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await broadcast({"type": "plan_changed"})
+    return plan.view()
+
+
+@api.get("/cloud")
+def cloud_status():
+    return _cloud_view()
+
+
+@api.get("/cloud/quote")
+async def cloud_quote(provider: str | None = None):
+    try:
+        q = await cloud.machines.quote(provider or None)
+    except cloud.CloudError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {**q, "text": cloud.describe_quote(q), "inr_month": cloud.to_rupees(q["price_month"], q["currency"])}
+
+
+CLOUD_JOBS: dict[str, asyncio.Task] = {}
+
+
+@api.post("/bees/{bee_id}/cloud")
+async def bee_cloud(bee_id: str, provider: str | None = None):
+    """Give the Bee its own cloud computer (8 GB RAM, 40 GB disk). Starts in the background; takes a few minutes."""
+    b = registry.get(bee_id)
+    if not b:
+        raise HTTPException(404, "No such Bee")
+    if cloud.machines.for_bee(bee_id) or bee_id in CLOUD_JOBS:
+        raise HTTPException(409, "This Bee already has a cloud computer (or one is starting)")
+    try:
+        q = await cloud.machines.quote(provider or None)
+    except cloud.CloudError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    async def go():
+        try:
+            await cloud.give_bee(bee_id, q)
+            log(b["name"], "cloud", f"moved to its own cloud computer: {cloud.describe_quote(q)}")
+        except Exception as exc:
+            log(b["name"], "cloud_error", str(exc))
+            await broadcast({"type": "cloud_error", "bee": bee_id, "text": str(exc)[:300]})
+        finally:
+            CLOUD_JOBS.pop(bee_id, None)
+            await broadcast({"type": "bees_changed", "bee": bee_id})
+    CLOUD_JOBS[bee_id] = asyncio.create_task(go())
+    return {"ok": True, "starting": cloud.describe_quote(q)}
+
+
+@api.delete("/bees/{bee_id}/cloud")
+async def bee_cloud_release(bee_id: str):
+    try:
+        await cloud.take_back(bee_id)
+    except (cloud.CloudError, BeeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return bee_view(registry.get(bee_id)) if registry.get(bee_id) else {"ok": True}
 
 
 # ---------- Bees ----------
@@ -352,6 +455,7 @@ class Computer(BaseModel):
     size: str | None = Field(default=None, max_length=12)
     cpus: float | None = None
     memory_gb: float | None = None
+    disk_gb: float | None = None
     gpu: bool | None = None
     where: str | None = Field(default=None, max_length=48)
 
@@ -405,7 +509,7 @@ def computer_options():
         servers.append({"id": t["id"], "name": t["name"], "cpus": info.get("cpus"), "memory_gb": round(int(info.get("ram_mb") or 0) / 1024, 1) or None,
                         "gpu": bool(t.get("gpu")), "gpus": info.get("gpus") or [], "status": t.get("status")})
     from hive.bees import OS_CHOICES
-    return {"sizes": SIZES, "servers": servers, "cell_mode": cells.mode, "os": OS_CHOICES,
+    return {"sizes": SIZES, "servers": servers, "cell_mode": cells.mode, "os": OS_CHOICES, "cloud": cloud.machines.configured(), "plan": plan.view(),
             "limits": "enforced" if cells.mode == "docker" else "not enforced on this server (no Docker); remote servers give the whole machine"}
 
 
@@ -1308,7 +1412,6 @@ def effort_levels():
     return {"levels": effort.listing(), "default": effort.DEFAULT, "maxxxx_bonus": effort.MAXXXX_BONUS}
 
 
-app.include_router(api)
 
 
 # ---------- WebSockets ----------
@@ -1423,7 +1526,8 @@ async def ws_endpoint(ws: WebSocket):
                 if not text:
                     continue
                 task_id = str(msg.get("task") or f"t_{uuid.uuid4().hex[:10]}")[:40]
-                task = Task(task_id, str(msg.get("chat", ""))[:40], text, emit, effort=str(msg.get("effort") or "")[:12])
+                task = Task(task_id, str(msg.get("chat", ""))[:40], text, emit, effort=str(msg.get("effort") or "")[:12],
+                            bee=str(msg.get("bee") or "")[:40] or None, mode=str(msg.get("mode") or "")[:8])
                 TASKS[task_id] = (task, asyncio.create_task(run_task(task)))
 
             elif kind == "action":
@@ -1461,6 +1565,168 @@ async def _run_task(task: Task) -> None:
         await task.emit("task_error", f"The Hive hit an error: {exc}")
     finally:
         TASKS.pop(task.id, None)
+
+
+# ---------- voice (Fish Audio) and calls ----------
+async def _ring_phones(call) -> None:
+    """A paired phone (drone.py) vibrates and shows who's calling; it opens the Hive when MNX_PUBLIC_URL is set."""
+    for p in list(phone.PHONES.values()):
+        for cmd, args in (("vibrate", {"ms": 1200}), ("toast", {"text": f"📞 {call.bee} Bee is calling you. Open the Hive to answer."})):
+            if cmd in p.capabilities:
+                try:
+                    await p.call(cmd, args, timeout=10)
+                except Exception:
+                    pass
+
+
+@api.get("/voice")
+def voice_settings():
+    return voice.view()
+
+
+@api.put("/voice")
+async def voice_update(body: dict):
+    try:
+        return voice.update(body)
+    except (VoiceError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+class SpeakBody(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+@api.post("/voice/tts")
+async def voice_tts(body: SpeakBody):
+    """Read text aloud with the Fish Audio voice (MP3). 409 when no Fish Audio key is set: the browser speaks instead."""
+    if not voice.fish_ready:
+        raise HTTPException(409, "No Fish Audio key yet (Settings → Voice)")
+    try:
+        audio = await voice.tts(body.text)
+    except (VoiceError, httpx.HTTPError) as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return Response(audio, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+
+
+@api.post("/voice/asr")
+async def voice_asr(request: Request):
+    """Speech to text with Fish Audio. Body: the recording (webm / ogg / wav / mp3)."""
+    if not voice.fish_ready:
+        raise HTTPException(409, "No Fish Audio key yet (Settings → Voice)")
+    audio = await request.body()
+    try:
+        return {"text": await voice.asr(audio, request.query_params.get("language"))}
+    except (VoiceError, httpx.HTTPError) as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@api.get("/voice/voices")
+async def voice_list(q: str = ""):
+    try:
+        return await voice.voices(q)
+    except (VoiceError, httpx.HTTPError) as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+class NewCall(BaseModel):
+    bee: str | None = Field(default=None, max_length=40)
+    reason: str = Field(default="", max_length=500)
+    request: str = Field(default="", max_length=500)
+    in_minutes: float | None = Field(default=None, ge=0, le=60 * 24 * 30)
+    channel: str = Field(default="auto", max_length=8)
+    answer: bool = False  # Talk mode: you start it in the app, so it's picked up already
+
+
+@api.get("/calls")
+def list_calls():
+    return calls.views()
+
+
+@api.post("/calls")
+async def new_call(body: NewCall):
+    if body.bee and not registry.get(body.bee):
+        raise HTTPException(404, "No such Bee")
+    at = time.time() + body.in_minutes * 60 if body.in_minutes else None
+    call = await calls.start(body.bee, body.reason, at, body.channel, answer=body.answer, talk=body.answer, request=body.request)
+    return call.view()
+
+
+def _call(call_id: str):
+    try:
+        return calls.get(call_id)
+    except KeyError as exc:
+        raise HTTPException(404, "No such call") from exc
+
+
+@api.get("/calls/{call_id}")
+def get_call(call_id: str):
+    return _call(call_id).view()
+
+
+@api.post("/calls/{call_id}/{what}")
+async def call_action(call_id: str, what: str, request: Request):
+    """answer · decline · hangup · say {text} · listen (body: a recording) · card {action, values}"""
+    call = _call(call_id)
+    try:
+        if what == "answer":
+            await calls.answer(call_id)
+        elif what == "decline":
+            await calls.decline(call_id)
+        elif what == "hangup":
+            await calls.hangup(call_id)
+        elif what == "say":
+            body = await request.json()
+            await calls.heard(call_id, str(body.get("text") or "")[:2000])
+        elif what == "listen":
+            text = await voice.asr(await request.body(), request.query_params.get("language"))
+            if text:
+                await calls.heard(call_id, text)
+            return {"text": text}
+        elif what == "card":
+            body = await request.json()
+            await calls.tap(call_id, str(body.get("action") or ""), body.get("values") if isinstance(body.get("values"), dict) else {})
+        else:
+            raise HTTPException(404, "Unknown call action")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (VoiceError, httpx.HTTPError) as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return call.view()
+
+
+@api.get("/calls/{call_id}/audio/{n}")
+def call_audio(call_id: str, n: int):
+    try:
+        return Response(calls.audio_for(call_id, n), media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=3600"})
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+# Twilio reaches these from the internet (a real phone call): no Hive token, but each call's own secret in the path,
+# and Twilio's signature on every webhook.
+@app.post("/voice/twilio/{call_id}/{secret}/{step}")
+async def twilio_hook(call_id: str, secret: str, step: str, request: Request):
+    try:
+        call = calls.check(call_id, secret)
+    except KeyError as exc:
+        raise HTTPException(404, "No such call") from exc
+    if step not in ("start", "heard", "wait", "status"):
+        raise HTTPException(404, "Unknown step")
+    from urllib.parse import parse_qsl
+    form = dict(parse_qsl((await request.body()).decode(errors="replace"), keep_blank_values=True))
+    url = f"{os.getenv('MNX_PUBLIC_URL', '').rstrip('/')}{request.url.path}"
+    if not twilio_signature_ok(url, form, request.headers.get("x-twilio-signature", ""), voice.s["twilio_token"]):
+        raise HTTPException(403, "Bad Twilio signature")
+    return Response(await calls.twilio(call, step, form), media_type="application/xml")
+
+
+@app.get("/voice/twilio/{call_id}/{secret}/audio/{n}.mp3")
+def twilio_audio(call_id: str, secret: str, n: int):
+    try:
+        calls.check(call_id, secret)
+        return Response(calls.audio_for(call_id, n), media_type="audio/mpeg")
+    except KeyError as exc:
+        raise HTTPException(404, "No such audio") from exc
 
 
 # ---------- web app ----------
@@ -1523,4 +1789,5 @@ def index():
     return FileResponse(WEB / "index.html")
 
 
+app.include_router(api)  # last, so every /api route above is in it
 app.mount("/", StaticFiles(directory=WEB, html=True), name="web")

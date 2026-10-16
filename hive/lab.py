@@ -170,6 +170,10 @@ def coerce_params(recipe: dict, given: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+# Keys the Hive itself uses to rent machines: never handed to training code.
+HIVE_ONLY_SECRETS = {"RUNPOD_API_KEY", "HCLOUD_TOKEN", "DIGITALOCEAN_TOKEN"}
+
+
 class Lab:
     def __init__(self) -> None:
         for d in (RUNS, MODELS, KEYS):
@@ -399,8 +403,9 @@ class Lab:
         (job / "params.json").write_text(json.dumps(params, indent=2))
         (job / "run.sh").write_text(RUN_SH)
         (job / "launch.sh").write_text(LAUNCH_SH)
-        if self._secrets:
-            env = "".join(f"{k}={shlex.quote(v)}\n" for k, v in self._secrets.items())
+        run_secrets = {k: v for k, v in self._secrets.items() if k not in HIVE_ONLY_SECRETS}
+        if run_secrets:
+            env = "".join(f"{k}={shlex.quote(v)}\n" for k, v in run_secrets.items())
             (job / ".env").write_text(env)
             os.chmod(job / ".env", 0o600)
         run = {
