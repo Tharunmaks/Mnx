@@ -5,3 +5,4 @@ mcp>=1.10
 playwright>=1.45
 numpy>=1.26
 tokenizers>=0.19
+gdown>=5.2  # downloads your models from Google Drive (pure Python)

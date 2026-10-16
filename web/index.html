@@ -82,7 +82,7 @@
         <textarea id="input" rows="1" placeholder="Ask the Hive anything…" autocomplete="off"></textarea>
         <div class="composer-row">
           <button type="button" class="icon-btn" id="attach" aria-label="Attach file" title="Attachments come later"><span data-icon="clip"></span></button>
-          <button type="button" class="model-pill" id="modelPill" title="Model"><span id="pillLogo"></span><span id="modelName">Mnx 3B</span></button>
+          <button type="button" class="model-pill" id="modelPill" title="Your models"><span id="pillLogo"></span><span id="modelName">Models</span></button>
           <select class="effort-pill" id="effortPill" aria-label="Effort" title="Effort: how hard the Hive works and how many tokens it may spend"></select>
           <span class="token-count" id="tokenCount" title="Token reading: this message / budget for the effort level"></span>
           <button type="button" class="icon-btn talk-btn" id="talkBtn" aria-label="Talk" title="Talk: a voice call with the Hive (Fish Audio voice)"><span data-icon="mic"></span></button>
@@ -106,9 +106,6 @@
     <div class="dlg-body">
       <label class="field">Your name
         <input name="name" id="setName" placeholder="What should Mnx call you?" maxlength="40">
-      </label>
-      <label class="field">Model label
-        <input name="model" placeholder="Mnx 3B" maxlength="30">
       </label>
       <label class="field">Gateway URL
         <input name="gateway" placeholder="Same server as this page" inputmode="url">
@@ -165,6 +162,16 @@
     <div class="dlg-foot">
       <button class="btn" value="cancel">Cancel</button>
       <button class="btn primary" value="save" id="saveSettings">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="modelsDlg" class="wide-dlg">
+  <form method="dialog">
+    <div class="dlg-head"><h2>Your models</h2><button class="icon-btn" value="cancel" aria-label="Close"><span data-icon="close"></span></button></div>
+    <div class="dlg-body">
+      <p class="hint" id="modelsHint"></p>
+      <div class="model-list" id="modelList"></div>
     </div>
   </form>
 </dialog>

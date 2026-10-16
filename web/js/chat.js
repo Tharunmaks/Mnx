@@ -8,6 +8,7 @@ import {
 } from "./shared.js";
 import { buildModel, renderRun } from "./render.js";
 import { askNotifications, installVoice, speak, startTalk, stopSpeaking } from "./voice.js";
+import { openModels, refreshModelPill } from "./models.js";
 
 const $ = (id) => document.getElementById(id);
 const CHATS_KEY = "mnx.chats";
@@ -87,6 +88,7 @@ client.addEventListener("event", (e) => {
   if (ev.bee) boardEvent(ev);
   if (ev.type === "task_done" || ev.type === "task_error") boardSettle();
   if (ev.type === "tools_changed" || ev.type === "phones_changed") { loadTools(); return; }
+  if (ev.type === "models_changed") { refreshModelPill(); return; }
   if (!ev.task) return;
   const found = findTurn(ev.task);
   if (!found) return;
@@ -97,8 +99,7 @@ client.addEventListener("event", (e) => {
   found.chat.updated = Date.now();
   saveChats();
   if (found.chat.id === activeId) {
-    rerenderTurn(found.turn);
-    updateSendState();
+    scheduleRender(found.turn);
   }
 });
 
@@ -138,7 +139,7 @@ function send(text) {
     );
   }
   saveChats();
-  renderAll();
+  renderAll(true);
 }
 
 // Peace: the last turns of this chat, so a bot with a brain knows what was said.
@@ -182,7 +183,7 @@ function stop() {
 }
 
 // ---------- rendering ----------
-function renderAll() {
+function renderAll(smooth = false) {
   const chat = activeChat();
   const hasTurns = chat && chat.turns.length;
   $("welcome").classList.toggle("hidden", !!hasTurns);
@@ -212,10 +213,11 @@ function renderAll() {
   runs.clear();
   if (chat) {
     for (const turn of chat.turns) {
+      const fresh = turn.at && Date.now() - Date.parse(turn.at) < 1500 || (turn.task && !turn.events.length);
       if (turn.role === "user") {
-        thread.append(h("div", { class: "msg-user" }, h("div", { class: "bubble" }, turn.text)));
+        thread.append(h("div", { class: `msg-user${fresh ? " enter" : ""}` }, h("div", { class: "bubble" }, turn.text)));
       } else {
-        const slot = h("div");
+        const slot = h("div", { class: fresh ? "enter" : "" });
         thread.append(slot);
         runs.set(turn.task, { el: slot, cardCache: new Map() });
         rerenderTurn(turn, false);
@@ -224,7 +226,20 @@ function renderAll() {
   }
   renderHistory();
   updateSendState();
-  scrollDown(true);
+  scrollDown(true, smooth);
+}
+
+// Replies stream many events a second: draw each turn at most once per frame, so the page stays smooth.
+const pendingTurns = new Set();
+let frame = 0;
+function scheduleRender(turn) {
+  pendingTurns.add(turn);
+  if (!frame) frame = requestAnimationFrame(() => {
+    frame = 0;
+    for (const t of pendingTurns) rerenderTurn(t);
+    pendingTurns.clear();
+    updateSendState();
+  });
 }
 
 function rerenderTurn(turn, scroll = true) {
@@ -246,9 +261,9 @@ function isNearBottom() {
   const s = $("scroll");
   return s.scrollHeight - s.scrollTop - s.clientHeight < 120;
 }
-function scrollDown(force) {
+function scrollDown(force, smooth = false) {
   const s = $("scroll");
-  if (force || isNearBottom()) requestAnimationFrame(() => { s.scrollTop = s.scrollHeight; });
+  if (force || isNearBottom()) requestAnimationFrame(() => s.scrollTo({ top: s.scrollHeight, behavior: smooth ? "smooth" : "auto" }));
 }
 
 function renderHistory() {
@@ -356,7 +371,7 @@ function applyProfile() {
   const name = s.name.trim();
   $("avatar").textContent = name ? name.charAt(0).toUpperCase() : "?";
   $("profileName").textContent = name || "Profile";
-  $("modelName").textContent = s.model || "Mnx 3B";
+  refreshModelPill();
 }
 applyProfile();
 
@@ -372,7 +387,6 @@ function openSettings(focusName) {
   const f = $("settingsForm");
   const s = getSettings();
   f.name.value = s.name;
-  f.model.value = s.model;
   f.gateway.value = s.gateway;
   f.token.value = s.token;
   f.enterToSend.checked = s.enterToSend;
@@ -385,7 +399,7 @@ function openSettings(focusName) {
 }
 $("openSettings").addEventListener("click", () => openSettings(false));
 $("openProfile").addEventListener("click", () => openSettings(true));
-$("modelPill").addEventListener("click", () => openSettings(false));
+$("modelPill").addEventListener("click", openModels);
 $("settingsDlg").addEventListener("close", () => {
   if ($("settingsDlg").returnValue !== "save") return;
   const f = $("settingsForm");
@@ -393,7 +407,6 @@ $("settingsDlg").addEventListener("close", () => {
   saveSettings({
     token: f.token.value.trim(),
     name: f.name.value.trim(),
-    model: f.model.value.trim() || "Mnx 3B",
     gateway: f.gateway.value.trim(),
     enterToSend: f.enterToSend.checked,
     effort: f.effort.value,

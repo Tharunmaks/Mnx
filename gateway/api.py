@@ -161,7 +161,10 @@ async def lifespan(app: FastAPI):
     gpu.deliver = _deliver_gpu_output
     gpu.on_change = lambda: loop.create_task(broadcast({"type": "gpu_changed"}))
     gpu.resume()
+    from hive.models import models as _mnx_models
+    _mnx_models.on_change = lambda: loop.create_task(broadcast({"type": "models_changed"}))
     yield
+    await _mnx_models.stop_all()
     calls.stop_loop()
     health.cancel()
     prepull.cancel()
@@ -1908,6 +1911,67 @@ def free_server_remove(tid: str):
         raise HTTPException(409, "Bees still run on it; move them home first (“bring the bees back home”)")
     lab.remove_target(tid)
     return {"ok": True}
+
+
+# ---------- your Mnx models (Google Drive → this machine → the brain) ----------
+def _models():
+    from hive.models import ModelError, models
+    return models, ModelError
+
+
+@api.get("/models")
+def list_models(request: Request):
+    m, _ = _models()
+    return m.view(owner=_is_owner(request))
+
+
+class ModelLink(BaseModel):
+    link: str = Field(min_length=10, max_length=500)
+
+
+@api.put("/models/{model_id}/source", dependencies=[Depends(auth.require_owner)])
+def model_source(model_id: str, body: ModelLink):
+    m, ModelError = _models()
+    try:
+        m.set_source(model_id, body.link)
+    except ModelError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True}
+
+
+class ModelCommand(BaseModel):
+    command: str = Field(min_length=1, max_length=1000)
+    port: int = Field(default=8000, ge=1, le=65535)
+
+
+@api.put("/models/{model_id}/command", dependencies=[Depends(auth.require_owner)])
+def model_command(model_id: str, body: ModelCommand):
+    m, ModelError = _models()
+    try:
+        m.set_command(model_id, body.command, body.port)
+    except ModelError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True}
+
+
+@api.post("/models/{model_id}/{action}", dependencies=[Depends(auth.require_owner)])
+async def model_action(model_id: str, action: str):
+    m, ModelError = _models()
+    try:
+        if action == "download":
+            m.download(model_id)
+        elif action == "start":
+            await m.start(model_id, use=True)
+        elif action == "stop":
+            await m.stop(model_id)
+        elif action == "delete":
+            m.delete(model_id)
+        else:
+            raise HTTPException(404, "Unknown action")
+    except ModelError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await broadcast({"type": "models_changed"})
+    return {"ok": True, "models": m.view(owner=True)}
 
 
 # ---------- voice (Fish Audio) and calls ----------

@@ -64,7 +64,7 @@ class Brain:
             v = str(change[k]).strip()
             if k == "key" and v == "":
                 continue  # empty keeps the saved key; "-" clears it
-            if k == "url" and v and not v.startswith(("http://", "https://")):
+            if k == "url" and v and v != "-" and not v.startswith(("http://", "https://")):
                 raise ValueError("The brain URL starts with http:// or https://")
             self.cfg[k] = "" if v == "-" else v[:300]
         self.path.parent.mkdir(parents=True, exist_ok=True)
