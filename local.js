@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { CODE_RUNNER, runTool } from "./tools.js";
 import { MORE_TOOLS, MORE_NAMES, memoryPrompt } from "./tools-more.js";
@@ -21,9 +22,19 @@ const ON_ANDROID = process.platform === "android" || !!process.env.TERMUX_VERSIO
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // MNX_LOCAL_MODEL, else the first .gguf in models/ (preferring mnx*).
+// Tharun's own Mnx 7B (a folder with core_only.pt + table.bin), run by mnx7b/run.py.
+export function isMnx7B(p) {
+  try {
+    return fs.statSync(p).isDirectory() && fs.existsSync(path.join(p, "core_only.pt")) && fs.existsSync(path.join(p, "table.bin"));
+  } catch {
+    return false;
+  }
+}
+
 export function localModelPath(baseDir) {
   if (process.env.MNX_LOCAL_MODEL) return path.resolve(baseDir, process.env.MNX_LOCAL_MODEL);
   const dir = path.join(baseDir, "models");
+  if (isMnx7B(path.join(dir, "mnx7b"))) return path.join(dir, "mnx7b");
   let files = [];
   try {
     // Skip Git LFS placeholder files (small text pointers left when the
@@ -51,6 +62,7 @@ export function localModelPath(baseDir) {
 }
 
 export function localModelLabel(file) {
+  if (isMnx7B(file)) return "Mnx 7B (your model)";
   const name = path.basename(file).replace(/\.gguf$/i, "");
   if (/^mnx/i.test(name)) return "Local (your model)";
   const m = name.match(/(llama|qwen|gemma|phi|mistral)[-_]?(\d+(?:\.\d+)?)?[-_]?(\d+(?:\.\d+)?b)?/i);
@@ -175,8 +187,9 @@ let serverStart = null;
 async function ensureLlamaServer(file) {
   if (process.env.MNX_LLAMA_SERVER) return process.env.MNX_LLAMA_SERVER.replace(/\/+$/, "");
   serverStart ||= (async () => {
-    const bin = process.env.MNX_LLAMA_SERVER_BIN || findOnPath("llama-server");
-    if (!bin) throw new Error("llama-server wasn't found. On Termux run: pkg install llama-cpp");
+    const own = isMnx7B(file);
+    const bin = own ? findOnPath("python3") || findOnPath("python") : process.env.MNX_LLAMA_SERVER_BIN || findOnPath("llama-server");
+    if (!bin) throw new Error(own ? "Python wasn't found. On Termux run: pkg install python python-numpy" : "llama-server wasn't found. On Termux run: pkg install llama-cpp");
     // Android can kill Mnx without warning, leaving an old llama-server
     // running. Reuse it if it has this model loaded; otherwise find a free port.
     let port = Number(process.env.MNX_LLAMA_PORT) || 8089;
@@ -188,10 +201,12 @@ async function ensureLlamaServer(file) {
         return `http://127.0.0.1:${port}`;
       }
     }
-    const args = ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || 8192), "-np", "1"];
+    const args = own
+      ? [path.join(path.dirname(fileURLToPath(import.meta.url)), "mnx7b", "run.py"), "-m", file, "--host", "127.0.0.1", "--port", String(port)]
+      : ["-m", file, "--host", "127.0.0.1", "--port", String(port), "-c", String(Number(process.env.MNX_CTX) || 8192), "-np", "1"];
     if (process.env.MNX_THREADS) args.push("-t", process.env.MNX_THREADS);
     else if (ON_ANDROID) args.push("-t", String(fastCores()));
-    if (process.env.MNX_GPU_LAYERS) args.push("-ngl", process.env.MNX_GPU_LAYERS); // e.g. 99 on a GPU machine
+    if (process.env.MNX_GPU_LAYERS && !own) args.push("-ngl", process.env.MNX_GPU_LAYERS); // e.g. 99 on a GPU machine
     console.log(`[local] starting ${bin} ${args.join(" ")}`);
     setStatus("loading");
     const child = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
@@ -349,7 +364,7 @@ async function generateViaServerOnce(file, history, prompt, onChunk, signal) {
 
 let useServer = ON_ANDROID || !!process.env.MNX_LLAMA_SERVER || process.env.MNX_LOCAL_BACKEND === "server";
 async function generate(file, history, prompt, onChunk, signal) {
-  if (!useServer) {
+  if (!useServer && !isMnx7B(file)) {
     try {
       return await generateInProcess(file, history, prompt, onChunk, signal);
     } catch (err) {
@@ -717,7 +732,7 @@ export function parseToolCall(raw) {
 // Start the model and process the system prompt in the background, so the
 // first message doesn't wait for it. Used on the llama-server backend.
 export async function warmUpLocal(file) {
-  if (!useServer || !file || !fs.existsSync(file)) return false;
+  if ((!useServer && !isMnx7B(file)) || !file || !fs.existsSync(file)) return false;
   return exclusive(async () => {
     const t0 = Date.now();
     try {

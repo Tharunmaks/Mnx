@@ -14,7 +14,8 @@
     "eval": "node training/eval.mjs",
     "soak": "node training/soak.mjs",
     "fast-model": "bash scripts/make-fast-model.sh",
-    "learn": "node scripts/learn.mjs"
+    "learn": "node scripts/learn.mjs",
+    "get-mnx7b": "bash scripts/get-mnx7b.sh"
   },
   "repository": {
     "type": "git",

@@ -45,6 +45,25 @@ Get the model into `models/` by one of these:
 - `npm run get-model -- <google-drive-link>`. The file must be shared as "Anyone with the link".
 - Copy the file in by hand.
 
+### Your own Mnx 7B
+
+Mnx runs **Mnx 7B**, the model you trained from scratch: a 126M-parameter transformer core plus 6.9B parameters of hashed n-gram experts (`mnx7b/run.py`). It needs only Python and numpy, no PyTorch and no GPU. The 13.7 GB expert table is read straight from storage, a few rows per word, so it uses little RAM (about 1 GB).
+
+```bash
+pkg install rclone python-numpy        # Termux (on a computer: install rclone and numpy)
+rclone config                          # one time: new remote "gdrive", type drive, sign in
+npm run get-mnx7b                      # downloads your model from Drive (~14.3 GB), checks every md5, joins it
+npm start                              # shows up as "Mnx 7B (your model)"
+```
+
+- The download goes one part at a time and needs about 15 GB of free storage. If it stops, run it again to continue.
+- Try it without the app: `python3 mnx7b/run.py -m models/mnx7b --prompt "Hello!"`.
+- **Tokenizer:** the script looks for `tok16k.json` in your dataset archive. If it isn't there, copy it from the machine you trained on (`/workspace/mnx/tok16k.json`) to `models/mnx7b/`.
+- **Mnx 7B chats but doesn't use tools.** It was trained on plain `<user>` / `<mnx>` conversations, not on Mnx's tool format, so weather, search, slides and the quick tools need the Qwen-based model or an online model.
+- To use another local model instead, set `MNX_LOCAL_MODEL=models/mnx-q4_k_m.gguf`.
+
+The test `test/mnx7b.test.mjs` checks `run.py` against your original PyTorch training code (`train.py`) on a tiny model of the same architecture. The logits match to about 1e-5, the expert hashes match exactly (including integer overflow at the full 16k vocabulary), and the tokenizer matches too.
+
 ### On your Android phone (Termux)
 
 1. Install **Termux** from F-Droid or GitHub. The Play Store version is outdated.
