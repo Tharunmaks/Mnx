@@ -150,9 +150,13 @@ export class HiveClient extends EventTarget {
   constructor() {
     super();
     this.ws = null;
+    this.es = null;
+    this.mode = null;     // "ws" (WebSocket) or "sse" (the streaming fallback, for servers without WebSocket support)
+    this.sid = "s_" + Math.random().toString(36).slice(2, 12);
     this.state = "connecting";
     this.queue = [];
     this.retry = 0;
+    this.wsFailures = 0;
     this.closed = false;
   }
 
@@ -164,25 +168,39 @@ export class HiveClient extends EventTarget {
     return base.toString();
   }
 
+  // The server says whether it can do WebSockets (a plain uvicorn install can't): then we use the stream from the start.
+  async pickMode() {
+    if (this.mode) return this.mode;
+    try {
+      const r = await fetch(gatewayBase() + "/api/ping");
+      const j = await r.json();
+      this.mode = j.ws === false ? "sse" : "ws";
+    } catch { this.mode = "ws"; }
+    return this.mode;
+  }
+
   connect() {
     if (location.protocol === "file:" && !getSettings().gateway) {
       this.setState("offline");
       return;
     }
     this.setState("connecting");
+    this.pickMode().then((mode) => (mode === "sse" ? this.connectStream() : this.connectSocket()));
+  }
+
+  connectSocket() {
     let ws;
-    try { ws = new WebSocket(this.url()); } catch { this.scheduleReconnect(); return; }
+    try { ws = new WebSocket(this.url()); } catch { this.socketFailed(); return; }
     this.ws = ws;
+    let opened = false;
     ws.onopen = () => {
+      opened = true;
       this.retry = 0;
+      this.wsFailures = 0;
       this.setState("online");
       for (const m of this.queue.splice(0)) ws.send(JSON.stringify(m));
     };
-    ws.onmessage = (e) => {
-      let ev;
-      try { ev = JSON.parse(e.data); } catch { return; }
-      this.dispatchEvent(new CustomEvent("event", { detail: ev }));
-    };
+    ws.onmessage = (e) => this.deliver(e.data);
     ws.onclose = (e) => {
       this.ws = null;
       if (e.code === 4401) {
@@ -190,9 +208,51 @@ export class HiveClient extends EventTarget {
         window.dispatchEvent(new CustomEvent("mnx-auth"));
         return; // wait for a new token from Settings
       }
+      if (!opened) { this.socketFailed(); return; }
       if (!this.closed) this.scheduleReconnect();
     };
     ws.onerror = () => ws.close();
+  }
+
+  // A socket that never opens (a proxy, an old server): after two tries use the stream, which works over plain HTTP.
+  socketFailed() {
+    this.wsFailures++;
+    if (this.wsFailures >= 2) { this.mode = "sse"; this.connectStream(); return; }
+    this.scheduleReconnect();
+  }
+
+  connectStream() {
+    const url = `${gatewayBase()}/api/live?sid=${encodeURIComponent(this.sid)}&token=${encodeURIComponent(getSettings().token)}`;
+    let es;
+    try { es = new EventSource(url); } catch { this.scheduleReconnect(); return; }
+    this.es = es;
+    es.onopen = () => {
+      this.retry = 0;
+      this.setState("online");
+      for (const m of this.queue.splice(0)) this.send(m);
+    };
+    es.onmessage = (e) => this.deliver(e.data);
+    es.onerror = async () => {
+      es.close();
+      this.es = null;
+      if (this.closed) return;
+      // EventSource hides the status: ask the server whether the token is the problem or the connection is
+      try {
+        const r = await fetch(gatewayBase() + "/api/whoami", { headers: { Authorization: `Bearer ${getSettings().token}` } });
+        if (r.status === 401) {
+          this.setState("auth");
+          window.dispatchEvent(new CustomEvent("mnx-auth"));
+          return;
+        }
+      } catch { /* server unreachable: retry below */ }
+      this.scheduleReconnect();
+    };
+  }
+
+  deliver(data) {
+    let ev;
+    try { ev = JSON.parse(data); } catch { return; }
+    this.dispatchEvent(new CustomEvent("event", { detail: ev }));
   }
 
   scheduleReconnect() {
@@ -204,6 +264,7 @@ export class HiveClient extends EventTarget {
   reconnectNow() {
     this.retry = 0;
     if (this.ws) this.ws.close();
+    else if (this.es) { this.es.close(); this.es = null; this.connect(); }
     else this.connect();
   }
 
@@ -217,7 +278,21 @@ export class HiveClient extends EventTarget {
       this.ws.send(JSON.stringify(msg));
       return true;
     }
+    if (this.es && this.es.readyState === EventSource.OPEN) {
+      fetch(`${gatewayBase()}/api/live/send?sid=${encodeURIComponent(this.sid)}`, {
+        method: "POST", body: JSON.stringify(msg),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getSettings().token}` },
+      }).then((r) => { if (!r.ok) this.sendFailed(msg, r.status); }).catch(() => this.sendFailed(msg, 0));
+      return true;
+    }
     return false;
+  }
+
+  // A message the stream couldn't deliver: tell the chat so it doesn't wait forever.
+  sendFailed(msg, status) {
+    this.dispatchEvent(new CustomEvent("event", { detail: { task: msg.task, type: "task_error",
+      text: status === 409 ? "Lost the connection: reload the page." : "The message didn't reach the Hive." } }));
+    if (status === 409) this.reconnectNow();
   }
 }
 

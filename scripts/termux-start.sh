@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.." || exit 1
 termux-wake-lock 2>/dev/null || true
 git pull --ff-only -q 2>/dev/null && echo "Updated to the latest Hive." || true
 python3 -c "import fastapi, uvicorn, httpx" 2>/dev/null || pip install fastapi "uvicorn[standard]" httpx
+python3 -c "import websockets" 2>/dev/null || pip install websockets   # live terminals and the phone drone
 python3 -c "import gdown" 2>/dev/null || pip install gdown
 command -v llama-server >/dev/null || pkg install -y llama-cpp || true
 mkdir -p data

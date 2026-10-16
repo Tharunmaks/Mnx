@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -144,6 +144,9 @@ def log(bee: str, type: str, text: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not _ws_supported():
+        print("[mnx] No WebSocket library here: the page uses its streaming fallback (chat works). For terminals and the "
+              "phone drone, run: pip install websockets", flush=True)
     health = asyncio.create_task(hub.health_loop())
     loop = asyncio.get_running_loop()
     cells.on_change = lambda cell: loop.create_task(broadcast({"type": "bees_changed", "bee": cell.id}))
@@ -266,10 +269,16 @@ async def cache_headers(request: Request, call_next):
 api = APIRouter(prefix="/api", dependencies=[Depends(auth.require)])
 
 
+def _ws_supported() -> bool:
+    import importlib.util
+    return any(importlib.util.find_spec(m) for m in ("websockets", "wsproto"))
+
+
 @app.get("/api/ping")
 def ping():
-    """Unauthenticated: lets the web app tell 'server down' from 'wrong token'."""
-    return {"ok": True}
+    """Unauthenticated: lets the web app tell 'server down' from 'wrong token', and whether this server can do
+    WebSockets (a plain uvicorn install can't: the page then uses the streaming fallback, /api/live)."""
+    return {"ok": True, "ws": _ws_supported()}
 
 
 @api.get("/health")
@@ -1543,6 +1552,35 @@ async def _prefetch_apps(p: phone.Phone) -> None:
         pass
 
 
+async def handle_client_message(msg: dict, emit) -> None:
+    """One message from the web app (over a WebSocket or the streaming fallback): a chat message, a tapped card, a stop."""
+    kind = msg.get("type")
+    if kind == "user_message":
+        text = str(msg.get("text", ""))[:8000].strip()
+        if not text:
+            return
+        task_id = str(msg.get("task") or f"t_{uuid.uuid4().hex[:10]}")[:40]
+        task = Task(task_id, str(msg.get("chat", ""))[:40], text, emit, effort=str(msg.get("effort") or "")[:12],
+                    bee=str(msg.get("bee") or "")[:40] or None, mode=str(msg.get("mode") or "")[:8])
+        hist = msg.get("history") if isinstance(msg.get("history"), list) else []
+        task.history = [{"role": "bot" if h.get("role") == "bot" else "user", "text": str(h.get("text", ""))[:4000]}
+                        for h in hist[-24:] if isinstance(h, dict)]
+        task.user_name = str(msg.get("name") or "")[:40]
+        from hive.models import models as _models_
+        picked = str(msg.get("model") or "")[:60]
+        task.model = picked if picked and _models_.usable(picked) else None
+        TASKS[task_id] = (task, asyncio.create_task(run_task(task)))
+    elif kind == "action":
+        entry = TASKS.get(str(msg.get("task")))
+        if entry:
+            values = msg.get("values") if isinstance(msg.get("values"), dict) else {}
+            entry[0].resolve(str(msg.get("ref")), str(msg.get("action")), values)
+    elif kind == "stop":
+        entry = TASKS.pop(str(msg.get("task")), None)
+        if entry:
+            entry[1].cancel()
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
@@ -1560,39 +1598,76 @@ async def ws_endpoint(ws: WebSocket):
 
     try:
         while True:
-            msg = await ws.receive_json()
-            kind = msg.get("type")
-
-            if kind == "user_message":
-                text = str(msg.get("text", ""))[:8000].strip()
-                if not text:
-                    continue
-                task_id = str(msg.get("task") or f"t_{uuid.uuid4().hex[:10]}")[:40]
-                task = Task(task_id, str(msg.get("chat", ""))[:40], text, emit, effort=str(msg.get("effort") or "")[:12],
-                            bee=str(msg.get("bee") or "")[:40] or None, mode=str(msg.get("mode") or "")[:8])
-                hist = msg.get("history") if isinstance(msg.get("history"), list) else []
-                task.history = [{"role": "bot" if h.get("role") == "bot" else "user", "text": str(h.get("text", ""))[:4000]}
-                                for h in hist[-24:] if isinstance(h, dict)]
-                task.user_name = str(msg.get("name") or "")[:40]
-                from hive.models import models as _models_
-                picked = str(msg.get("model") or "")[:60]
-                task.model = picked if picked and _models_.usable(picked) else None
-                TASKS[task_id] = (task, asyncio.create_task(run_task(task)))
-
-            elif kind == "action":
-                entry = TASKS.get(str(msg.get("task")))
-                if entry:
-                    values = msg.get("values") if isinstance(msg.get("values"), dict) else {}
-                    entry[0].resolve(str(msg.get("ref")), str(msg.get("action")), values)
-
-            elif kind == "stop":
-                entry = TASKS.pop(str(msg.get("task")), None)
-                if entry:
-                    entry[1].cancel()
+            await handle_client_message(await ws.receive_json(), emit)
     except (WebSocketDisconnect, json.JSONDecodeError, RuntimeError):
         pass
     finally:
         CLIENTS.discard(ws)
+
+
+# ---------- the streaming fallback: the same conversation without WebSockets ----------
+class SseClient:
+    """A browser reading /api/live. It looks like a WebSocket to the broadcast code: send_json puts the event in its queue."""
+
+    def __init__(self) -> None:
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=2000)
+
+    async def send_json(self, event: dict) -> None:
+        try:
+            self.queue.put_nowait(event)
+        except asyncio.QueueFull:  # a reader that stopped reading: drop the oldest so the Hive never blocks on it
+            try:
+                self.queue.get_nowait()
+                self.queue.put_nowait(event)
+            except (asyncio.QueueEmpty, asyncio.QueueFull):
+                pass
+
+
+LIVE: dict[str, SseClient] = {}
+
+
+@api.get("/live")
+async def live_stream(request: Request, sid: str = Query(min_length=6, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")):
+    """Server-sent events: every Hive event for this browser, kept open (a comment every 15 s keeps proxies awake)."""
+    client = SseClient()
+    LIVE[sid] = client
+    CLIENTS.add(client)
+
+    async def gen():
+        try:
+            yield "retry: 2000\n\n: connected\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(client.queue.get(), 15)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            CLIENTS.discard(client)
+            if LIVE.get(sid) is client:
+                LIVE.pop(sid, None)
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no", "Connection": "keep-alive"})
+
+
+@api.post("/live/send")
+async def live_send(request: Request, sid: str = Query(min_length=6, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")):
+    client = LIVE.get(sid)
+    if not client:
+        raise HTTPException(409, "Not connected: reload the page")
+    try:
+        msg = await request.json()
+    except ValueError as exc:
+        raise HTTPException(400, "Bad message") from exc
+
+    async def emit(event: dict) -> None:
+        EVENT_LOG.append(event)
+        await client.send_json(event)
+    if isinstance(msg, dict):
+        await handle_client_message(msg, emit)
+    return {"ok": True}
 
 
 async def run_task(task: Task) -> None:
