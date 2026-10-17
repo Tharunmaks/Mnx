@@ -287,9 +287,17 @@ class Drone:
         return {"width": w, "height": h}
 
     async def c_screenshot(self, a):
-        png = await self.exec_out("screencap -p", 25)
+        import base64 as b64
+        # base64 is plain text, so the shell's line-ending rewriting can't corrupt the PNG (it did, and PIL couldn't read it)
+        png = b""
+        try:
+            png = b64.b64decode(b"".join((await self.exec_out("screencap -p | base64", 25)).split()))
+        except Exception:
+            pass
         if png[:8] != b"\x89PNG\r\n\x1a\n":
-            png = png.replace(b"\r\n", b"\n")  # old adb shells mangle line endings
+            png = await self.exec_out("screencap -p", 25)
+            if png[:8] != b"\x89PNG\r\n\x1a\n":
+                png = png.replace(b"\r\n", b"\n")  # old adb shells mangle line endings
         if png[:8] != b"\x89PNG\r\n\x1a\n":
             raise CmdError("Screenshot failed (is the screen on?)")
         w, h = struct.unpack(">II", png[16:24])

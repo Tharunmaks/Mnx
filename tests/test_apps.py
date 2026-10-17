@@ -256,3 +256,8 @@ def test_any_chromium_on_the_machine_is_found(monkeypatch, tmp_path):
     exe.chmod(0o755)
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
     assert browser.find_chromium() == str(exe)
+
+
+@pytest.mark.parametrize("item,generic", [("drinks", True), ("cold drinks", True), ("snacks", True), ("KitKat", False), ("Dairy Milk", False), ("2 milk", False)])
+def test_vague_items_are_asked_about(item, generic):
+    assert bool(apps.GENERIC_ITEM.fullmatch(item)) is generic

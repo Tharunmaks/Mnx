@@ -378,6 +378,10 @@ captcha appears, ask the user to solve it in Watch live (do "ask" with no fields
 goal is met (adding to the cart is done once it's in the cart). Values the user gave so far: {values}."""
 
 
+GENERIC_ITEM = re.compile(r"drinks?|cold\s+drinks?|sodas?|juices?|snacks?|groceries|grocery|food|stuff|things?|items?|something|"
+                          r"anything|essentials|vegetables|fruits?", re.I)
+
+
 def _shot_id(user: str, img: bytes, mime: str) -> str | None:
     if not img:
         return None
@@ -445,6 +449,7 @@ async def run(task: Task, surface, intent: dict, bee_name: str, live_url: str | 
     where = APPS[intent["app"]]["name"] if intent.get("app") else (intent.get("name") or intent.get("url") or "the web")
     place = "your phone" if surface.kind == "phone" else f"{bee_name}'s browser"
     limit = STEPS.get(task.effort, 25)
+    ordering = False  # True once you've said "place the order"
 
     story: list[str] = []  # what the Bee did, for the "What happened" report at the end
     last: dict = {}
@@ -485,7 +490,18 @@ async def run(task: Task, surface, intent: dict, bee_name: str, live_url: str | 
 
             if kind == "done":
                 await screen(f"Done on {where}")
-                await task.answer(vault.hide(str(act.get("summary") or "Done.")))
+                summary = vault.hide(str(act.get("summary") or "Done."))
+                if intent.get("item") and not ordering and approved_amount is None:
+                    reply = await ask(task, "confirm", title=f"Place the order on {where}?", service=where, ask_anyway=True,
+                                      text=summary + "\n\nIt's in your cart. Shall I go to checkout and place the order? You'll still see the total before any payment.",
+                                      actions=[{"id": "order", "label": "Yes, place the order"}, {"id": "later", "label": "Not now", "style": "danger"}])
+                    if reply["action"] == "order":
+                        ordering = True
+                        intent = {**intent, "goal": f"Go to the cart on {where} and check out to place the order. At any Pay or Place order "
+                                                    "button, use confirm first with the total."}
+                        history.append(f"{n}. the user said to place the order")
+                        continue
+                await task.answer(summary)
                 return
             if kind == "fail":
                 await screen(f"Stuck on {where}")
@@ -681,7 +697,26 @@ async def handle(task: Task, intent: dict) -> None:
     app = APPS.get(intent.get("app") or "")
     where = app["name"] if app else (intent.get("name") or intent.get("url") or "that website")
     package = (app or {}).get("package") or intent.get("package")
+    from .cloud_chat import ask
+    stated = intent.get("phone") or bool(re.search(r"\b(?:my\s+)?(?:bee|computer|browser|website|web)\b", intent.get("goal", ""), re.I))
+    if app and not stated and task.user == "owner" and package and phone_mod.PHONES:
+        choice = await ask(task, "confirm", title=f"Where should {where} run?", service=where, ask_anyway=True,
+                           text="Your phone: the real app, and you can watch it happen. The Bee's computer: the website in its own browser; "
+                                "it asks you for your login in a box.",
+                           actions=[{"id": "phone", "label": "On my phone"}, {"id": "bee", "label": "On the Bee's computer"}])
+        intent = {**intent, "phone": choice["action"] == "phone"}
     use_phone = intent.get("phone") and task.user == "owner" and package and phone_mod.PHONES
+    if app and intent.get("item") and GENERIC_ITEM.fullmatch(intent["item"].strip()):
+        what = intent["item"].strip().lower()
+        reply = await ask(task, "clarify", title=f"Which {what} from {where}?", service=where, ask_anyway=True,
+                          text=f"Which {what}? Give the brand, size and how many if you know, for example “Coca-Cola 2 L, 2 bottles”.",
+                          fields=[{"name": "what", "label": "What and how many", "required": True, "input": "text"}],
+                          actions=[{"id": "go", "label": "Add to cart"}, {"id": "stop", "label": "Cancel", "style": "danger"}])
+        chosen = str((reply.get("values") or {}).get("what") or "").strip()
+        if reply["action"] != "go" or not chosen:
+            await task.answer(f"Okay, I didn't add anything to {where}.")
+            return
+        intent = {**intent, "item": chosen[:120], "goal": f"Add {chosen[:120]} to the cart on {where}. Stop once it's in the cart."}
     b = _pick_bee(task)
     if not use_phone and not b:
         await task.answer(f"A Bee does this in its own browser. Make one first (New Bee in Peace, or “make a bee called Shopper that "
