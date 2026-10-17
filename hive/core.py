@@ -64,6 +64,7 @@ class Task:
         from .users import who
         self.id = task_id
         self.user = user or who()  # who sent it (hive/users.py): their Bees and plan
+        self.answered = False  # every message ends with an answer (hive/queen.py makes sure)
         self.bee = bee  # Peace mode: the Bee whose own chat this is; it answers as itself
         self.mode = mode if mode in ("rush", "peace") else None
         self.speaker: str | None = None  # Peace: the Bee's name, used in place of "Queen"
@@ -93,7 +94,10 @@ class Task:
             bee = self.speaker
         if bee:
             event["bee"] = bee
-        self.tokens_out += tokens.count_event(event)
+        if type == "answer":
+            self.answered = True
+        if type != "answer_delta":  # streamed pieces are counted once, in the final answer
+            self.tokens_out += tokens.count_event(event)
         await self._emit(event)
         return event_id
 

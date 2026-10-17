@@ -91,6 +91,8 @@ client.addEventListener("event", (e) => {
   if (!ev.task) return;
   const found = findTurn(ev.task);
   if (!found) return;
+  // A streamed reply arrives in pieces (answer_delta); once the whole answer is in, only it is kept on this device.
+  if (ev.type === "answer") found.turn.events = found.turn.events.filter((e) => e.type !== "answer_delta");
   found.turn.events.push(ev);
   if (ev.type === "bee_created") loadBees();
   if (ev.type === "tokens" && found.chat.id === activeId) updateChatTokens(found.chat);

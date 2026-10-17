@@ -111,8 +111,9 @@ async def peace_fallback(task: Task) -> None:
         await task.answer(bots.offline_reply(b))
         return
     if brain.is_connected():
-        await task.answer(await brain.ask(f"You are {b['name']}, a Bee in the Mnx Hive. Your responsibility: {b['skill']}. "
-                                          f"Answer as yourself.\n\nUser: {task.text}", task.effort, getattr(task, "history", None)))
+        from . import respond
+        await respond.respond(task, f"You are {b['name']}, a Bee in the Mnx Hive. Your responsibility: {b['skill']}. Answer as "
+                              f"yourself.\n\n{brain.ANSWER_RULES}", history=getattr(task, "history", None), speaker=b["name"])
         return
     await task.answer(f"I'm {b['name']} ({b['skill']}). No model is running on this Hive yet, so I can't chat "
                       "freely. What I can do now: “$ command” runs it on my computer, “status” tells you about me, "

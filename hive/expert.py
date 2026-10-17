@@ -172,6 +172,20 @@ async def handle(task: Task, intent: dict) -> None:
     if not b:
         await task.answer("Expert Craft trains on a Bee's computer. Make a Bee first (New Bee in Peace, e.g. “Trainer: trains my models”).")
         return
+    lock = LOCKS.setdefault(b["id"], asyncio.Lock())
+    if lock.locked():
+        await task.step("waiting", f"Waiting for {b['name']}'s other Expert Craft command to finish", bee=b["name"])
+    async with lock:  # two runs at once on one computer measure and map the same files: one at a time
+        await _craft(task, intent, b)
+
+
+LOCKS: dict[str, asyncio.Lock] = {}
+NO_MODEL = re.compile(r"FileNotFoundError|No such file|does not exist|not found|phone\.json", re.I)
+
+
+async def _craft(task: Task, intent: dict, b: dict) -> None:
+    from .cells import cells
+    from .cloud_chat import ask
     bee = b["name"]
     cell = cells.get(b["id"], b["name"], b["computer"])
     s = await task.step("running", "Getting Expert Craft ready on its computer", bee=bee)
@@ -200,6 +214,10 @@ async def handle(task: Task, intent: dict) -> None:
         s = await task.step("thinking", f"Asking {name}", bee=bee)
         code, out = await cell.exec(f"{NUMPY} >/dev/null 2>&1; {EC} phone-sample {shlex.quote(name)} --prompt {shlex.quote(intent['prompt'])}", 300)
         await task.finish_step(s, status="done" if code == 0 else "error")
+        if code and NO_MODEL.search(out):
+            await task.answer(f"There's no Expert Craft model called {name} on {bee}'s computer yet. Train one first: "
+                              f"“train a 1B model with expert craft called {name} for 30 minutes”.")
+            return
         text = out[out.find(intent["prompt"]):] if intent["prompt"] in out else out  # without what the login shell printed first
         await task.answer(text.strip()[-2000:] if code == 0 else f"It didn't answer: {out.strip()[-300:]}")
         return

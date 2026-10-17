@@ -238,3 +238,13 @@ def test_apps_on_the_owners_phone_by_their_label(monkeypatch):
     monkeypatch.setattr(phone, "all_apps", lambda: [{"package": "fit.cure.android", "label": "Cult.fit"}])
     got = apps.parse("book a yoga class in Cult.fit")
     assert got["package"] == "fit.cure.android" and got["phone"]
+
+
+def test_any_chromium_on_the_machine_is_found(monkeypatch, tmp_path):
+    from hive import browser
+    exe = tmp_path / "chromium-1194" / "chrome-linux" / "chrome"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    assert browser.find_chromium() == str(exe)

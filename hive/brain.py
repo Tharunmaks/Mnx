@@ -80,32 +80,69 @@ class Brain:
                 "presets": PRESETS, "from_env": bool(os.getenv("MNX_BRAIN_URL"))}
 
     async def chat(self, messages: list[dict], effort: str | None = None, max_tokens: int | None = None,
-                   temperature: float = 0.7) -> str:
+                   temperature: float = 0.7, on_text=None) -> str:
         """One answer. The model the user picked for this message (hive/models.py) answers it; with none picked, the
-        brain set in Settings, else the first of the owner's models that is set up."""
+        brain set in Settings, else the first of the owner's models that is set up. With on_text (an async function),
+        the answer streams: on_text gets each piece as it's written, whole sentences at a time, already in the
+        model's own name."""
         from . import models as models_mod
         picked = models_mod.selected.get() or (None if self.url else models_mod.models.default())
         name = model_name(picked)
         messages = with_identity(messages, name)
+        guard = NameGuard(name, on_text) if on_text else None
         if picked:
             try:
                 async with models_mod.models.using(picked) as base:
-                    return own_name(await self._post(base, "", "", messages, effort, max_tokens, temperature), name)
+                    text = await self._post(base, "", "", messages, effort, max_tokens, temperature, guard)
             except models_mod.ModelError as exc:
                 raise BrainNotConnected(str(exc)) from exc
-        if not self.url:
-            raise BrainNotConnected("No model is set up yet")
-        return own_name(await self._post(self.url, self._get("key"), self._get("model"), messages, effort, max_tokens, temperature),
-                        name)
+        else:
+            if not self.url:
+                raise BrainNotConnected("No model is set up yet")
+            text = await self._post(self.url, self._get("key"), self._get("model"), messages, effort, max_tokens, temperature, guard)
+        if guard:
+            await guard.close()
+        return own_name(text, name)
 
-    async def _post(self, base: str, key: str, model: str, messages: list[dict], effort, max_tokens, temperature) -> str:
+    async def _post(self, base: str, key: str, model: str, messages: list[dict], effort, max_tokens, temperature,
+                    guard: "NameGuard | None" = None) -> str:
         body = {"messages": messages, "max_tokens": max_tokens or effort_mod.LEVELS[effort_mod.normalize(effort)]["reply"] * 2,
                 "temperature": temperature}
         if model:
             body["model"] = model
         headers = {"Authorization": f"Bearer {key}"} if key else {}
+        if guard:
+            return await self._stream(base, body, headers, guard)
         async with httpx.AsyncClient(timeout=180, transport=self.transport) as c:
             r = await c.post(self.endpoint(base), json=body, headers=headers)
+        return self._reply(r)
+
+    async def _stream(self, base: str, body: dict, headers: dict, guard: "NameGuard") -> str:
+        """The OpenAI streaming format (data: {...} lines); a server that answers in one piece works too."""
+        parts: list[str] = []
+        async with httpx.AsyncClient(timeout=httpx.Timeout(180, read=180), transport=self.transport) as c:
+            async with c.stream("POST", self.endpoint(base), json={**body, "stream": True}, headers=headers) as r:
+                if r.status_code >= 400 or "text/event-stream" not in r.headers.get("content-type", ""):
+                    await r.aread()
+                    text = self._reply(r)
+                    await guard.add(text)
+                    return text
+                async for line in r.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        piece = (json.loads(data)["choices"][0].get("delta") or {}).get("content") or ""
+                    except (ValueError, KeyError, IndexError, TypeError):
+                        continue
+                    if piece:
+                        parts.append(piece)
+                        await guard.add(piece)
+        return "".join(parts).strip()
+
+    def _reply(self, r: httpx.Response) -> str:
         if r.status_code in (401, 403):
             raise BrainNotConnected("The model's server rejected the API key")
         if r.status_code >= 400:
@@ -160,6 +197,25 @@ OTHER_MAKER = re.compile(r"(?:Alibaba(?:\s+(?:Cloud|Group))?(?:'s)?(?:\s+(?:Tong
                          r"DAMO\s+Academy|阿里巴巴|阿里云|the\s+Qwen\s+team)", re.I)
 
 
+class NameGuard:
+    """Passes a streamed answer on whole sentences at a time, each one in the model's own name (see own_name)."""
+
+    def __init__(self, name: str, on_text):
+        self.name, self.on_text, self.buf = name, on_text, ""
+
+    async def add(self, piece: str) -> None:
+        self.buf += piece
+        cut = max(self.buf.rfind(c) for c in (". ", "! ", "? ", "\n", "。"))
+        if cut >= 0:
+            done, self.buf = self.buf[:cut + 1], self.buf[cut + 1:]
+            await self.on_text(own_name(done, self.name))
+
+    async def close(self) -> None:
+        if self.buf:
+            await self.on_text(own_name(self.buf, self.name))
+            self.buf = ""
+
+
 def own_name(reply: str, name: str) -> str:
     """Rewrites "I am Qwen, created by Alibaba Cloud" style sentences to the Mnx model's own name and maker."""
     if not reply or not (OTHER_MODEL.search(reply) or OTHER_MAKER.search(reply)):
@@ -176,24 +232,34 @@ def own_name(reply: str, name: str) -> str:
     return SENTENCE.sub(fix, reply)
 
 
+ANSWER_RULES = """How to answer, every time:
+- Do exactly what the user asks: answer, explain, write, plan, translate, calculate, write complete code, design.
+  Don't turn a request into training or creating an AI model unless they ask for that.
+- Start with the answer itself, then the details. No filler, no repeating the question, no "As an AI".
+- Be complete and correct: code that runs as written (all imports, every file it needs, how to run it), real numbers
+  with units, exact steps. Check calculations.
+- Shape it for reading: short paragraphs; numbered steps for how-tos; bullets for options; a table to compare things;
+  a fenced code block with the language name for any code or command.
+- Answer in the user's language and tone (English, Tamil, Hindi, Tanglish …).
+- If the request is unclear, choose the most likely meaning, say your assumption in one line, and answer.
+- If it depends on facts you don't have (today's news, prices, weather), say so plainly instead of guessing."""
+
+
 def system_prompt(effort: str | None = None, name: str | None = None) -> str:
     """What the model is told before every conversation, including the effort level's instructions."""
     name = name or model_name()
-    return (f"You are {name}, an AI assistant made by {MAKER}, answering in the Mnx Hive chat. Do what the user asks: answer "
-            "questions, write complete working code, and build whatever they describe (apps, websites, scripts, games, "
-            "documents, plans). Don't turn a request into training or creating an AI model unless they ask for that. "
-            "Use Markdown, and put code in fenced code blocks with the language name. "
+    return (f"You are {name}, an AI assistant made by {MAKER}, answering in the Mnx Hive chat.\n\n{ANSWER_RULES}\n\n"
             + effort_mod.instructions(effort))
 
 
-async def ask(prompt: str, effort: str | None = None, history: list[dict] | None = None) -> str:
+async def ask(prompt: str, effort: str | None = None, history: list[dict] | None = None, on_text=None) -> str:
     """Ask the brain one thing, after the chat's earlier turns ({role: user|bot, text}).
     `effort` is one of low / med / high / ultra / maxxxx (see hive/effort.py)."""
     msgs = [{"role": "system", "content": system_prompt(effort)}]
     for turn in (history or [])[-12:]:
         msgs.append({"role": "assistant" if turn.get("role") == "bot" else "user", "content": str(turn.get("text", ""))[:4000]})
     msgs.append({"role": "user", "content": prompt})
-    return await brain.chat(msgs, effort)
+    return await brain.chat(msgs, effort, on_text=on_text)
 
 
 async def chat(messages: list[dict], effort: str | None = None) -> str:

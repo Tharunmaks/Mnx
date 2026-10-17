@@ -37,6 +37,21 @@ class BrowserError(RuntimeError):
     pass
 
 
+def find_chromium() -> str | None:
+    """A Chromium already on this machine: Playwright's downloads (any version), then the usual system names."""
+    import glob
+    import shutil
+    roots = [os.getenv("PLAYWRIGHT_BROWSERS_PATH") or "", os.path.expanduser("~/.cache/ms-playwright"), "/opt/pw-browsers"]
+    for root in filter(None, roots):
+        for exe in sorted(glob.glob(os.path.join(root, "chromium-*", "chrome-linux", "chrome")), reverse=True):
+            if os.access(exe, os.X_OK):
+                return exe
+    for name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"):
+        if shutil.which(name):
+            return shutil.which(name)
+    return None
+
+
 class BrowserSession:
     def __init__(self, profile_dir: str | os.PathLike | None = None) -> None:
         # With a profile dir the browser keeps its cookies, logins and site storage on disk,
@@ -63,6 +78,21 @@ class BrowserSession:
               "viewport": VIEWPORT, "locale": "en-IN"}
         if os.getenv("MNX_CHROMIUM_PATH"):
             kw["executable_path"] = os.environ["MNX_CHROMIUM_PATH"]
+        try:
+            await self._launch(pw, kw)
+        except BrowserError:
+            other = find_chromium()  # Playwright's own Chromium is missing: any Chromium this machine has will do
+            if not other or kw.get("executable_path") == other:
+                raise
+            kw["executable_path"] = other
+            await self._launch(pw, kw)
+        await self._context.route("**/*", self._guard)
+        pages = self._context.pages
+        self.page = pages[0] if pages else await self._context.new_page()
+        self._context.on("page", self._adopt_popup)
+
+    async def _launch(self, pw, kw: dict) -> None:
+        kw = dict(kw)
         if os.getenv("MNX_BROWSER_PROXY"):
             kw["proxy"] = {"server": os.environ["MNX_BROWSER_PROXY"]}
         try:
@@ -74,11 +104,10 @@ class BrowserSession:
                 browser = await pw.chromium.launch(**kw)
                 self._context = await browser.new_context(viewport=viewport, locale=locale)
         except Exception as exc:
-            raise BrowserError(f"Couldn't start Chromium ({str(exc).splitlines()[0]}). Run 'playwright install chromium' or set MNX_CHROMIUM_PATH.") from exc
-        await self._context.route("**/*", self._guard)
-        pages = self._context.pages
-        self.page = pages[0] if pages else await self._context.new_page()
-        self._context.on("page", self._adopt_popup)
+            raise BrowserError("The Bee's browser couldn't start: this machine has no Chromium for it. On a server or PC run "
+                               "'playwright install --with-deps chromium' (or set MNX_CHROMIUM_PATH). Phones (Termux) can't run it: "
+                               "run the Hive on a server for websites, or use your phone's own apps (“… on my phone”, Phone "
+                               f"Drone). ({str(exc).splitlines()[0][:120]})") from exc
 
     async def _adopt_popup(self, popup) -> None:
         # Keep one visible tab: follow pages that open in a new window.

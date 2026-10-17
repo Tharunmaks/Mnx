@@ -164,3 +164,7 @@ def test_the_hive_passes_sites_through_decoded_and_sandboxed(monkeypatch):
     assert r.status_code == 200 and r.text == "export const hi = '₹650';" and r.headers["content-security-policy"] == "sandbox allow-scripts"
     assert seen[-1] == ("GET", "/p/bakery/app.js", None)  # the Hive's token never goes to the site server
     assert client.get("/vendor/xterm/xterm.js").status_code in (200, 404) and seen[-1][1] == "/p/bakery/app.js"  # the Hive's own files stay its own
+
+
+def test_site_names_from_what_it_is():
+    assert sites.name_for("create a landing page for my app with a waitlist") == "landing-waitlist"

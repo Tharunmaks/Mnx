@@ -115,9 +115,13 @@ def slug(text: str) -> str:
 def name_for(goal: str) -> str:
     """A project name from the request: "a website for my bakery where …" → "bakery"."""
     m = re.search(r"\bfor\s+(?:my|our|a|an|the)?\s*(?P<w>[\w'-]+(?:\s+[\w'-]+)?)", goal, re.I)
-    words = (m.group("w") if m else re.sub(BUILD, " ", goal)).lower()
-    words = re.sub(r"\b(?:website|site|web|app|page|that|which|where|with|people|can|my|our|the|a|an)\b", " ", words)
-    return slug(" ".join(words.split()[:2])) or "my-site"
+    stop = r"\b(?:website|site|web|app|page|that|which|where|with|people|can|my|our|the|a|an|for|me|us|build|make|create|design|" \
+           r"generate|set|up|launch|code|full|stack|from|scratch|new|simple|nice|good)\b"
+    for words in ((m.group("w") if m else ""), goal):  # what it's for, else the kind of site ("landing page" → landing)
+        name = slug(" ".join(re.sub(stop, " ", words.lower()).split()[:2]))
+        if name:
+            return name
+    return "my-site"
 
 
 def parse_files(raw: str) -> tuple[dict[str, str], list[dict]]:

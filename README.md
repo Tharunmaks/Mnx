@@ -148,6 +148,22 @@ Grok bot: a name and **its responsibility** (`hive/bees.py`, `hive/bots.py`, the
 user's Bee answers 404, and so do its computer, files, terminal and memory. Two users can each have a Scout.
 Limits: Free 5 Bees, Pro 20 (children included), 4 generations, 12 children per Bee.
 
+## Answers: streamed, researched, tested on 100 requests
+
+- **Every message reaches what can do it** (`hive/queen.py`): a call, a new Bee, your plan, the GPU, Expert Craft, a
+  website to build, an app or site to use, your Bees (Peace, Rush), training, and for everything else the model.
+  Every message ends with an answer, even one you stop halfway.
+- **Answers stream in** as the model writes them, whole sentences at a time, already in the model's own name
+  (`hive/brain.py`). The model is told how to answer well: the answer first, complete runnable code, steps, tables
+  when they help, in your language, and to say so instead of guessing.
+- **Today's facts come from the web** (`hive/respond.py`, `hive/websearch.py`): weather, news, prices, scores,
+  "who is the current …", or "search the web for …". The Hive searches (DuckDuckGo, no key), reads the top pages,
+  answers from them and links its sources under the answer.
+- **Tested on 100 different requests** (`tests/test_hundred.py`): questions, code, today's facts, apps, websites,
+  Expert Craft, Bees, plans, calls, the GPU, training and Rush. Each must reach the right place and get an
+  answer. The same 100 also ran three times against the running Hive over its live connection: 300 of 300 answered
+  without an error.
+
 ## Bees build full-stack websites with Chroma, kept in their Vortex OS computer
 
 Say **"build a website for my bakery where people can order cakes"**, **"create a landing page for my app with a

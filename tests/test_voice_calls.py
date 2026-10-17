@@ -483,3 +483,12 @@ def test_a_hive_call_is_rush_and_a_bee_call_is_that_bees_own_chat(phone_calls, t
 def test_provider_keys_never_reach_training_code():
     from hive.lab import HIVE_ONLY_SECRETS
     assert {"RUNPOD_API_KEY", "HCLOUD_TOKEN", "DIGITALOCEAN_TOKEN"} <= HIVE_ONLY_SECRETS
+
+
+def test_call_me_from_the_chat_over_a_live_connection(gateway):
+    """It crashed once: telling one user's pages about a call looked up a property a live connection doesn't have."""
+    client, token, r, _ = gateway
+    with client.websocket_connect(f"/ws?token={token}") as ws:
+        ws.send_json({"type": "user_message", "task": "t_call", "text": "call me", "mode": "rush"})
+        events = _until_done(ws)
+    assert events[-1]["type"] == "task_done" and any(e["type"] == "answer" and "Calling you" in e["text"] for e in events)

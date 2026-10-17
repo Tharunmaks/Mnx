@@ -135,7 +135,7 @@ async def broadcast(event: dict) -> None:
     """To every open page; an event that carries a "user" (a call) only to that user's pages."""
     only = event.get("user")
     for ws in list(CLIENTS):
-        if only and CLIENT_USER.get(ws, getattr(ws, "user", None)) != only:
+        if only and (CLIENT_USER.get(ws) if ws in CLIENT_USER else getattr(ws, "user", None) if isinstance(ws, SseClient) else None) != only:
             continue
         try:
             await ws.send_json(event)

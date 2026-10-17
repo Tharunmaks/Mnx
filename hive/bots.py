@@ -95,6 +95,8 @@ def system_prompt(b: dict, knowledge: list[dict], memories: list[str], user_name
                      "\n\n".join(f"[{k['file']}]\n{k['text']}" for k in knowledge))
     if p.get("computer"):
         parts.append("You have your own computer; the user runs commands on it by starting a message with $.")
+    from .brain import ANSWER_RULES
+    parts.append(ANSWER_RULES)
     return "\n\n".join(parts)
 
 
@@ -268,19 +270,11 @@ async def handle(task, b: dict) -> bool:
     hits = store.search(b["id"], text)
     if brain.is_connected():
         mem = [x["text"] for x in store.memories(b["id"])] if p.get("memory", True) else []
-        msgs = [{"role": "system", "content": system_prompt(b, hits, mem, getattr(task, "user_name", "") or "")}]
-        for turn in (getattr(task, "history", None) or [])[-HISTORY:]:
-            msgs.append({"role": "assistant" if turn.get("role") == "bot" else "user", "content": str(turn.get("text", ""))[:4000]})
-        msgs.append({"role": "user", "content": text})
-        s = await task.step("thinking", "Thinking", bee=name)
-        try:
-            reply = await brain.chat(msgs, task.effort)
-        except brain.BrainNotConnected as exc:
-            await task.finish_step(s, status="error", text=str(exc)[:200])
-            await task.answer(f"My brain didn't answer: {exc}")
-            return True
-        await task.finish_step(s, text="Answered" + (f" from {', '.join(sorted({h['file'] for h in hits}))}" if hits else ""))
-        await task.answer(reply)
+        from . import respond
+        if hits:
+            await task.step("reading", f"From {', '.join(sorted({h['file'] for h in hits}))}", bee=name, status="done")
+        await respond.respond(task, system_prompt(b, hits, mem, getattr(task, "user_name", "") or ""), text,
+                              (getattr(task, "history", None) or [])[-HISTORY:], speaker=name)
         return True
     if hits:  # no brain: answer straight from its knowledge, with the lines that match best
         best = hits[0]

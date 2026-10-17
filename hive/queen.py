@@ -1,18 +1,23 @@
-"""The Queen: receives a task, plans it, hands steps to Bees, merges the result.
-
-Planning needs the Mnx brain, which isn't connected yet, so for now the Queen
-reports that honestly instead of inventing an answer.
+"""The Queen: reads each message and sends it to what can do it: a call, a new Bee, your plan, the GPU, Expert Craft,
+a website to build, an app or site to use, your Bees (Peace and Rush), training, and for everything else the model,
+which answers with web research when the question needs today's facts (hive/respond.py).
 """
 
 from __future__ import annotations
 
-from . import apps, bots, brain, calls, cloud_chat, expert, gpu_pool, modes, plans, sites
+from . import apps, bots, brain, calls, cloud_chat, expert, gpu_pool, modes, plans, respond, sites
 from .gpu_chat import gpu_chat
 from .bees import registry
 from .core import Task
 
 
 async def handle(task: Task) -> None:
+    await _handle(task)
+    if not task.answered:  # a flow that stopped at a card you cancelled: say so instead of going quiet
+        await task.answer("Okay, I stopped there; nothing was started.")
+
+
+async def _handle(task: Task) -> None:
     peace = task.bee and registry.mine(task.bee, task.user)
     if peace:
         task.speaker = peace["name"]  # Peace mode: this Bee answers in its own chat
@@ -69,8 +74,5 @@ async def handle(task: Task) -> None:
         )
         return
 
-    # When the brain is live, this is where the Queen plans and runs Bees:
-    #   plan = await brain.ask(planning_prompt(task.text, bees))
-    #   for step in plan: await bee.run(task, step)
-    #   await task.answer(merged_answer)
-    await task.answer(await brain.ask(task.text, task.effort, getattr(task, "history", None)))
+    # Everything else: the model answers, streaming, after looking things up on the web when they need today's facts.
+    await respond.respond(task, brain.system_prompt(task.effort), history=getattr(task, "history", None))
