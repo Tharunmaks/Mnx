@@ -242,7 +242,9 @@ ANSWER_RULES = """How to answer, every time:
   a fenced code block with the language name for any code or command.
 - Answer in the user's language and tone (English, Tamil, Hindi, Tanglish …).
 - If the request is unclear, choose the most likely meaning, say your assumption in one line, and answer.
-- If it depends on facts you don't have (today's news, prices, weather), say so plainly instead of guessing."""
+- If it depends on facts you don't have (today's news, prices, weather), say so plainly instead of guessing.
+- Games, stories, art, apps and code inspired by existing ones ("a game like GTA", "a story like Harry Potter") are
+  fine: make an original version in that style, with your own names, characters and content. Don't refuse them."""
 
 
 def system_prompt(effort: str | None = None, name: str | None = None) -> str:

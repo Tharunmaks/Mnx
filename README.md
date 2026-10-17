@@ -180,6 +180,26 @@ who may read and write them. Then it:
 **"list my sites"** lists yours. Sites run in Chroma's sandbox, so a site's scripts can't touch the Hive's own
 pages or your token. Asking for code in a framework ("make a todo app in react") still gets you the code.
 
+## Bees make games on their own (private links)
+
+Ask in the chat: "create an open world game in 3d", "make a racing game", "create a 3d game like GTA 6", or, after
+talking about a game, "use three.js and make it yourself and run it". A Bee does the rest with no steps from you:
+
+1. writes the game with three.js (plays in any browser, phones too), starting from a working 3D open-world city
+   (`hive/templates/game_city`: drivable car, traffic, delivery missions, minimap, day/night, touch controls)
+2. saves it in its Vortex OS computer at `~/games/<name>/`
+3. deploys it **privately** with Chroma: an unguessable `/d/<id>/` preview link, never a public `/p/` page
+4. plays it in its own browser: collects the game's errors, checks `window.__game.ready`, takes a screenshot
+5. fixes what broke (up to two rounds); if it still won't run you get the starter game, which is known to work
+
+A game "like GTA" (or Minecraft, Mario …) is an original game in that style: its own world, names and art, nothing
+copied. Unity can't run on the Hive's computers (it needs a desktop GPU, a Unity account and ~10 GB), so the Bees use
+three.js. Code is in `hive/games.py`; tests in `tests/test_games.py`.
+
+When the model wrongly refuses ordinary creative or technical work ("As an AI, I'm unable to create video games"), the
+refusal is held back, never shown, and the model is asked once more with a note that the request is allowed
+(`hive/respond.py`).
+
 ## Expert Stream and Expert Craft
 
 From **[Stream-](https://github.com/Tharunmaks/Stream-)** (`hive/expert.py`):

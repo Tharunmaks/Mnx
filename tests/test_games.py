@@ -1,0 +1,163 @@
+"""Bees make games on their own: write, deploy privately, play-test, fix; and wrong refusals are asked again."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+import httpx
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from hive import brain as brain_mod, games, respond, sites  # noqa: E402
+from hive.core import Task  # noqa: E402
+
+
+@pytest.mark.parametrize("text,styles", [
+    ("Create me a 3d gta 6 game", ["GTA"]), ("Create a game like gta 6 not gta 6 in 3d", ["GTA"]),
+    ("create an open world game in 3d", []), ("build a racing game like need for speed", ["Need for Speed"]),
+    ("Use three.js for the game and make it yourself and run it", []),
+    ("make a minecraft game in unity", ["Minecraft"]),
+])
+def test_game_requests(text, styles):
+    got = games.parse(text)
+    assert got and got["styles"] == styles
+    assert got["unity"] is ("unity" in text)
+
+
+@pytest.mark.parametrize("text", ["make a snake game in python", "explain game theory", "what's the best game of 2024",
+                                  "give me video game ideas", "make a landing page for my bakery"])
+def test_not_game_requests(text):
+    assert games.parse(text) is None
+
+
+def test_names_and_the_starter_game():
+    assert games.name_for("Create me a 3d gta 6 game", ["GTA"]) == "open-world-game"
+    assert games.name_for("create a zombie survival game", []) == "zombie-survival-game"
+    files = games.template_files()
+    assert set(files) >= {"index.html", "game.js", "style.css"}
+    assert "/vendor/three/three.module.js" in files["index.html"] and "window.__game" in files["game.js"]
+
+
+GAME_OUT = """=== FILE: index.html ===
+<!doctype html><script type="importmap">{"imports":{"three":"/vendor/three/three.module.js"}}</script><script type="module" src="game.js"></script>
+=== END ===
+=== FILE: game.js ===
+%s
+window.__game = { ready: true };
+=== END ==="""
+
+
+@pytest.fixture
+def hive(tmp_path, monkeypatch):
+    from hive import bees, cells as cells_mod
+    monkeypatch.setattr(cells_mod, "CELLS", tmp_path / "cells")
+    monkeypatch.setattr(cells_mod.cells, "cells", {})
+    monkeypatch.setattr(cells_mod.cells, "mode", "local")
+    r = bees.Registry(tmp_path / "hive.json", tmp_path / "keys.json")
+
+    async def nothing(*a):
+        return None
+    r.on_created = r.on_deleted = r.on_computer = nothing
+    monkeypatch.setattr(bees, "registry", r)
+    asyncio.run(r.create("Gamer", "makes my games", owner="u_gamer0000001"))
+    deployed = []
+
+    async def deploy(uid, name, files, cols, private=False):
+        deployed.append((uid, name, dict(files), private))
+        return {"name": name, "url": f"/d/dpl_test{len(deployed)}/"}
+    monkeypatch.setattr(sites.chroma, "ensure", nothing)
+    monkeypatch.setattr(sites.chroma, "deploy", deploy)
+    return {"deployed": deployed, "cells": tmp_path / "cells"}
+
+
+def _run(text, user="u_gamer0000001"):
+    events = []
+
+    async def emit(ev):
+        events.append(ev)
+    t = Task("t1", "c1", text, emit, user=user)
+    asyncio.run(games.handle(t, games.parse(text)))
+    return events
+
+
+def test_a_bee_writes_plays_fixes_and_hands_over_a_private_game(hive, monkeypatch, tmp_path):
+    b = brain_mod.Brain(tmp_path / "brain.json")
+    b.update({"url": "http://127.0.0.1:11434"})
+    asked = []
+    outs = [GAME_OUT % "const city = 1; brokn();", GAME_OUT % "const city = 1;"]
+    b.transport = httpx.MockTransport(lambda r: asked.append(json.loads(r.content)) or
+                                      httpx.Response(200, json={"choices": [{"message": {"content": outs.pop(0)}}]}))
+    monkeypatch.setattr(brain_mod, "brain", b)
+    plays = [{"ok": False, "ready": False, "errors": ["ReferenceError: brokn is not defined"], "shot": b""},
+             {"ok": True, "ready": True, "errors": [], "shot": b"\xff\xd8jpeg"}]
+
+    async def play(url):
+        return plays.pop(0)
+    monkeypatch.setattr(games, "play", play)
+    events = _run("Create me a 3d gta 6 game")
+
+    first, fix = asked
+    assert "ORIGINAL game in that style" in first["messages"][0]["content"] and "copy nothing" in first["messages"][1]["content"]
+    assert "brokn is not defined" in fix["messages"][1]["content"]
+    assert all(d[3] is True for d in hive["deployed"]) and len(hive["deployed"]) == 2  # private every time
+    assert "brokn" not in hive["deployed"][-1][2]["game.js"] and "style.css" in hive["deployed"][-1][2]  # the fix, with the kept CSS
+    card = next(e for e in events if e["type"] == "result")
+    assert card["badge"] == "Private" and ["Play", "/d/dpl_test2/"] in card["details"]
+    assert any(e["type"] == "screen" for e in events)
+    answer = [e["text"] for e in events if e["type"] == "answer"][-1]
+    assert "(/d/dpl_test2/)" in answer and "original game in the style of GTA" in answer and "/p/" not in answer
+    assert (hive["cells"] / "gamer" / "work" / "games" / "open-world-game" / "game.js").exists()
+
+
+def test_still_broken_means_the_starter_game_and_no_model_is_fine(hive, monkeypatch):
+    monkeypatch.setattr(brain_mod, "is_connected", lambda: False)
+
+    async def play(url):
+        return {"ok": None, "errors": [], "shot": b"", "skipped": "this machine has no Chromium to play-test it"}
+    monkeypatch.setattr(games, "play", play)
+    events = _run("make a minecraft game in unity")
+    assert hive["deployed"][0][2] == games.template_files()
+    answer = [e["text"] for e in events if e["type"] == "answer"][-1]
+    assert "Unity can't run" in answer and "No model is running" in answer
+    assert ["Tested", "not play-tested (no Chromium here)"] in next(e for e in events if e["type"] == "result")["details"]
+
+
+def test_no_bee_yet_says_how(hive):
+    events = _run("create an open world game in 3d", user="u_nobody000001")
+    assert "Make one first" in events[-1]["text"] and not hive["deployed"]
+
+
+def _sse(chunks):
+    body = "".join(f"data: {json.dumps({'choices': [{'delta': {'content': c}}]})}\n\n" for c in chunks) + "data: [DONE]\n\n"
+    return httpx.Response(200, content=body.encode(), headers={"content-type": "text/event-stream"})
+
+
+def test_a_wrong_refusal_is_never_shown_and_is_asked_again(tmp_path, monkeypatch):
+    b = brain_mod.Brain(tmp_path / "brain.json")
+    b.update({"url": "http://127.0.0.1:11434"})
+    sent = []
+    replies = [["As an AI, I'm unable to create ", "video games. "], ["Here is ", "a three.js city game:\n", "```js\n```"]]
+    b.transport = httpx.MockTransport(lambda r: sent.append(json.loads(r.content)) or _sse(replies.pop(0)))
+    monkeypatch.setattr(brain_mod, "brain", b)
+    events = []
+
+    async def emit(ev):
+        events.append(ev)
+    t = Task("t1", "c1", "write the code for a game like gta in three.js", emit)
+    asyncio.run(respond.respond(t, brain_mod.system_prompt(), web=False))
+    shown = json.dumps(events)
+    assert "unable" not in shown and len(sent) == 2 and respond.RETRY in sent[1]["messages"][0]["content"]
+    assert events[-1] == {**events[-1], "type": "answer"} and events[-1]["text"].startswith("Here is a three.js city game")
+    assert any("Asking again" in (e.get("text") or e.get("title") or "") for e in events)
+
+
+@pytest.mark.parametrize("text,refused", [
+    ("I'm sorry, but I can't help with that.", True), ("As an AI language model, I am unable to create games.", True),
+    ("I cannot create a copy of GTA 6.", True), ("Sure! Here's a game.", False), ("I can't wait to show you this game:", False),
+])
+def test_what_counts_as_a_refusal(text, refused):
+    assert bool(respond.REFUSAL.search(text)) is refused

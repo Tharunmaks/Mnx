@@ -1,0 +1,18 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d14; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #fff; touch-action: none; }
+#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#hud { position: fixed; top: 12px; left: 12px; right: 170px; pointer-events: none; text-shadow: 0 2px 6px rgba(0, 0, 0, .7); }
+#hud .row { display: flex; gap: 14px; align-items: baseline; font-size: 20px; }
+#hud b { font-size: 22px; letter-spacing: .04em; color: #ff4fd8; }
+#money { color: #6dff9c; font-weight: 700; }
+#mission { margin-top: 6px; font-size: 15px; color: #ffe066; }
+#speed { margin-top: 4px; font-size: 14px; opacity: .85; }
+#map { position: fixed; top: 12px; right: 12px; width: 140px; height: 140px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .5); background: rgba(10, 12, 20, .7); }
+#help { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); font-size: 12px; opacity: .7; white-space: nowrap; }
+#toast { position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); font-size: 28px; font-weight: 800; color: #ffe066;
+  text-shadow: 0 3px 12px rgba(0, 0, 0, .8); opacity: 0; transition: opacity .3s; pointer-events: none; text-align: center; }
+#touch { position: fixed; left: 0; right: 0; bottom: 28px; display: none; justify-content: space-between; padding: 0 16px; }
+#touch .pad { display: flex; gap: 12px; }
+#touch button { width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .5); background: rgba(20, 22, 34, .55);
+  color: #fff; font-size: 22px; }
+@media (pointer: coarse) { #touch { display: flex; } #help { display: none; } }

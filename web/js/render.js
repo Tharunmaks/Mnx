@@ -412,7 +412,7 @@ function inline(text) {
     if (m[1] != null) parts.push(h("code", {}, m[1]));
     else if (m[2] != null) parts.push(h("strong", {}, m[2]));
     else if (m[3] != null) parts.push(h("em", {}, m[3]));
-    else parts.push(h("a", { href: m[5], target: m[5].startsWith("http") || m[5].startsWith("/p/") ? "_blank" : null, rel: "noopener noreferrer" }, m[4]));
+    else parts.push(h("a", { href: m[5], target: /^(https?:|\/p\/|\/d\/)/.test(m[5]) ? "_blank" : null, rel: "noopener noreferrer" }, m[4]));
     last = m.index + m[0].length;
   }
   if (last < text.length) parts.push(text.slice(last));

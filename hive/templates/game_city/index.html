@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Neon Bay</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three/addons/" } }
+</script>
+<script type="module" src="game.js"></script>
+</head>
+<body>
+  <canvas id="game" aria-label="The game world"></canvas>
+  <div id="hud">
+    <div class="row"><b id="title">Neon Bay</b><span id="money">$0</span></div>
+    <div id="mission">Drive to the yellow marker</div>
+    <div id="speed">0 km/h</div>
+  </div>
+  <canvas id="map" width="140" height="140" aria-label="Minimap"></canvas>
+  <div id="help">WASD / arrows to drive · Space brake · C camera · N night · R reset</div>
+  <div id="touch" aria-hidden="true">
+    <div class="pad"><button data-k="left">◀</button><button data-k="right">▶</button></div>
+    <div class="pad"><button data-k="brake">■</button><button data-k="gas">▲</button></div>
+  </div>
+  <div id="toast"></div>
+</body>
+</html>

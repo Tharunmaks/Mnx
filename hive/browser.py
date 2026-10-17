@@ -53,7 +53,7 @@ def find_chromium() -> str | None:
 
 
 class BrowserSession:
-    def __init__(self, profile_dir: str | os.PathLike | None = None) -> None:
+    def __init__(self, profile_dir: str | os.PathLike | None = None, allow: set[str] | None = None) -> None:
         # With a profile dir the browser keeps its cookies, logins and site storage on disk,
         # so a Bee stays signed in across restarts.
         self.profile_dir = profile_dir
@@ -62,6 +62,12 @@ class BrowserSession:
         self._lock = asyncio.Lock()
         self._host_cache: dict[str, bool] = {}
         self.last_used = time.monotonic()
+        self.allow = set(allow or ())  # "host:port" addresses opened even though they're local (the Hive's own Chroma, to test a game)
+        self.errors: list[str] = []  # the page's JavaScript errors since it was opened
+
+    def _watch(self, page) -> None:
+        page.on("pageerror", lambda e: self.errors.append(str(e)[:400]))
+        page.on("console", lambda msg: msg.type == "error" and self.errors.append(msg.text[:400]))
 
     @property
     def running(self) -> bool:
@@ -89,6 +95,7 @@ class BrowserSession:
         await self._context.route("**/*", self._guard)
         pages = self._context.pages
         self.page = pages[0] if pages else await self._context.new_page()
+        self._watch(self.page)
         self._context.on("page", self._adopt_popup)
 
     async def _launch(self, pw, kw: dict) -> None:
@@ -112,6 +119,7 @@ class BrowserSession:
     async def _adopt_popup(self, popup) -> None:
         # Keep one visible tab: follow pages that open in a new window.
         self.page = popup
+        self._watch(popup)
 
     async def _guard(self, route) -> None:
         url = urlparse(route.request.url)
@@ -120,6 +128,8 @@ class BrowserSession:
         if url.scheme not in ("http", "https"):
             return await route.abort("blockedbyclient")
         host = url.hostname or ""
+        if f"{host}:{url.port}" in self.allow:
+            return await route.continue_()
         if host not in self._host_cache:
             self._host_cache[host] = await asyncio.to_thread(_blocked_host, host)
         if self._host_cache[host]:
@@ -144,6 +154,7 @@ class BrowserSession:
                         url = "https://" + url
                     if urlparse(url).scheme not in ("http", "https"):
                         raise BrowserError("Only http and https pages can be opened")
+                    self.errors = []
                     await p.goto(url, wait_until="domcontentloaded", timeout=30000)
                 elif action == "click":
                     if a.get("text"):
@@ -170,6 +181,10 @@ class BrowserSession:
                 elif action == "read":
                     text = await p.inner_text("body", timeout=8000)
                     return {**await self.state(shot=False), "text": text[:MAX_TEXT]}
+                elif action == "errors":
+                    return {**await self.state(shot=False), "errors": list(self.errors)}
+                elif action == "eval":
+                    return {**await self.state(shot=False), "value": await p.evaluate(str(a.get("js", "null")))}
                 elif action == "elements":
                     return {**await self.state(shot=False), "elements": await self._elements()}
                 elif action != "screenshot":

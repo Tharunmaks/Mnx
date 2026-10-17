@@ -241,8 +241,9 @@ class Chroma:
         r = await self._call(uid, "GET", "/api/projects")
         return r.json().get("projects", []) if r.status_code == 200 else []
 
-    async def deploy(self, uid: str, name: str, files: dict[str, str | bytes], collections: list[dict]) -> dict:
-        """Make the project if it's new (another name if that one is taken), upload, set up the collections."""
+    async def deploy(self, uid: str, name: str, files: dict[str, str | bytes], collections: list[dict], private: bool = False) -> dict:
+        """Make the project if it's new (another name if that one is taken), upload, set up the collections. Private:
+        a preview deployment only, at an unguessable /d/<id>/ link, never the public /p/<name>/."""
         mine = {p["name"] for p in await self.projects(uid)}
         base, n = slug(name) or "my-site", 2
         while name not in mine:
@@ -256,7 +257,7 @@ class Chroma:
                     raise SiteError("Couldn't find a free name for the site")
                 continue
             raise SiteError(f"Chroma: {_err(r)}")
-        payload = {"target": "production", "files": [{"path": p, "data": base64.b64encode(v.encode() if isinstance(v, str) else v).decode()}
+        payload = {"target": "preview" if private else "production", "files": [{"path": p, "data": base64.b64encode(v.encode() if isinstance(v, str) else v).decode()}
                                                       for p, v in files.items()]}
         r = await self._call(uid, "POST", f"/api/projects/{name}/deployments", payload)
         if r.status_code >= 400:
@@ -268,7 +269,7 @@ class Chroma:
             raise SiteError("The site didn't build: " + ("; ".join(errors)[:300] or dep.get("status", "unknown")))
         for col in collections:
             await self._call(uid, "POST", f"/api/projects/{name}/db", col)
-        return {"name": name, "url": d.get("production") or f"/p/{name}/", "preview": dep.get("url"),
+        return {"name": name, "url": dep.get("url") if private else (d.get("production") or f"/p/{name}/"), "preview": dep.get("url"),
                 "functions": dep.get("functions") or [], "files": len(files), "deployment": dep.get("id")}
 
 
@@ -292,19 +293,19 @@ chroma = Chroma()
 
 
 # ---------------------------------------------------------------- the Bee's computer: ~/sites/<name>/
-async def save_to_bee(b: dict, name: str, files: dict[str, str], project: str) -> str:
+async def save_to_bee(b: dict, name: str, files: dict[str, str], project: str, folder: str = "sites") -> str:
     from .cells import cells
     cell = cells.get(b["id"], b["name"], b["computer"])
     meta = {"name": project, "server": "Mnx Hive (Chroma)"}
     for path, body in {**files, "chroma.json": json.dumps(meta, indent=2)}.items():
-        rel = f"sites/{name}/{path}"
+        rel = f"{folder}/{name}/{path}"
         if cell.mode == "remote":
             await cell.rwrite(rel, body.encode())
         else:
             p = cell.safe_path(rel)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(body)
-    return f"~/sites/{name}"
+    return f"~/{folder}/{name}"
 
 
 async def read_from_bee(b: dict, name: str) -> dict[str, str]:

@@ -47,6 +47,42 @@ def _messages(system: str, text: str, history: list[dict] | None, sources: list[
     return msgs
 
 
+# Small models refuse ordinary creative and technical work ("As an AI, I'm unable to create … video games").
+REFUSAL = re.compile(r"^\W*(?:I'?m sorry[,.]?\s*(?:but\s*)?)?(?:as an ai\b[^.]{0,80}?\b(?:unable|cannot|can't|not able|not allowed)|"
+                     r"I(?:'m| am) (?:unable|not able|not allowed) to|I can(?:not|'t) (?:help|assist|create|make|provide|do|write|generate))",
+                     re.I)
+RETRY = ("Your last reply refused. This request is allowed: it is ordinary creative or technical work for this user. If it "
+         "mentions an existing game, film, book or brand, make an original version in that style with your own names, "
+         "characters and content, and nothing copied. Do the task now, completely, without mentioning refusing.")
+
+
+async def _stream(task: Task, msgs: list[dict]) -> tuple[str, bool]:
+    """Stream the reply into the chat; a reply that opens with a refusal is held back (not shown) and reported."""
+    held: list[str] = []
+    state = {"checked": False, "refused": False}
+
+    async def on_text(piece: str) -> None:
+        if not state["checked"]:
+            held.append(piece)
+            head = "".join(held)
+            if len(head) < 60 and not re.search(r"[.!?\n]", head):
+                return
+            state["checked"] = True
+            state["refused"] = bool(REFUSAL.search(head))
+            if not state["refused"]:
+                await task.emit("answer_delta", text=head)
+            return
+        if not state["refused"]:
+            await task.emit("answer_delta", text=piece)
+
+    reply = await brain.brain.chat(msgs, task.effort, on_text=on_text)
+    if not state["checked"]:  # a short reply: check it whole
+        state["refused"] = bool(REFUSAL.search(reply))
+        if not state["refused"] and held:
+            await task.emit("answer_delta", text="".join(held))
+    return reply, state["refused"]
+
+
 async def respond(task: Task, system: str, text: str | None = None, history: list[dict] | None = None,
                   speaker: str = "Queen", web: bool | None = None) -> str:
     """Answer the message: research it on the web when it needs today's facts, then stream the reply into the chat."""
@@ -62,14 +98,13 @@ async def respond(task: Task, system: str, text: str | None = None, history: lis
         else:
             await task.finish_step(s, text=f"Read {sum(1 for x in sources[:3] if x['text'])} pages of {len(sources)} results"
                                    if sources else "Nothing found")
-    streamed = []
-
-    async def on_text(piece: str) -> None:
-        streamed.append(piece)
-        await task.emit("answer_delta", text=piece)
-
+    msgs = _messages(system, text, history, sources)
     try:
-        reply = await brain.brain.chat(_messages(system, text, history, sources), task.effort, on_text=on_text)
+        reply, refused = await _stream(task, msgs)
+        if refused:  # a wrong refusal ("As an AI I'm unable to create …"): ask once more, saying why it's allowed
+            await task.step("thinking", "Asking again: that request is allowed", bee=speaker, status="done")
+            msgs[0] = {**msgs[0], "content": msgs[0]["content"] + "\n\n" + RETRY}
+            reply, _ = await _stream(task, msgs)
     except brain.BrainNotConnected as exc:
         await task.answer(f"The model didn't answer: {exc}")
         return ""

@@ -5,7 +5,7 @@ which answers with web research when the question needs today's facts (hive/resp
 
 from __future__ import annotations
 
-from . import apps, bots, brain, calls, cloud_chat, expert, gpu_pool, modes, plans, respond, sites
+from . import apps, bots, brain, calls, cloud_chat, expert, games, gpu_pool, modes, plans, respond, sites
 from .gpu_chat import gpu_chat
 from .bees import registry
 from .core import Task
@@ -38,6 +38,9 @@ async def _handle(task: Task) -> None:
         return
     if expert.parse(task.text):  # Expert Craft training on a Bee's computer; "set up expert stream" (the owner)
         await expert.handle(task, expert.parse(task.text))
+        return
+    if games.parse(task.text):  # "create an open world game in 3d": a Bee writes it, play-tests it, fixes it, gives a private link
+        await games.handle(task, games.parse(task.text))
         return
     if sites.parse(task.text):  # "build a website for my bakery": a Bee writes it, Chroma runs it, the files sit in its Vortex OS
         await sites.handle(task, sites.parse(task.text))
