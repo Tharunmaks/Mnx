@@ -329,8 +329,10 @@ def gateway(monkeypatch, tmp_path, fish):
     async def nothing(*a):
         return None
     r.on_created = r.on_deleted = r.on_computer = nothing
+    monkeypatch.setattr(bees, "registry", r)  # what hive.bots and others import when they run
     for mod in (gw, modes, queen, bee_chat, calls_mod):
         monkeypatch.setattr(mod, "registry", r)
+    monkeypatch.setattr(gw, "BEES", r.bees)
     monkeypatch.setattr(cells_mod, "CELLS", tmp_path / "cells")
     monkeypatch.setattr(cells_mod.cells, "cells", {})
     monkeypatch.setattr(cells_mod.cells, "mode", "local")
@@ -364,10 +366,10 @@ def test_peace_chat_runs_on_the_bees_own_computer_and_answers_as_the_bee(gateway
         assert {e.get("bee") for e in events if e.get("bee")} == {"Scout"}  # the Bee answers, not the Queen
         ws.send_json({"type": "user_message", "task": "t_p2", "text": "who are you", "bee": "scout", "mode": "peace"})
         card = next(e for e in _until_done(ws) if e["type"] == "result")
-        assert card["title"] == "Scout" and ["Skill", "watches prices"] in card["details"]
+        assert card["title"] == "Scout" and ["Responsibility", "watches prices"] in card["details"]
         ws.send_json({"type": "user_message", "task": "t_p3", "text": "what's the capital of France", "bee": "scout", "mode": "peace"})
         answer = next(e for e in _until_done(ws) if e["type"] == "answer")
-        assert answer["text"].startswith("I'm the Scout Bee") and "$ command" in answer["text"]
+        assert answer["text"].startswith("Hi, I'm Scout.") and "$ ls" in answer["text"]  # no model here: what it can do
 
 
 def test_a_bee_makes_its_own_children_in_its_peace_chat(gateway):
@@ -377,14 +379,15 @@ def test_a_bee_makes_its_own_children_in_its_peace_chat(gateway):
         while True:
             ev = ws.receive_json()
             if ev["type"] == "clarify":
-                ws.send_json({"type": "action", "task": "t_c1", "ref": ev["id"], "action": "create", "values": {}})
+                ws.send_json({"type": "action", "task": "t_c1", "ref": ev["id"], "action": "make", "values": {}})
             if ev["type"] in ("task_done", "task_error"):
                 break
-    assert r.get("pinger")["created_by"] == "scout"
+    assert r.get("pinger")["created_by"] == "scout" and r.get("pinger")["skill"] == "pings sites"
 
 
 def test_rush_roll_call_and_everyone_run(gateway):
     client, token, r, _ = gateway
+    run(r.create("Mail", "reads my mail"))
     with client.websocket_connect(f"/ws?token={token}") as ws:
         ws.send_json({"type": "user_message", "task": "t_r1", "text": "roll call", "mode": "rush"})
         events = _until_done(ws)
@@ -395,7 +398,7 @@ def test_rush_roll_call_and_everyone_run(gateway):
         ws.send_json({"type": "user_message", "task": "t_r2", "text": "everyone run echo ready-$MNX_BEE", "mode": "rush"})
         events = _until_done(ws, answer="go")
         outs = {e["bee"]: e["text"].strip().splitlines()[-1] for e in events if e["type"] == "output"}
-        assert outs["Scout"] == "ready-scout" and outs["Cloud"] == "ready-cloud" and len(outs) == len(r.bees)
+        assert outs == {"Scout": "ready-scout", "Mail": "ready-mail"} and len(r.bees) == 2  # your Bees only, no premade ones
         summary = [e for e in events if e["type"] == "result"][-1]
         assert summary["title"] == f"{len(r.bees)} of {len(r.bees)} Bees ran it"
 
@@ -441,23 +444,40 @@ def test_voice_settings_api_never_shows_the_key(gateway):
     assert client.post("/api/voice/asr", headers=auth, content=b"open my desktop").json() == {"text": "open my desktop"}
 
 
-def test_a_hive_call_is_rush_and_a_bee_call_is_that_bees_own_chat(phone_calls):
-    c, _ = phone_calls
+def test_a_hive_call_is_rush_and_a_bee_call_is_that_bees_own_chat(phone_calls, tmp_path, monkeypatch):
+    from hive import bees
+    c, events = phone_calls
+    r = bees.Registry(tmp_path / "hive.json", tmp_path / "keys.json")
+
+    async def nothing(*a):
+        return None
+    r.on_created = r.on_deleted = r.on_computer = nothing
+    monkeypatch.setattr(calls_mod, "registry", r)
+    run(r.create("Scout", "watches prices", owner="u_caller000001"))
     seen = []
 
     async def scenario():
         async def note(task):
-            seen.append((task.bee, task.mode))
+            seen.append((task.bee, task.mode, task.user))
             await task.answer("ok")
         c.run = note
         hive = await c.start(None, answer=True, talk=True)
         await c.heard(hive.id, "roll call")
         await asyncio.wait_for(hive.runner, 2)
-        bee = await c.start("chat", answer=True, talk=True)
+        from hive import users
+        tok = users.current.set("u_caller000001")
+        try:
+            bee = await c.start("scout", answer=True, talk=True)
+            other = await c.start("scout", answer=True, talk=True, channel="phone")
+        finally:
+            users.current.reset(tok)
         await c.heard(bee.id, "status")
         await asyncio.wait_for(bee.runner, 2)
-    run(scenario())
-    assert seen == [(None, "rush"), ("chat", "peace")]
+        return other
+    other = run(scenario())
+    assert seen == [(None, "rush", "owner"), ("scout", "peace", "u_caller000001")]
+    assert {e["user"] for e in events if e.get("type") == "call"} == {"owner", "u_caller000001"}  # each call reaches its user's pages
+    assert other.state != "live" or other.via != "phone"  # a user's call never rings the owner's phone
 
 
 def test_provider_keys_never_reach_training_code():

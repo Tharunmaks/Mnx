@@ -18,6 +18,7 @@
     <div class="brand"><span id="brandLogo"></span><span>Mnx <b>Hive</b></span></div>
 
     <button class="rail-btn primary" id="newChat"><span data-icon="plus"></span>New chat</button>
+    <button class="rail-btn primary hidden" id="newBee"><span data-icon="plus"></span>New Bee</button>
 
     <div class="rail-section grow">
       <div class="rail-label" id="historyLabel">Chats</div>
@@ -28,15 +29,15 @@
       <div class="rail-label">MCP tools <span id="toolCount"></span></div>
       <div id="toolList" class="history"></div>
       <a class="rail-btn" href="connectors.html"><span data-icon="plug"></span>Connector Hub</a>
-      <a class="rail-btn" href="lab.html"><span data-icon="thinking"></span>Cloud Bee · Lab</a>
-      <a class="rail-btn" href="browser.html"><span data-icon="globe"></span>Browser</a>
-      <a class="rail-btn" href="phone.html"><span data-icon="phone"></span>Phone <span class="count" id="phoneCount"></span></a>
+      <a class="rail-btn" href="lab.html"><span data-icon="thinking"></span>Lab</a>
+      <a class="rail-btn owner-only" href="browser.html"><span data-icon="globe"></span>Browser</a>
+      <a class="rail-btn owner-only" href="phone.html"><span data-icon="phone"></span>Phone <span class="count" id="phoneCount"></span></a>
     </div>
 
     <div class="rail-foot">
-      <a class="rail-btn" href="bots.html"><span data-icon="chat"></span>Bots · make your own</a>
-      <a class="rail-btn" href="freecloud.html"><span data-icon="globe"></span>Free cloud · Plus</a>
-      <a class="rail-btn" href="hive.html"><span data-icon="hive"></span>Hive <span class="count" id="beeCount"></span></a>
+      <a class="rail-btn" href="bots.html"><span data-icon="hive"></span>Your Bees <span class="count" id="beeCount"></span></a>
+      <a class="rail-btn pro-btn" href="pro.html" id="proBtn"><span data-icon="gauge"></span><span id="proLabel">Get Pro</span></a>
+      <a class="rail-btn owner-only" href="freecloud.html"><span data-icon="globe"></span>Cloud setup</a>
       <a class="rail-btn" href="usage.html"><span data-icon="gauge"></span>Usage</a>
       <button class="rail-btn" id="openSettings"><span data-icon="gear"></span>Settings</button>
       <button class="rail-btn" id="openProfile"><span class="avatar" id="avatar">?</span><span id="profileName">Profile</span></button>
@@ -49,8 +50,8 @@
       <button class="icon-btn menu-btn" id="menuBtn" aria-label="Open menu"><span data-icon="menu"></span></button>
       <h1 id="chatTitle">New chat</h1>
       <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="Mode">
-        <button type="button" data-mode="rush" role="tab" title="Rush: every Bee works together on one page">Rush</button>
-        <button type="button" data-mode="peace" role="tab" title="Peace: a separate chat with each Bee">Peace</button>
+        <button type="button" data-mode="rush" role="tab" title="Rush: all your Bees work together on one page">Rush</button>
+        <button type="button" data-mode="peace" role="tab" title="Peace: a separate chat with each of your Bees">Peace</button>
       </div>
       <span class="chat-tokens" id="chatTokens" title="Tokens used in this chat (you + the Hive)"></span>
       <span class="conn" id="conn" title="Gateway connection"><i></i><span>Connecting</span></span>
@@ -99,7 +100,7 @@
 
   <!-- Right: which Bees are busy, idle or scheduled -->
   <aside class="hive-panel" id="hivePanel" aria-label="Bees">
-    <header>Bees <a href="hive.html" class="hint">Open Hive →</a></header>
+    <header>Your Bees <a href="bots.html" class="hint">Manage →</a></header>
     <div class="list" id="beeList"></div>
   </aside>
 </div>
@@ -166,6 +167,25 @@
     <div class="dlg-foot">
       <button class="btn" value="cancel">Cancel</button>
       <button class="btn primary" value="save" id="saveSettings">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="beeDlg">
+  <form method="dialog" id="beeForm">
+    <div class="dlg-head"><h2>New Bee</h2><button class="icon-btn" value="cancel" aria-label="Close"><span data-icon="close"></span></button></div>
+    <div class="dlg-body">
+      <label class="field">Name <input name="name" maxlength="24" required placeholder="e.g. Scout" autocomplete="off"></label>
+      <label class="field">Its responsibility <input name="tagline" maxlength="90" required placeholder="e.g. watches prices and tells me when they drop" autocomplete="off"></label>
+      <label class="field">Instructions (optional)
+        <textarea name="personality" rows="4" maxlength="4000" placeholder="How it works and talks, what it should and shouldn't do"></textarea>
+      </label>
+      <p class="hint" id="beeNote"></p>
+      <p class="hint" id="beeErr" style="color:var(--failed)"></p>
+    </div>
+    <div class="dlg-foot">
+      <a class="btn" href="bots.html#new">More options</a>
+      <button class="btn primary" value="make" id="makeBee">Make Bee</button>
     </div>
   </form>
 </dialog>

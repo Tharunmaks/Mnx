@@ -21,6 +21,8 @@ from hive import bots, brain, cloud_chat  # noqa: E402
     "make me a todo app in react", "create a landing page", "write a snake game", "how do I train a model?",
     "explain how transformers work", "make a website that uses AI", "create a python script to rename files",
     "give me ideas for a story", "add a dark mode to my site", "teach me AI", "what model are you",
+    "add a character to my story", "create a character for my novel", "build a chatbot for my website",
+    "make a telegram bot that sends reminders", "start a bot conversation",
 ])
 def test_ordinary_requests_go_to_the_model(text):
     assert cloud_chat.parse(text) is None

@@ -19,14 +19,18 @@ async def read_bee_file(b: dict, rel: str) -> bytes:
 
 
 async def gpu_chat(task: Task, intent: dict) -> None:
-    b = registry.get(task.bee or "") or registry.get("cloud")
+    b = registry.mine(task.bee or "", task.user) or next(iter(registry.of(task.user)), None)
+    if intent["kind"] != "status" and not b:
+        await task.answer("GPU jobs run from one of your Bees' computers. Make a Bee first (“make a bee called … that …”).")
+        return
     if intent["kind"] == "status":
         v = pool.view()
-        mine = [j for j in v["jobs"] if not task.bee or j["bee"] == task.bee][:8]
+        own = {x["id"] for x in registry.of(task.user)}
+        mine = [j for j in v["jobs"] if j["bee"] in own and (not task.bee or j["bee"] == task.bee)][:8]
         await task.emit("result", bee="GPU", service="GPU", title=f"GPU pool · {v['hours_week']:.1f} of {v['weekly_limit']:g} free hours used this week",
                         badge="GPU", details=[[j["id"], f"{j['status']} · {j['command'][:60]}" + (f" · {j['error']}" if j.get("error") else "")]
                                               for j in mine] or [["Jobs", "none yet"]])
-        src = {"local": "this machine's GPU", "kaggle": "a free Kaggle GPU (16 GB VRAM)"}.get(v["source"] or "", "not set up yet (Free cloud page)")
+        src = {"local": "this machine's GPU", "kaggle": "a free Kaggle GPU (16 GB VRAM)"}.get(v["source"] or "", "not set up yet")
         await task.answer(f"The Hive's GPU: {src}.")
         return
     files = {}

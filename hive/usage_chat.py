@@ -6,7 +6,8 @@ import re
 import time
 
 from . import architect, effort, usage
-from .bees import MAX_BEES, MAX_CHILDREN, MAX_DEPTH, registry
+from .bees import MAX_CHILDREN, MAX_DEPTH, registry
+from .plan import plan
 from .core import Task
 
 ASK = re.compile(r"\b(?:my|the)\s+(?:usage|limits?|quota)\b|\bhow (?:many|much)\b.*\b(?:tokens?|used|usage|spent)\b|"
@@ -29,7 +30,8 @@ async def handle(task: Task) -> None:
             ["Last 7 days", f"{week['tokens']:,} tokens, {week['messages']:,} messages"],
             ["All time", f"{total['tokens']:,} tokens, {total['messages']:,} messages" + (f" since {total['since']}" if total["since"] else "")],
             ["Limit per message", f"{level['tokens']:,} tokens at {level['label']} effort; your biggest today was {peak:,} ({100 * peak // level['tokens']}%)"],
-            ["Bees", f"{len(registry.bees)} of {MAX_BEES} · {MAX_DEPTH} generations · {MAX_CHILDREN} children each"],
+            ["Bees", f"{len(registry.of(task.user))} of {plan.max_bees(task.user)} on {plan.view(task.user)['label']} · "
+                     f"{MAX_DEPTH} generations · {MAX_CHILDREN} children each"],
             ["Training", f"{sum(1 for r in lab.runs.values() if r['status'] in ('preparing', 'running'))} running · {len(lab.runs)} runs · {len(lab.models)} models"],
             ["Rented GPUs", ", ".join(f"{p['count']}× {p['gpu']} for {architect.fmt_time(p['hours'] * 3600)}"
                                       + (f" (${p['cost']:.2f})" if p["cost"] is not None else "") for p in pods) or "none rented, nothing billing"]]

@@ -77,16 +77,18 @@ hive/bee_chat.py  "create a bee called … that …", "give the … bee a large 
 hive/budget.py    GPU Bee budget planner: "I have 1500 INR, which GPU should I rent?" with live or approximate prices
 hive/lpu.py       Virtual LPU: cycle-accurate chip simulator (SRAM, matrix/vector units, links) + deterministic compiler + chip mesh
 hive/lpu_lab.py   "run my model on the lpu / on 8 lpu chips": plan card with compiled cycles, simulation, chip statistics
-hive/modes.py     Rush (every Bee together: fan-out commands, roll call, the board) and Peace (one chat per Bee)
+hive/modes.py     Rush (your Bees together: split by responsibility, fan-out commands, the board) and Peace (one chat per Bee)
 hive/cloud.py     Real cloud computers per Bee: Hetzner / DigitalOcean, cheapest 8 GB / 40 GB server, SSH, delete on remove
-hive/plan.py      Free / Plus plans (both ₹0); hive/plans.py applies a plan to every Bee, "subscribe me to plus"
+hive/plan.py      Free / Pro plans, per user; hive/billing.py: Razorpay; hive/plans.py: "upgrade to pro" in the chat
+hive/users.py     who is asking (owner or a user, from their token): each user's own Bees and plan
 hive/models.py    Your Mnx models: owner downloads from Drive (joined + MD5-checked), users pick by name, started on demand
 hive/admin.py     Owner commands: set / list / unset credentials, owner token, user tokens (never in git)
 hive/iotamine.py  Iotamine VPS API: list your VPSes, price and deploy one with the Hive's SSH key, add it to the Hive's cloud
 hive/gpu_pool.py  The Hive's GPU: free Kaggle GPU (16 GB VRAM) jobs with the Bee's files, outputs back into its computer
 hive/bots.py      Bots you make: personality, tone, starters, knowledge search, memory, voice, export/import, templates
 hive/brain.py     The brain: any OpenAI-compatible server (Ollama, Groq, Gemini, OpenRouter, your Lab model)
-web/bots.html     Make, edit, explore, remix, export and import bots · web/freecloud.html: Plus and the free cloud
+web/bots.html     Your Bees: make, edit, share, remix, export, import · web/pro.html: plans and Razorpay checkout
+web/freecloud.html  Cloud setup (owner): the GPU and servers Pro Bees run on
 hive/voice.py     Fish Audio: text to speech, speech to text, voice search; voice settings
 hive/calls.py     Calls: "call me …", ringing in the app or a real phone call (Twilio), cards answered by voice
 web/js/voice.js   The call screen, Talk mode, Fish voice playback and listening
@@ -116,161 +118,117 @@ the limit it runs under. Everything is measured; what can't be measured says "no
 - **Rented GPUs**: machines billing now with hours and cost so far (hours x the price RunPod reported), and the
   hours and cost of every finished rental, kept after the machine is gone. The invoice on runpod.io is the authority.
 - **Limits**: tokens per message, computer sizes, Bee limits and the upload size.
-- **Plan** (Free / Plus, both free) and **Cloud computers**: each Bee's own cloud server with hours, price and cost so far.
+- **Plan**: Free or Pro (and until when), with a link to get Pro.
 
 In the chat: **"show my usage"**, **"how many tokens have I used"**, **"what are my limits"**.
 
-## Bees that make Bees, each with its own computer
+## Your Bees: make your own, each with its own chat
 
-Anyone can make a Bee, and so can a Bee. In the chat:
+There are no premade Bees. The Hive's own work (chat, memory, the browser, the phone, training, the GPU) is done
+by **functions**, not Bees, and they no longer show up as Bees anywhere. A Bee is something **you** make, like a
+Grok bot: a name and **its responsibility** (`hive/bees.py`, `hive/bots.py`, the **Your Bees** page).
 
-- **"create a bee called Scout that watches prices"**: a card asks for the name, the one-line skill, the
-  computer size and where it runs, then the Bee is ready with its own computer.
-- **"tell the Coding bee to create a bee called Tester that runs the tests"**: the new Bee belongs to Coding.
-- **"give the Scout bee a large computer"**, **"upgrade Scout to xl"**, **"move Scout to my RunPod server"**,
-  **"give Scout the most powerful computer"** (pick a connected GPU server, the whole of this one, or rent a
-  GPU machine on RunPod after a price confirmation), **"list my bees"** (the family tree), **"delete the Scout bee"**.
+- **Make one**: **New Bee** in Peace (name, responsibility, instructions), the **Your Bees** page for everything,
+  or say **"make a bee called Scout that watches prices"** (a card lets you shape it).
+- **Profile**: instructions, a **tone** (friendly, playful, professional, concise, caring), a **first message** and
+  up to four **conversation starters**.
+- **Knowledge**: text files (txt, md, csv, json, code; 2 MB each, 20 per Bee). It answers from them and names the file.
+- **Memory**: **"remember that I'm vegetarian"**, **"what do you remember about me"**, **"forget that …"**.
+- **Voice**: a Fish Audio voice of its own for Talk mode and **"call me"**.
+- **Its own computer** with Vortex OS: "$ …" runs there (switch it off for a chat-only Bee). Nobody picks the
+  size: your plan decides it (below).
+- **Shared**: set a Bee to "Others on this Hive can remix it" and other users can **Remix** it into a Bee of their
+  own (they never use yours). **Export** a Bee as a file and **Import** it into any Mnx Hive.
+- **Bees make Bees**: **"tell Scout to make a bee called Tester that runs the tests"**, or from inside a Bee's
+  computer with its own key: `python3 .mnx/mnx-bee new "Deal Finder" "finds deals online"`. A child belongs to
+  the same user. The key only opens `/bee-api`; removing a Bee hands its children to its parent.
+- **"list my bees"**, **"delete the Scout bee"**, **"open Scout's desktop"**.
 
-On the Hive page, **Add Bee** has *Made by*, *Computer* and *Runs on*; every card shows who made it, its
-children and its computer, and **Computer** resizes or moves it.
+**Each user has their own Bees.** Users only see, chat with and open the computers of their own Bees; another
+user's Bee answers 404, and so do its computer, files, terminal and memory. Two users can each have a Scout.
+Limits: Free 5 Bees, Pro 20 (children included), 4 generations, 12 children per Bee.
 
-**A Bee makes Bees from inside its own computer** with its own key (`MNX_BEE_KEY`, set in its Cell):
-
-```bash
-python3 .mnx/mnx-bee new "Deal Finder" "finds deals online" medium
-python3 .mnx/mnx-bee children
-```
-
-The key only opens `/bee-api` (create and list its own children); it can't reach your `/api`. Limits stop
-a runaway: 64 Bees in all, 4 generations, 12 children per Bee. Removing a Bee hands its children to its parent.
-
-**Computers** (`hive/bees.py`, `hive/cells.py`): every Bee gets a **Standard** computer: 2 CPUs, 8 GB RAM and
-40 GB disk. Other sizes: Small (1 CPU, 1 GB, 10 GB), Medium (2, 4, 20), Large (4, 16, 80), XL (8, 32, 160) and
-Max (the whole machine). On this server CPU and memory are Docker limits (`--cpus`, `--memory`), kept within
-what the server has; the disk is watched by the Hive, and a Bee whose files fill its disk can't start jobs until
-some are deleted. A new size restarts the container and keeps its files. Without Docker (a phone, say) the Cell
-is a folder and CPU and memory limits aren't enforced. On a cloud server (any SSH server in the Lab, including
-rented machines) the Bee's terminal, commands, jobs and files run over SSH in `<server folder>/cells/<bee>`,
-with the whole machine. A child gets a Standard computer on its parent's machine. Bees saved on the old Small
-default move up to Standard; a size you chose yourself is kept.
-Every computer runs Vortex OS by default (below); choose Plain Linux (`MNX_CELL_IMAGE`) per Bee instead.
-Set `MNX_PUBLIC_URL` so Bees on remote servers can reach the Hive to make children.
-
-## Rush and Peace: two ways to work with the Bees
+## Rush and Peace
 
 The chat has a **Rush · Peace** switch at the top (`hive/modes.py`).
 
-**Rush**: every Bee works together on one page. The Queen gets your message and hands it to all of them at
-once. A board under the top bar has a tile for each Bee showing what it's doing right now, lit while it works.
-- **"everyone run pip install numpy"**, **"all bees run: df -h"**: the same command on every Bee's own computer
-  in parallel (8 at a time), after one confirmation. Each Bee's output appears under its name, with a summary.
-- **"roll call"**, **"everyone report"**: each Bee reports its skill, computer, jobs and children.
-- Everything else the Hive understands (train, create a model, create Bees, cloud computers …) runs with every
-  Bee it needs. With the Mnx brain connected, the Queen splits any goal between the Bees and merges their work.
+**Peace**: a separate chat with each of your Bees, like Grok's bots. The rail lists your Bees (latest chat
+first) with the last thing said, and **New Bee** makes another. Each Bee answers as itself, with its first
+message and starters; with a model running it talks in character and sees the chat so far.
+- **"$ ls -la"**: runs on that Bee's own computer. **"who are you"**: its responsibility, computer and children.
 
-**Peace**: a separate chat with each Bee, like chatting with one bot. The rail lists the Bees with the last thing
-said; pick one and it answers as itself, under its own badge.
-- **"$ ls -la"**, **"run `df -h`"**: runs on that Bee's own computer.
-- **"who are you"**, **"status"**: its skill, computer, jobs and children.
-- **"create a bee called … that …"**: the new Bee is this Bee's child.
-- Everything else the Hive understands, answered by this Bee. With the brain connected it talks in its own voice.
+**Rush**: all your Bees work together on one page. A board shows a tile per Bee, lit while it works. With a model
+running, your message is split between the Bees by their responsibilities and their reports are merged into one
+answer; a message none of them is responsible for is answered directly.
+- **"everyone run pip install numpy"**: the same command on every Bee's computer (8 at a time), after a confirmation.
+- **"roll call"**: each Bee reports in.
 
-## Real cloud computers for every Bee
+## Plans: Free and Pro (Razorpay)
 
-A Bee can have its own machine in the cloud (`hive/cloud.py`): the cheapest server type with at least 8 GB RAM,
-40 GB disk and 2 CPUs, from **Hetzner Cloud** (`HCLOUD_TOKEN`, Singapore first, the nearest to India) or
-**DigitalOcean** (`DIGITALOCEAN_TOKEN`, Bangalore first). Save the token in Cloud Bee · Lab → Secrets, then:
-- **"give every bee a real cloud computer"**, **"give the Scout bee its own cloud computer"**, or *Its own cloud
-  computer* in a Bee's Computer dialog, or *Runs on → Its own cloud computer* when creating a Bee.
-- A card shows the machine, the price per month for all of them (and roughly in rupees) and asks first; it's
-  real money on your account.
-- The Hive starts each server with only its own SSH key allowed (no passwords), Docker and Node.js, waits for
-  SSH, adds it as a Lab server and moves the Bee there (Vortex OS runs on it). If a server can't be reached, it
-  is deleted at once so nothing bills for nothing.
-- **"bring the bees back home"** or removing a Bee deletes its server, so billing stops. The Usage page lists
-  every cloud computer with hours, price per month and cost so far.
-- Provider keys (and the RunPod key) stay with the Hive: they are never passed to training code.
+Computers aren't chosen: every Bee gets its owner's plan's computer (`hive/plan.py`).
 
-These paid cloud computers are optional. The free way is **Plus** and the Hive's free cloud, below.
+| Plan | Price | Every Bee gets | Bees |
+| --- | --- | --- | --- |
+| **Free** | ₹0 | 2 CPUs, 8 GB RAM, 40 GB disk, Vortex OS | 5 |
+| **Pro** | ₹499 / 30 days (you set it) | 4 CPUs, 16 GB RAM, 100 GB disk, a GPU with 16 GB VRAM, Vortex OS | 20 |
 
-## Plus: free 16 GB computers with a 16 GB GPU
+Users buy Pro on the **Plans** page (**Get Pro** in the menu, or say **"upgrade to pro"**) with **Razorpay**
+(UPI, cards, netbanking, wallets; `hive/billing.py`, `web/pro.html`):
+1. the Hive creates a Razorpay order for that user at the current price,
+2. Razorpay Checkout opens and they pay,
+3. the Hive checks the payment's signature (HMAC-SHA256 of `order_id|payment_id` with the key secret) and
+   gives that user 30 days of Pro; every one of their Bees gets the Pro computer at once,
+4. the optional webhook does the same from Razorpay's side, in case the page closed mid-payment.
+Each payment counts once. Pro doesn't renew by itself; paying again adds 30 days. When it ends, their Bees go
+back to Free computers within a minute (files are kept). The owner is always on Pro. A hosted Hive can put
+everyone on one plan with `MNX_PLAN=free|pro`.
 
-Two plans, both **₹0** (`hive/plan.py`, `hive/plans.py`):
+Set up payments once, on the Hive's machine (keys from Razorpay Dashboard → API Keys; try `rzp_test_` keys first):
 
-| Plan | Every Bee and bot gets |
-| --- | --- |
-| **Free** | Standard: 2 CPUs, 8 GB RAM, 40 GB disk |
-| **Plus** | 4 CPUs, 16 GB RAM, 100 GB disk and a GPU with 16 GB VRAM |
+```bash
+python3 -m hive.admin set RAZORPAY_KEY_ID
+python3 -m hive.admin set RAZORPAY_KEY_SECRET
+python3 -m hive.admin set RAZORPAY_WEBHOOK_SECRET     # optional: webhook URL <your Hive>/razorpay/webhook,
+                                                      # events payment.captured and order.paid
+python3 -m hive.admin price 499                       # ₹ per 30 days
+python3 -m hive.admin pro <user token> 30             # give someone Pro without paying
+```
 
-Subscribe with one tap on the **Free cloud** page or the Usage page, or say **"subscribe me to plus"**. Every
-Bee moves to the Plus computer, except Bees whose computer you chose yourself and the whole-machine Bees
-(Cloud, GPU); **"switch back to free"** reverses it. A hosted Hive can lock the plan with `MNX_PLAN=free|plus`.
+**Users never bring a GPU, a server or a key: the Hive gives them.** Pro runs on the Hive's own cloud, which the
+owner sets up once on the **Cloud setup** page:
 
-**Users never bring a GPU or a key: the Hive gives them.** It runs on the Hive's own free cloud, which the Hive's
-owner sets up once on the **Free cloud** page (about 10 minutes, no payment):
-
-1. **Free GPU, 16 GB VRAM** (`hive/gpu_pool.py`): Kaggle gives every account a free NVIDIA T4 or P100 with
-   16 GB VRAM, about 30 hours a week. Paste your Kaggle user name and API token; the Hive installs nothing on
-   the Bees. A Bee's GPU job is its script plus its files, run on that GPU; the output files come back into the
-   Bee's computer under `gpu-out/<job>/`. From a Bee's terminal: `python3 .mnx/mnx-bee gpu train.py data.csv`;
-   in its chat: **"run train.py on the gpu"**, **"gpu status"**. The Hive tracks the weekly free hours. When the
-   Hive's own machine has an NVIDIA GPU, Plus Bees use it directly instead. Needs `pip install kaggle` on the Hive.
-2. **Free servers** (`hive/cloud.py`): Oracle Cloud's Always Free machine (ARM, 4 CPUs, 24 GB RAM, 200 GB disk)
-   costs nothing. Create it with the Hive's SSH key (shown on the page, with a Copy button) and paste its public
-   IP; the Hive logs in, installs Docker and Node and puts Plus Bees there by itself, two 16 GB Bees per machine
-   (memory limits are ceilings, so they share it well). Add more machines for more Bees. Until one is added,
-   Plus Bees run on the Hive's own machine with 16 GB limits (on a phone those can't be enforced).
-
-3. **Iotamine VPS** (`hive/iotamine.py`, iotamine.com, India): paste an Iotamine API key (scope “Read & write” to
-   deploy). The Hive lists your VPSes; **Use for the Hive** adds one (it needs the Hive's SSH key in root's
-   `authorized_keys`), and **Price and deploy** makes a new Ubuntu VPS with the Hive's key already on it, after
-   showing the hourly and monthly price from Iotamine's own rates (the IP is a monthly charge). Upgrade a VPS on
-   Iotamine (say 10 vCPUs, 20 GB) and the Hive places more Bees on it: two Plus Bees per 16 GB.
-
-Kaggle's and Oracle's own rules apply: they're for your own work (no crypto mining; Kaggle's GPU has a weekly
-limit and sessions of up to about 12 hours). The Kaggle and cloud keys are Hive-only: never passed to training code.
+1. **GPU, 16 GB VRAM** (`hive/gpu_pool.py`): Kaggle gives every account a free NVIDIA T4 or P100 with 16 GB VRAM,
+   about 30 hours a week. Paste your Kaggle user name and API token. A Bee's GPU job is its script plus its
+   files; the outputs come back into the Bee's computer under `gpu-out/<job>/`. From a Bee's terminal:
+   `python3 .mnx/mnx-bee gpu train.py data.csv`; in its chat: **"run train.py on the gpu"**, **"gpu status"**.
+   When the Hive's own machine has an NVIDIA GPU, Pro Bees use it directly. Needs `pip install kaggle`.
+2. **Servers** (`hive/cloud.py`): Oracle Cloud's Always Free machine (ARM, 4 CPUs, 24 GB RAM, 200 GB disk).
+   Create it with the Hive's SSH key (shown on the page) and paste its public IP; the Hive installs Docker and
+   Node and puts Pro Bees there, two 16 GB Bees per machine. Until one is added, Pro Bees run on the Hive's own
+   machine with 16 GB limits.
+3. **Iotamine VPS** (`hive/iotamine.py`, iotamine.com, India): paste an Iotamine API key; **Use for the Hive**
+   adds a VPS, **Price and deploy** makes a new one after showing the price. Upgrade it (say 10 vCPUs, 20 GB)
+   and the Hive places more Bees on it.
 
 ## Owner and users: only the owner enters credentials
 
 Two kinds of access token (`gateway/auth.py`):
 - **Owner** (you): the token the Hive prints on start (`python3 -m hive.admin token`). Only it can enter or see
-  credentials (Iotamine, Kaggle, Hetzner, DigitalOcean, RunPod, Fish Audio, Twilio, the brain), add servers, rent or
-  deploy machines, or read the Hive's SSH key. Those pages and settings are hidden from users, and the server answers
-  users **403** if they try.
-- **Users**: a token each (`python3 -m hive.admin user-token`; or `MNX_USER_TOKENS`). They chat, make bots, run their
-  Bees, subscribe to Plus and use the GPU, and never see or add a key, an account or a server. The Free cloud page shows
-  them only a status line.
+  credentials (Razorpay, Iotamine, Kaggle, RunPod, Fish Audio, Twilio, the brain), add servers, use the Hive's
+  own browser and your paired phone, or read the Hive's SSH key. Those pages are hidden from users, and the
+  server answers users **403** if they try.
+- **Users**: a token each (`python3 -m hive.admin user-token`; or `MNX_USER_TOKENS`). Each has their own Bees,
+  plan and calls ("call me" rings their own open pages, never your phone), and never sees or adds a key, an
+  account or a server.
 
 Credentials never go into the code or git. Enter them once, on the Hive's own machine:
 
 ```bash
 python3 -m hive.admin set IOTAMINE_API_KEY        # asks for the value, hidden as you type
-python3 -m hive.admin set KAGGLE_USERNAME <name>
 python3 -m hive.admin list                        # names only
 ```
 
 They are kept in `data/lab/secrets.json` (owner-only file, `data/` is git-ignored) and are never passed to training code.
-
-## Make your own bots
-
-Not premade: you make them (`hive/bots.py`, the **Bots** page, `web/js/bots.js`). Ideas from Grok's companions
-(a personality you talk to, its own voice, it remembers you), OpenAI's GPTs (instructions, knowledge files,
-conversation starters, a store to share and remix) and creative muse bots.
-
-- **Make one**: on the Bots page, or say **"make a bot called Maya that is a friendly Tamil tutor"** (a card lets
-  you shape it). Give it an emoji, a one-line description, its **personality and instructions**, a **tone**
-  (friendly, playful, professional, concise, caring), a **first message** and up to four **conversation starters**.
-- **Knowledge**: add text files (txt, md, csv, json, code; 2 MB each, 20 per bot). It answers from them and
-  names the file; without a brain it quotes the lines that match your question.
-- **Memory**: **"remember that I'm vegetarian"**, **"what do you remember about me"**, **"forget that …"**,
-  **"forget everything"**. With a brain it uses what it remembers in every answer.
-- **Voice**: pick a Fish Audio voice for it; its replies, Talk mode and **"call me"** use that voice.
-- **Its own computer**: a bot is a Bee, so "$ …" runs on its computer (switch it off for a chat-only bot).
-- **Explore**: start from an idea (Buddy, Tutor, Code Buddy, Muse, Coach, Language Buddy, Interview Coach,
-  Researcher) and make it yours; see bots shared on this Hive; **Remix** any bot (knowledge included);
-  **Export** a bot as a file and **Import** it into any Mnx Hive.
-- **Chat with it** in **Peace**: your bots are first in the list, each opens with its emoji, first message and
-  starters. With a brain it talks in character and sees the last turns of the chat.
 
 ## Your Mnx models: pick one by name
 

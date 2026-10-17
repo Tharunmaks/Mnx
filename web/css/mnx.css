@@ -798,7 +798,8 @@ body.embed .page { padding-top: 10px; }
 .bot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
 .bot-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .bot-top { display: flex; gap: 12px; align-items: center; }
-.bot-emoji { font-size: 30px; width: 46px; height: 46px; display: grid; place-items: center; background: var(--surface-2); border-radius: 14px; flex-shrink: 0; }
+.bot-hex { width: 42px; height: 42px; flex-shrink: 0; display: block; }
+.bot-hex .hex { width: 42px; height: 42px; display: block; }
 .bot-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
 .bot-actions .btn { padding: 5px 10px; font-size: 13px; }
 .bot-facts { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -811,12 +812,25 @@ dialog.wide-dlg { width: min(640px, calc(100vw - 24px)); }
 .starters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 6px; }
 .starters button { border: 1px solid var(--line); background: var(--surface); border-radius: 99px; padding: 6px 12px; font-size: 13.5px; color: var(--text); }
 .starters button:hover { border-color: var(--honey); }
-.peace-head .emoji-big { font-size: 48px; line-height: 1; }
 .peace-head .greet { color: var(--text); max-width: 460px; }
-.rail-btn .bee-mini.emoji { font-size: 16px; display: grid; place-items: center; }
-.msg-mnx > span.logo.emoji { font-size: 22px; display: grid; place-items: center; }
 
-/* ---------- Free cloud ---------- */
+/* ---------- Plans: Free / Pro (Razorpay) ---------- */
+.pro-page { max-width: 760px; }
+.pro-now { font-size: 15px; color: var(--text); margin: 4px 0 14px; }
+.plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.plan-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+.plan-card h2 { margin: 0; font-size: 17px; }
+.plan-card .price { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
+.plan-card .price small { font-size: 14px; font-weight: 500; color: var(--text-2); letter-spacing: 0; }
+.plan-card.pro { border-color: rgba(245, 166, 35, 0.55); background: linear-gradient(180deg, var(--honey-soft), var(--surface) 60%); }
+.plan-card.current { box-shadow: 0 0 0 2px var(--honey) inset; }
+.plan-list { margin: 0; padding-left: 18px; color: var(--text-2); font-size: 14px; display: flex; flex-direction: column; gap: 6px; }
+.plan-card .pay { margin-top: auto; padding: 10px 14px; font-size: 15px; }
+.code-note { background: #0a0a0c; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; overflow-x: auto; white-space: pre; }
+.rail-btn.pro-btn { color: var(--honey-2); }
+.rail-btn.pro-btn.is-pro { color: var(--text-2); }
+
+/* ---------- Cloud setup ---------- */
 .step-card { display: flex; gap: 14px; background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 16px; margin: 12px 0; }
 .step-card.done { border-color: rgba(62, 207, 142, 0.45); }
 .step-num { width: 30px; height: 30px; border-radius: 50%; background: var(--honey); color: var(--honey-ink); font-weight: 800; display: grid; place-items: center; flex-shrink: 0; }

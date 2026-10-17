@@ -86,7 +86,7 @@ export function runCard(runId) {
 
 // Eval Bee's report: how well the model predicts held-out text, and what it writes.
 function evalBox(res) {
-  const box = h("div", { class: "eval-box" }, h("div", { class: "eval-head" }, h("span", { class: "bee-tag" }, "Eval Bee"),
+  const box = h("div", { class: "eval-box" }, h("div", { class: "eval-head" }, h("span", { class: "bee-tag" }, "Eval"),
     h("span", {}, res.perplexity != null ? `perplexity ${res.perplexity} on held-out text (lower is better)` : "checked the model")));
   if (res.params_text) box.append(h("div", { class: "hint" }, `${res.params_text} parameters · trained on ${fmtTokens(res.tokens)} tokens in ${res.minutes} min`));
   for (const smp of res.samples || []) {

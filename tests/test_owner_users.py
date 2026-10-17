@@ -40,8 +40,8 @@ def test_roles():
 
 
 def test_whoami(client):
-    assert client.get("/api/whoami", headers=OWNER()).json() == {"role": "owner"}
-    assert client.get("/api/whoami", headers=USER).json() == {"role": "user"}
+    assert client.get("/api/whoami", headers=OWNER()).json() == {"role": "owner", "plan": "pro"}
+    assert client.get("/api/whoami", headers=USER).json() == {"role": "user", "plan": "free"}
     assert client.get("/api/whoami", headers={"Authorization": "Bearer wrong"}).status_code == 401
 
 
@@ -58,7 +58,9 @@ def test_whoami(client):
     ("post", "/api/lab/providers/runpod/rent", {}),
     ("put", "/api/brain", {"url": "http://evil.example"}),
     ("put", "/api/voice", {"fish_key": "evil"}),
-    ("post", "/api/bees/scout/cloud", None),
+    ("get", "/api/phones", None),
+    ("post", "/api/phones/p1/cmd", {"cmd": "screenshot"}),
+    ("get", "/api/events", None),
 ])
 def test_users_cannot_touch_credentials_or_setup(client, method, path, body):
     r = getattr(client, method)(path, headers=USER, **({"json": body} if body is not None else {}))
@@ -74,13 +76,45 @@ def test_users_get_the_product_but_never_a_key(client):
         for secret in ("secret-iota-key", "fish-secret", "brain-secret", "+919876543210", "127.0.0.1:11434", "ssh-ed25519"):
             assert secret not in text, (path, secret)
     st = client.get("/api/cloud/status", headers=USER).json()
-    assert set(st) == {"plan", "gpu_ready", "gpu_source", "hours_week", "weekly_limit", "servers"}
+    assert set(st) == {"plan", "gpu_ready", "hours_week", "weekly_limit"}
     assert client.get("/api/lab", headers=USER).json()["secrets"] == []
-    assert client.get("/api/computers", headers=USER).json()["cloud"] == []
+    assert "cloud" not in client.get("/api/computers", headers=USER).json()
     assert client.get("/api/usage", headers=USER).json()["cloud"]["providers"] == []
-    # users can still subscribe to Plus and use the GPU endpoints
-    assert client.put("/api/plan", headers=USER, json={"plan": "plus"}).status_code == 200
+    # Pro is paid for (Razorpay), never switched on by a user; the GPU endpoints answer
+    assert client.put("/api/plan", headers=USER, json={"plan": "pro"}).status_code == 405
+    assert client.get("/api/plan", headers=USER).json()["plan"] == "free"
     assert client.get("/api/gpu", headers=USER).status_code == 200
+    # the Hive's own browser (a function, not a Bee) is the owner's
+    assert client.get("/api/browser?bee=browser", headers=USER).status_code == 403
+
+
+def test_each_user_sees_and_uses_only_their_own_bees(client, tmp_path, monkeypatch):
+    import gateway.api as gw
+    from hive import cells as cells_mod
+    from hive.bees import Registry
+    r = Registry(tmp_path / "hive.json", tmp_path / "keys.json")
+
+    async def nothing(*a):
+        return None
+    r.on_created = r.on_deleted = r.on_computer = nothing
+    monkeypatch.setattr(gw, "registry", r)
+    monkeypatch.setattr(gw, "BEES", r.bees)
+    monkeypatch.setattr(cells_mod, "CELLS", tmp_path / "cells")
+    monkeypatch.setattr(cells_mod.cells, "cells", {})
+    (tmp_path / "user_tokens.txt").write_text("user-token-abc\nuser-token-xyz\n")
+    other = {"Authorization": "Bearer user-token-xyz"}
+    made = client.post("/api/bees", headers=USER, json={"name": "Scout", "skill": "watches prices"})
+    assert made.status_code == 200 and made.json()["computer"]["size"] == "free" and "owner" not in made.json()
+    assert client.post("/api/bees", headers=other, json={"name": "Scout", "skill": "theirs"}).json()["id"] == "scout_2"
+    assert [b["id"] for b in client.get("/api/bees", headers=USER).json()] == ["scout"]
+    assert [b["id"] for b in client.get("/api/bees", headers=other).json()] == ["scout_2"]
+    for method, path in (("get", "/api/cells/scout"), ("post", "/api/cells/scout/exec"), ("get", "/api/bots/scout/memory"),
+                         ("delete", "/api/bees/scout"), ("get", "/api/cells/scout/files")):
+        kw = {"json": {"command": "cat /etc/passwd"}} if path.endswith("exec") else {}
+        assert getattr(client, method)(path, headers=other, **kw).status_code == 404, path
+    assert client.post("/api/bees", headers=other, json={"name": "Kid", "skill": "x", "created_by": "scout"}).status_code == 404
+    assert client.put("/api/bees/scout/computer", headers=USER, json={"size": "xl"}).status_code in (404, 405)  # no choosing
+    assert client.get("/api/bees", headers=OWNER()).json() == []  # the owner's own list holds the owner's Bees only
 
 
 def test_the_owner_sees_and_sets_credentials(client):

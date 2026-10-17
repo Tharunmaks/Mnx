@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0d0d0f">
-  <title>Bots · Mnx Hive</title>
+  <title>Bees · Mnx Hive</title>
   <link rel="icon" href="img/logo.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,31 +16,29 @@
   <main class="main">
     <header class="topbar">
       <a class="icon-btn" href="index.html" aria-label="Back to chat"><span data-icon="back"></span></a>
-      <h1>Bots</h1>
-      <button class="btn primary" id="newBot" type="button">Make a bot</button>
+      <h1>Your Bees</h1>
+      <button class="btn primary" id="newBot" type="button">New Bee</button>
       <span class="conn" id="conn"><i></i><span>Connecting</span></span>
     </header>
 
     <div class="scroll">
       <div class="page" id="page">
         <div class="bot-tabs" role="tablist">
-          <button class="bot-tab on" data-tab="mine" type="button">My bots</button>
-          <button class="bot-tab" data-tab="explore" type="button">Explore</button>
+          <button class="bot-tab on" data-tab="mine" type="button">My Bees</button>
+          <button class="bot-tab" data-tab="explore" type="button">Shared</button>
         </div>
 
         <section id="tab-mine">
-          <p class="hint" id="brainNote"></p>
+          <p class="hint" id="planNote"></p>
           <div class="bot-grid" id="mine"></div>
         </section>
 
         <section id="tab-explore" class="hidden">
-          <div class="section-title"><h2>Start from an idea</h2><span class="hint">Make it yours: every part can change</span></div>
-          <div class="bot-grid" id="ideas"></div>
-          <div class="section-title"><h2>Shared on this Hive</h2></div>
+          <div class="section-title"><h2>Shared on this Hive</h2><span class="hint">Remix one into a Bee of your own</span></div>
           <div class="bot-grid" id="shared"></div>
-          <div class="section-title"><h2>Import a bot</h2></div>
+          <div class="section-title"><h2>Import a Bee</h2></div>
           <div class="usage-card">
-            <p class="hint">A bot exported from any Mnx Hive (a .json file with its personality and knowledge).</p>
+            <p class="hint">A Bee exported from any Mnx Hive (a .json file with its instructions and knowledge).</p>
             <input type="file" id="importFile" accept=".json,application/json">
           </div>
         </section>
@@ -51,25 +49,22 @@
 
 <dialog id="botDlg" class="wide-dlg">
   <form method="dialog" id="botForm">
-    <div class="dlg-head"><h2 id="botTitle">Make a bot</h2><button class="icon-btn" value="cancel" aria-label="Close"><span data-icon="close"></span></button></div>
+    <div class="dlg-head"><h2 id="botTitle">New Bee</h2><button class="icon-btn" value="cancel" aria-label="Close"><span data-icon="close"></span></button></div>
     <div class="dlg-body">
-      <div class="row-inline">
-        <label class="field" style="max-width:90px">Emoji <input name="emoji" maxlength="8" value="🤖"></label>
-        <label class="field">Name <input name="name" maxlength="24" required placeholder="e.g. Maya"></label>
-      </div>
-      <label class="field">What it is (one line) <input name="tagline" maxlength="90" placeholder="e.g. a friendly Tamil tutor"></label>
-      <label class="field">Personality and instructions
-        <textarea name="personality" rows="6" maxlength="4000" placeholder="Who it is, how it talks, what it knows, what it should and shouldn't do."></textarea>
+      <label class="field">Name <input name="name" maxlength="24" required placeholder="e.g. Scout"></label>
+      <label class="field">Its responsibility <input name="tagline" maxlength="90" required placeholder="e.g. watches prices and tells me when they drop"></label>
+      <label class="field">Instructions
+        <textarea name="personality" rows="6" maxlength="4000" placeholder="How it works and talks, what it knows, what it should and shouldn't do."></textarea>
       </label>
       <div class="row-inline">
         <label class="field">Tone <select name="tone" id="toneSel"></select></label>
-        <label class="field">Who can use it
-          <select name="visibility"><option value="private">Only me</option><option value="hive">Everyone on this Hive (Explore)</option></select>
+        <label class="field">Sharing
+          <select name="visibility"><option value="private">Only me</option><option value="hive">Others on this Hive can remix it</option></select>
         </label>
       </div>
       <label class="field">First message <input name="greeting" maxlength="300" placeholder="What it says when you open its chat"></label>
       <label class="field">Conversation starters (one per line, up to 4)
-        <textarea name="starters" rows="3" placeholder="Teach me numbers&#10;Quiz me"></textarea>
+        <textarea name="starters" rows="3" placeholder="What's new today?&#10;Check the prices"></textarea>
       </label>
       <label class="check"><input type="checkbox" name="memory" checked> Memory: it remembers what you tell it (“remember that …”)</label>
       <label class="check"><input type="checkbox" name="computer" checked> Its own computer: “$ …” runs commands there</label>
@@ -83,8 +78,9 @@
       <div class="field" id="knowBox">Knowledge files
         <div id="knowList" class="know-list"></div>
         <input type="file" id="knowFile" multiple accept=".txt,.md,.csv,.json,.py,.js,.html,.xml,.yaml,.yml,.tsv,.log,.rst">
-        <span class="hint">Text files up to 2 MB each, 20 in all. It answers from them, even without a brain.</span>
+        <span class="hint">Text files up to 2 MB each, 20 in all. It answers from them.</span>
       </div>
+      <p class="hint" id="compNote"></p>
       <p class="hint" id="botErr" style="color:var(--failed)"></p>
     </div>
     <div class="dlg-foot">

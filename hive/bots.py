@@ -1,18 +1,15 @@
-"""Bots you make yourself: your own characters and helpers, not premade ones.
+"""Bees as your own bots: every Bee a user makes has a profile, its own chat and its own memory, like Grok's bots
+and OpenAI's GPTs. There are no premade ones: you write who it is and what it's responsible for.
 
-Ideas from Grok's companions (a personality you talk to, its own voice, it remembers you), OpenAI's GPTs
-(instructions, knowledge files, conversation starters, a store to share and remix) and creative muse bots
-(story and idea partners). A bot is a Bee with a profile, so it also has its own computer.
-
-  profile    emoji, color, tagline, personality (its instructions), tone, greeting, up to 4 conversation starters
+  profile    tagline (its responsibility), instructions, tone, greeting, up to 4 conversation starters
   knowledge  your files (text, markdown, csv, json, code); it answers from them
   memory     "remember that I'm vegetarian": it keeps facts about you and uses them
   voice      a Fish Audio voice of its own, for Talk mode and calls
-  computer   "$ …" runs on its computer (switch off for a pure chat bot)
-  sharing    private, or listed in Explore for everyone on this Hive; export a file and import it elsewhere
+  computer   "$ …" runs on its computer (switch off for a chat-only Bee)
+  sharing    private, or listed for everyone on this Hive to remix; export a file and import it elsewhere
 
-Talking freely needs the brain (Settings → Brain). Without one a bot still remembers, forgets, answers from its
-knowledge and runs commands.
+Talking freely needs a model (the owner sets them up). Without one a Bee still remembers, forgets, answers from
+its knowledge and runs commands.
 """
 
 from __future__ import annotations
@@ -36,62 +33,18 @@ MAX_MEMORIES = 200
 CHUNK = 900
 HISTORY = 12  # turns of the conversation the bot sees
 
-TEMPLATES = [
-    {"id": "companion", "emoji": "💛", "name": "Buddy", "tagline": "A warm companion who remembers you",
-     "personality": "You are a warm, supportive companion. Talk like a close friend: curious about the user's day, "
-                    "encouraging, honest. Remember what they tell you and bring it up naturally later.",
-     "tone": "caring", "greeting": "Hey! I'm here. How's your day going?",
-     "starters": ["How was your day?", "Cheer me up", "Remember that I love cricket", "Let's plan my weekend"]},
-    {"id": "tutor", "emoji": "🎓", "name": "Tutor", "tagline": "Teaches step by step, asks you questions",
-     "personality": "You are a patient tutor. Never just give the answer: explain step by step, check understanding with a "
-                    "short question, and adapt to the student's level. Use simple examples from daily life in India.",
-     "tone": "friendly", "greeting": "Hi! What would you like to learn today?",
-     "starters": ["Explain photosynthesis simply", "Help me with quadratic equations", "Quiz me on history", "Teach me Python"]},
-    {"id": "coder", "emoji": "🧑‍💻", "name": "Code Buddy", "tagline": "Reviews code and runs it on its computer",
-     "personality": "You are a senior engineer. Review code for bugs first, then clarity. Give concrete fixes with code. "
-                    "You can run commands on your own computer when the user asks with $.",
-     "tone": "concise", "greeting": "Paste some code or tell me what you're building.",
-     "starters": ["Review my function", "$ python3 --version", "Why is my loop slow?", "Write a FastAPI example"]},
-    {"id": "muse", "emoji": "🪶", "name": "Muse", "tagline": "Story and idea partner",
-     "personality": "You are a creative muse. Help the user brainstorm, write stories, poems and lyrics. Offer bold ideas, "
-                    "then build on theirs. Keep the user's voice; suggest, don't take over.",
-     "tone": "playful", "greeting": "Let's make something. A story, a song, a wild idea?",
-     "starters": ["Start a story set in Chennai", "Give me 5 app ideas", "Write a short poem about rain", "Name my startup"]},
-    {"id": "coach", "emoji": "💪", "name": "Coach", "tagline": "Fitness and habits coach",
-     "personality": "You are a fitness and habits coach. Ask about goals and limits, give simple plans, and keep the user "
-                    "accountable. No medical claims; suggest a doctor for health problems.",
-     "tone": "friendly", "greeting": "Ready to get stronger? What's your goal?",
-     "starters": ["Make me a 20 minute workout", "Help me sleep earlier", "Remember my goal is 10k steps", "Vegetarian protein ideas"]},
-    {"id": "language", "emoji": "🗣️", "name": "Language Buddy", "tagline": "Practise Tamil, Hindi or English",
-     "personality": "You are a language partner. Chat in the language the user is learning, keep sentences simple, and "
-                    "gently correct mistakes after each reply with a short explanation.",
-     "tone": "friendly", "greeting": "Vanakkam! Namaste! Hello! Which language shall we practise?",
-     "starters": ["Let's practise Tamil", "Correct my English", "Teach me 5 Hindi phrases", "Talk to me in Hindi"]},
-    {"id": "interview", "emoji": "🎯", "name": "Interview Coach", "tagline": "Mock interviews with feedback",
-     "personality": "You run mock job interviews. Ask one question at a time, wait for the answer, then give specific "
-                    "feedback and a better sample answer.",
-     "tone": "professional", "greeting": "Which role are you interviewing for?",
-     "starters": ["Software engineer interview", "Tell me about yourself practice", "HR round questions", "Rate my answer"]},
-    {"id": "research", "emoji": "🔎", "name": "Researcher", "tagline": "Answers from the files you give it",
-     "personality": "You answer from the knowledge files first and say which file you used. If the files don't cover it, "
-                    "say so before using general knowledge.",
-     "tone": "professional", "greeting": "Add files to my knowledge and ask me anything about them.",
-     "starters": ["Summarise my files", "What do my notes say about…", "Make a study sheet", "Find the key numbers"]},
-]
-
-
 class BotError(ValueError):
     pass
 
 
 # ---------------------------------------------------------------- the profile
 def clean_profile(p: dict, base: dict | None = None) -> dict:
-    out = dict(base or {"emoji": "🤖", "color": "", "personality": "", "tone": "friendly", "greeting": "", "starters": [],
+    out = dict(base or {"emoji": "", "color": "", "personality": "", "tone": "friendly", "greeting": "", "starters": [],
                         "memory": True, "computer": True, "voice_id": "", "voice_name": "", "visibility": "private",
                         "template": None, "created": int(time.time())})
     p = dict(p or {})
     if "emoji" in p:
-        out["emoji"] = str(p["emoji"] or "🤖").strip()[:8] or "🤖"
+        out["emoji"] = str(p["emoji"] or "").strip()[:8]
     if "color" in p:
         c = str(p["color"] or "")
         out["color"] = c if re.fullmatch(r"#[0-9a-fA-F]{6}", c) else ""
@@ -119,18 +72,18 @@ def clean_profile(p: dict, base: dict | None = None) -> dict:
         if p["visibility"] not in ("private", "hive"):
             raise BotError("Visibility is private or hive")
         out["visibility"] = p["visibility"]
-    if "template" in p:
-        out["template"] = p["template"] if any(t["id"] == p["template"] for t in TEMPLATES) else None
+    out["template"] = None
     return out
 
 
 def is_bot(b: dict | None) -> bool:
+    """Every Bee has a profile now; older saved Bees get one when the Hive loads."""
     return bool(b and isinstance(b.get("bot"), dict))
 
 
 def system_prompt(b: dict, knowledge: list[dict], memories: list[str], user_name: str = "") -> str:
     p = b["bot"]
-    parts = [f"You are {b['name']}, a bot the user made in their Mnx Hive. {b.get('skill') or ''}".strip(),
+    parts = [f"You are {b['name']}, a Bee the user made in their Mnx Hive. Your responsibility: {b.get('skill') or 'help the user'}.",
              p.get("personality") or "Be helpful.",
              f"Your tone: {TONES.get(p.get('tone'), TONES['friendly'])}."]
     if user_name:
@@ -359,42 +312,43 @@ def offline_reply(b: dict) -> str:
         can.append("run commands on my computer (“$ ls”)")
     can.append("call you (“call me”)")
     hello = p.get("greeting") or f"Hi, I'm {b['name']}."
-    return (f"{hello}\n\nMy brain isn't connected yet, so I can't chat freely. Connect one in Settings → Brain (Ollama, Groq "
-            f"and Gemini have free options) and I'll talk with my personality. Right now I can {', '.join(can)}.")
+    return (f"{hello}\n\nNo model is running on this Hive yet, so I can't chat freely. Right now I can {', '.join(can)}.")
 
 
-# ---------------------------------------------------------------- "make a bot …" in the chat
-MAKE = re.compile(r"\b(?:make|create|build|design)\s+(?:me\s+)?(?:a|an|my(?:\s+own)?|our|new)?\s*(?:own\s+)?(?:new\s+)?(?:custom\s+)?"
-                  r"(?:ai\s+)?(?:bot|chatbot|companion|character|gpt)\b", re.I)
+# ---------------------------------------------------------------- "make a bee …" in the chat
+MAKE = re.compile(r"\b(?:make|create|build|design|spawn|hatch)\s+(?:me\s+)?(?:a|an|another|one|my(?:\s+own)?|our|new|child)?\s*"
+                  r"(?:own\s+)?(?:new\s+)?(?:custom\s+)?(?:ai\s+)?(?:bee|bot|chatbot|companion|gpt)\b", re.I)
+# "build a chatbot for my website", "make a telegram bot": something to build, which the model helps with
+FOR_SOMETHING = re.compile(r"\b(?:website|site|web\s*app|app|discord|telegram|whatsapp|slack|instagram|api|server|html|react|"
+                           r"flask|django|node)\b", re.I)
+PARENT = re.compile(r"\b(?:tell|ask|have|get|let)\s+(?:the\s+|my\s+)?(?P<p>[\w -]{1,30}?)(?:\s+bee)?\s+to\b", re.I)
 NAMED = re.compile(r"\b(?:called|named)\s+[\"“']?(?P<n>[A-Za-z][\w -]{0,23}?)[\"”']?(?=\s+(?:that|which|who|to|for|with|and)\b|[,.!?]|$)", re.I)
-WHAT = re.compile(r"(?:^|\s)(?:that|which|who|to|for)\s+(?:is\s+|acts as\s+|will be\s+)?(?P<s>.+)$", re.I)
+WHAT = re.compile(r"(?:^|\s)(?:that|which|who|to|for)\s+(?:is\s+|acts as\s+|will be\s+|is responsible for\s+|handles\s+)?(?P<s>.+)$", re.I)
 
 
 def parse(text: str) -> dict | None:
+    """ "make a bee called Scout that watches prices", "tell Scout to make a bee called Tester that runs the tests" """
     t = " ".join((text or "").split())
     m = MAKE.search(t)
     if not m:
         return None
     from .cloud_chat import CODE_ASK
-    if CODE_ASK.search(t):  # "make an AI chatbot in python" asks for code, which the model writes
+    if CODE_ASK.search(t) or FOR_SOMETHING.search(t):  # "make an AI chatbot in python" asks for code, which the model writes
         return None
+    pm = PARENT.search(t[:m.start()] + " ")
     rest = t[m.end():]
     nm = NAMED.search(rest)
     wm = WHAT.search(rest[nm.end():] if nm else rest)
     desc = (wm.group("s") if wm else "").strip(" .!?")
-    # an idea from the gallery only when you didn't describe your own ("make my own companion")
-    tmpl = None if desc else next((x for x in TEMPLATES if x["id"] in t.lower() or x["name"].lower() in t.lower()), None)
-    return {"name": nm.group("n").strip() if nm else "", "description": desc, "template": tmpl["id"] if tmpl else None}
+    return {"name": nm.group("n").strip() if nm else "", "description": desc, "parent": pm.group("p").strip() if pm else None}
 
 
-# ---------------------------------------------------------------- making and changing bots
+# ---------------------------------------------------------------- making and changing Bees
 async def create_bot(name: str, tagline: str, profile: dict, created_by: str = "you", knowledge: dict | None = None,
-                     computer: dict | None = None) -> dict:
+                     owner: str | None = None) -> dict:
     from .bees import registry
-    prof = clean_profile(profile)
-    b = await registry.create(name, tagline or f"{name}, a bot you made", created_by, ["bot"], None, False, computer)
-    b["bot"] = prof
-    registry.save()
+    b = await registry.create(name, tagline or f"Helps with whatever {name} is asked", created_by, ["bot"], None, False,
+                              profile=profile, owner=owner)
     for fname, text in (knowledge or {}).items():
         store.add_file(b["id"], fname, text.encode() if isinstance(text, str) else text)
     return b
@@ -403,55 +357,55 @@ async def create_bot(name: str, tagline: str, profile: dict, created_by: str = "
 def update_bot(b: dict, change: dict) -> dict:
     from .bees import registry
     if not is_bot(b):
-        raise BotError("That Bee isn't a bot")
+        raise BotError("That isn't one of your Bees")
     b["bot"] = clean_profile(change.get("profile") or {}, b["bot"])
     if change.get("tagline"):
         b["skill"] = " ".join(str(change["tagline"]).split())[:90]
+    if change.get("name"):
+        name = " ".join(str(change["name"]).split())[:24]
+        if any(x is not b and x["name"].lower() == name.lower() for x in registry.of(b.get("owner", "owner"))):
+            raise BotError(f"You already have a Bee called {name}")
+        b["name"] = name
     registry.save()
     return b
 
 
-def from_template(tid: str) -> dict | None:
-    return next((dict(t) for t in TEMPLATES if t["id"] == tid), None)
-
-
 async def create_flow(task, intent: dict) -> None:
-    """ "make a bot called Maya that is a friendly Tamil tutor" → a card to shape it → the bot, ready to chat."""
-    from .bees import BeeError
+    """ "make a bee called Scout that watches prices" → a card to shape it → the Bee, with its own chat."""
+    from .bees import BeeError, registry
     from .cloud_chat import ask
-    t = from_template(intent.get("template")) if intent.get("template") else None
+    parent_id = task.bee if getattr(task, "bee", None) and registry.mine(task.bee, task.user) else "you"  # Peace: a child of this Bee
+    if intent.get("parent"):
+        p = registry.find(intent["parent"], task.user)
+        if not p:
+            await task.answer(f"You don't have a Bee called {intent['parent']}. Say “list my bees” to see them.")
+            return
+        parent_id = p["id"]
     desc = intent.get("description") or ""
-    name = intent.get("name") or (t["name"] if t else "")
-    personality = (t["personality"] if t else "") + (f" {desc[0].upper()}{desc[1:]}." if desc and not t else "")
-    reply = await ask(task, "clarify", title="Make your own bot", service="Bots", fields=[
-        {"name": "name", "label": "Name", "value": name, "placeholder": "e.g. Maya", "required": True},
-        {"name": "emoji", "label": "Emoji", "value": t["emoji"] if t else "🤖"},
-        {"name": "tagline", "label": "What it is (one line)", "value": (t["tagline"] if t else desc[:90]), "placeholder": "e.g. a friendly Tamil tutor"},
-        {"name": "personality", "label": "Personality and instructions", "input": "textarea", "value": personality.strip(),
-         "placeholder": "How it talks, what it knows, what it should and shouldn't do", "required": True},
-        {"name": "tone", "label": "Tone", "input": "select", "value": t["tone"] if t else "friendly",
-         "options": [{"value": k, "label": k.capitalize()} for k in TONES]},
-        {"name": "greeting", "label": "First message", "value": t["greeting"] if t else ""},
-        {"name": "starters", "label": "Conversation starters (one per line)", "input": "textarea",
-         "value": "\n".join(t["starters"]) if t else ""},
-        {"name": "visibility", "label": "Who can use it", "input": "select", "value": "private",
-         "options": [{"value": "private", "label": "Only me"}, {"value": "hive", "label": "Everyone on this Hive (Explore)"}]}],
-        text="It gets its own memory, a voice for calls and its own computer. Add knowledge files on the Bots page.",
-        actions=[{"id": "make", "label": "Make bot"}, {"id": "cancel", "label": "Cancel", "style": "danger"}])
+    name = intent.get("name") or ""
+    maker = "" if parent_id == "you" else f" for {registry.get(parent_id)['name']}"
+    reply = await ask(task, "clarify", title=f"New Bee{maker}", service="Bees", fields=[
+        {"name": "name", "label": "Name", "value": name, "placeholder": "e.g. Scout", "required": True},
+        {"name": "tagline", "label": "Its responsibility", "value": desc[:90], "required": True,
+         "placeholder": "e.g. watches prices and tells me when they drop"},
+        {"name": "personality", "label": "Instructions (optional)", "input": "textarea", "value": "",
+         "placeholder": "How it works and talks, what it should and shouldn't do"},
+        {"name": "tone", "label": "Tone", "input": "select", "value": "friendly",
+         "options": [{"value": k, "label": k.capitalize()} for k in TONES]}],
+        text="It gets its own chat, its own memory and its own computer (your plan's). Add knowledge files and a voice on the Bees page.",
+        actions=[{"id": "make", "label": "Make Bee"}, {"id": "cancel", "label": "Cancel", "style": "danger"}])
     if reply["action"] != "make":
-        await task.answer("Okay, no bot.")
+        await task.answer("Okay, no new Bee.")
         return
     v = reply.get("values") or {}
     try:
-        b = await create_bot(v.get("name") or name, v.get("tagline") or "", {
-            "emoji": v.get("emoji"), "personality": v.get("personality"), "tone": v.get("tone") or "friendly",
-            "greeting": v.get("greeting"), "starters": str(v.get("starters") or "").splitlines(),
-            "visibility": v.get("visibility") or "private", "template": t["id"] if t else None})
+        b = await create_bot((v.get("name") or name).strip(), (v.get("tagline") or desc).strip(), {
+            "personality": v.get("personality") or "", "tone": v.get("tone") or "friendly"}, created_by=parent_id, owner=task.user)
     except (BeeError, BotError) as exc:
         await task.answer(f"I couldn't make it: {exc}")
         return
-    await task.emit("result", service="Bots", title=f"{b['bot']['emoji']} {b['name']} is ready", badge="New bot",
-                    details=[["What it is", b["skill"]], ["Tone", b["bot"]["tone"]], ["Talk to it", "Peace → " + b["name"]],
-                             ["Shape it", f"/bots.html#edit={b['id']}"]])
-    await task.answer(f"{b['name']} is ready. Switch to Peace and pick {b['name']} to talk with it, or open Bots to add knowledge "
-                      "files and a voice.")
+    from .bees import registry as reg
+    await task.emit("result", service="Bees", title=f"{b['name']} is ready", badge="New Bee",
+                    details=[["Responsibility", b["skill"]], ["Computer", reg.view(b)["computer_text"]],
+                             ["Talk to it", "Peace → " + b["name"]], ["Shape it", f"/bots.html#edit={b['id']}"]])
+    await task.answer(f"{b['name']} is ready. Switch to Peace and pick {b['name']} to talk with it.")

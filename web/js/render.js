@@ -89,8 +89,12 @@ function pickStep(ev, prev) {
 }
 
 // ---------- model → DOM ----------
-// cardCache keeps live card elements (and anything typed into them) across re-renders.
-export function renderRun(model, { onAction, cardCache }) {
+// cardCache keeps live card elements (and anything typed into them) across re-renders. beeNames: your Bees; any
+// other name on a step (Queen, Cloud, Data …) is one of the Hive's functions, shown without a Bee label.
+let yourBees = null;
+const isBee = (name) => !!name && (!yourBees || yourBees.has(name));
+export function renderRun(model, { onAction, cardCache, beeNames = null }) {
+  yourBees = beeNames;
   const body = h("div", { class: "body" });
 
   if (model.roots.length) body.append(renderList(model.roots, model, onAction, cardCache, true));
@@ -139,6 +143,10 @@ function renderList(list, model, onAction, cardCache, top) {
     }
     if (it.kind === "output") { box.append(renderOutput(it.ev)); continue; }
     if (it.kind === "rush") { box.append(renderRush(it.ev)); continue; }
+    if (it.kind === "bee" && !isBee(it.bee)) {  // a function, not a Bee: just its work
+      if (it.children.length) box.append(renderList(it.children, model, onAction, cardCache, false));
+      continue;
+    }
     const group = h("div", { class: "step-group" });
     group.append(it.kind === "bee" ? renderBee(it) : renderStep(it));
     if (it.children.length) group.append(renderList(it.children, model, onAction, cardCache, false));
@@ -165,14 +173,14 @@ function renderBee(it) {
   return h("div", { class: "step done" },
     h("span", { class: "ico", html: ICONS.hex }),
     h("span", { class: "txt bee-line" },
-      h("span", { class: "bee-tag" }, `${it.bee} Bee`),
+      h("span", { class: "bee-tag" }, it.bee),
       h("span", {}, it.text)));
 }
 
 function renderStep(it) {
   const icon = ICONS[it.status === "error" ? "error" : it.type] || ICONS.planning;
   const txt = h("span", { class: "txt" });
-  if (it.bee) txt.append(h("b", {}, `${it.bee} · `));
+  if (isBee(it.bee)) txt.append(h("b", {}, `${it.bee} · `));
   txt.append(it.text);
   if (it.detail) txt.append(h("span", { class: "detail" }, ` — ${it.detail}`));
   return h("div", { class: `step ${it.status}` }, h("span", { class: "ico", html: icon }), txt);

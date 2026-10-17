@@ -5,7 +5,7 @@ picked as the cheapest server type that fits, in the region you choose. The Hive
 key, Docker and Node.js (so Vortex OS runs there), adds it as a Lab server and moves the Bee onto it. Removing
 the Bee, or moving it off, deletes the server so the billing stops.
 
-Providers (API token saved in Cloud Bee · Lab → Secrets):
+Providers (API token saved in Lab → Secrets):
   Hetzner Cloud   HCLOUD_TOKEN         cheapest; Singapore is the nearest region to India
   DigitalOcean    DIGITALOCEAN_TOKEN   has a Bangalore region (blr1)
 GPU machines (Paid plan) are rented on RunPod (RUNPOD_API_KEY) through the GPU Bee, as before.
@@ -219,7 +219,7 @@ class Machines:
         cls = PROVIDERS.get(pid)
         token = self._lab()._secrets.get(cls.secret) if cls else None
         if not cls or not token:
-            raise CloudError(f"Save {cls.secret if cls else 'a provider token'} in Cloud Bee · Lab → Secrets first")
+            raise CloudError(f"Save {cls.secret if cls else 'a provider token'} in Lab → Secrets first")
         return cls(token, self.transport)
 
     def configured(self) -> list[str]:
@@ -231,7 +231,7 @@ class Machines:
         pids = [pid] if pid else self.configured()
         if not pids:
             raise CloudError("No cloud provider is connected. Save HCLOUD_TOKEN (Hetzner) or DIGITALOCEAN_TOKEN "
-                             "(DigitalOcean) in Cloud Bee · Lab → Secrets")
+                             "(DigitalOcean) in Lab → Secrets")
         best, errors = None, []
         for p in pids:
             prov = self.provider(p)
@@ -345,7 +345,7 @@ async def give_bee(bee_id: str, quote: dict) -> dict:
     from .bees import registry
     rec = await machines.provision(bee_id, quote)
     try:
-        await registry.set_computer(bee_id, {"where": rec["target"], "cloud": rec["id"]})
+        await registry.move(bee_id, rec["target"], rec["id"])
     except BaseException:
         await machines.release(rec["id"])
         raise
@@ -357,7 +357,7 @@ async def take_back(bee_id: str) -> None:
     from .bees import registry
     b = registry.get(bee_id)
     if b and b["computer"].get("cloud"):
-        await registry.set_computer(bee_id, {"where": "here", "cloud": None})
+        await registry.move(bee_id, "here")
     await machines.release_bee(bee_id)
 
 

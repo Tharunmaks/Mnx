@@ -13,7 +13,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from hive import bee_chat, bees, cells as cells_mod  # noqa: E402
-from hive.bees import BeeError, Registry, normalize_computer  # noqa: E402
+from hive.bees import BeeError, Registry  # noqa: E402
+
+U = "u_test0000001"  # a user on the Free plan (the owner is always on Pro)
 
 
 @pytest.fixture
@@ -35,55 +37,62 @@ def reg(tmp_path):
     return r
 
 
-@pytest.fixture
-def paid(tmp_path, monkeypatch):
-    from hive import plan as plan_mod
-    monkeypatch.delenv("MNX_PLAN", raising=False)
-    monkeypatch.setattr(plan_mod.plan, "path", tmp_path / "plan.json")
-    plan_mod.plan.set("plus")
-    return plan_mod.plan
-
-
 def run(coro):
     return asyncio.run(coro)
 
 
-def test_built_ins_are_there_and_saved_bees_load_back(reg, tmp_path):
-    assert reg.get("coding")["builtin"] and reg.get("coding")["computer"]["size"] == "standard"
-    run(reg.create("Scout", "watches prices"))
+def test_no_premade_bees_and_saved_bees_load_back(reg, tmp_path):
+    assert reg.bees == []
+    run(reg.create("Scout", "watches prices", owner=U))
     again = Registry(tmp_path / "hive.json", tmp_path / "bee_keys.json")
-    assert again.get("scout")["created_by"] == "you" and again.get("scout")["skill"] == "watches prices"
+    s = again.get("scout")
+    assert s["created_by"] == "you" and s["skill"] == "watches prices" and s["owner"] == U and s["bot"]["tone"] == "friendly"
+
+
+def test_old_built_in_bees_are_dropped_and_old_bees_become_the_owners(tmp_path):
+    state = tmp_path / "hive.json"
+    state.write_text(json.dumps({"bees": [
+        {"id": "chat", "name": "Chat", "skill": "Talks", "builtin": True, "computer": {"size": "standard"}},
+        {"id": "phone", "name": "Phone", "skill": "Taps", "builtin": True},
+        {"id": "scout", "name": "Scout", "skill": "watches", "builtin": False, "created_by": "you",
+         "computer": {"size": "xl", "cpus": 8, "memory_gb": 32, "where": "here"}}]}))
+    r = Registry(state, tmp_path / "keys.json")
+    assert [b["id"] for b in r.bees] == ["scout"]
+    s = r.get("scout")
+    assert s["owner"] == "owner" and s["computer"]["size"] == "pro" and s["computer"]["cpus"] == 4  # no more XL: the plan's computer
+    state.write_text(json.dumps({"bees": [{"id": "old", "name": "Old", "skill": "x", "created_by": "you",
+                                            "computer": {"size": "standard", "cpus": 2, "memory_gb": 8, "where": "here"}}]}))
+    assert Registry(state, tmp_path / "keys.json").get("old")["computer"]["size"] == "pro"  # the owner's old Standard Bee: Pro now
+    assert isinstance(s["bot"], dict)
 
 
 def test_create_and_family(reg):
-    scout = run(reg.create("Scout", "watches prices", computer={"size": "large"}))
+    scout = run(reg.create("Scout", "watches prices", owner=U))
     alert = run(reg.create("Price Alert", "sends alerts", created_by="scout"))
-    assert scout["computer"]["cpus"] == 4 and scout["computer"]["memory_gb"] == 16
-    assert alert["id"] == "price_alert" and alert["created_by"] == "scout"
-    assert alert["computer"]["size"] == "standard"  # children get a Standard computer …
+    assert scout["computer"] == {"size": "free", "cpus": 2, "memory_gb": 8, "disk_gb": 40, "gpu": False, "where": "here", "os": "vortex"}
+    assert alert["id"] == "price_alert" and alert["created_by"] == "scout" and alert["owner"] == U  # a child is its parent's owner's
     assert [c["id"] for c in reg.children("scout")] == ["price_alert"]
     assert reg.depth("price_alert") == 2 and reg.calls["created"] == ["scout", "price_alert"]
     view = reg.view(alert)
-    assert view["parent_name"] == "Scout" and "Standard · 2 CPUs, 8 GB RAM, 40 GB disk" in view["computer_text"]
+    assert view["parent_name"] == "Scout" and view["computer_text"] == "Free · 2 CPUs, 8 GB RAM, 40 GB disk · Vortex OS"
 
 
-def test_children_start_on_their_parents_machine(reg):
-    run(reg.create("Big", "does heavy work", computer={"size": "xl", "where": "gpu-box"}))
-    kid = run(reg.create("Kid", "helps", created_by="big"))
-    assert kid["computer"]["where"] == "gpu-box" and kid["computer"]["size"] == "standard"
-
-
-def test_built_in_bees_can_make_bees(reg):
-    t = run(reg.create("Tester", "runs the tests", created_by="coding"))
-    assert t["created_by"] == "coding" and reg.view(t)["parent_name"] == "Coding"
+def test_each_user_has_their_own_bees(reg):
+    run(reg.create("Scout", "watches prices", owner=U))
+    other = run(reg.create("Scout", "another user's scout", owner="u_other000001"))
+    assert other["id"] == "scout_2"  # same name for another user is fine; ids stay unique
+    assert [b["id"] for b in reg.of(U)] == ["scout"] and [b["id"] for b in reg.of("u_other000001")] == ["scout_2"]
+    assert reg.mine("scout", U) and reg.mine("scout", "u_other000001") is None and reg.mine("scout", "owner")
+    assert reg.find("scout", U)["id"] == "scout" and reg.find("scout", "u_other000001")["id"] == "scout_2"
+    assert run(reg.create("Browser", "reads the web", owner=U))["id"] == "browser_2"  # never one of the Hive's own ids
 
 
 def test_limits(reg, monkeypatch):
     with pytest.raises(BeeError):
-        run(reg.create("Scout", ""))
-    run(reg.create("Scout", "watches"))
-    with pytest.raises(BeeError, match="already exists"):
-        run(reg.create("scout", "again"))
+        run(reg.create("Scout", "", owner=U))
+    run(reg.create("Scout", "watches", owner=U))
+    with pytest.raises(BeeError, match="already have"):
+        run(reg.create("scout", "again", owner=U))
     with pytest.raises(BeeError, match="doesn't exist"):
         run(reg.create("Orphan", "x", created_by="nobody"))
     parent = "scout"
@@ -91,67 +100,71 @@ def test_limits(reg, monkeypatch):
         parent = run(reg.create(f"Gen{i}", "x", created_by=parent))["id"]
     with pytest.raises(BeeError, match="generations"):
         run(reg.create("TooDeep", "x", created_by=parent))
-    monkeypatch.setattr(bees, "MAX_CHILDREN", 2)
-    run(reg.create("A1", "x", created_by="coding"))
-    run(reg.create("A2", "x", created_by="coding"))
+    run(reg.create("Fifth", "x", owner=U))  # Free has room for 5 Bees, children included
+    with pytest.raises(BeeError, match="room for 5"):
+        run(reg.create("Sixth", "x", owner=U))
+    monkeypatch.setattr(bees, "MAX_CHILDREN", 1)
+    run(reg.create("Boss", "x", owner="owner"))
+    run(reg.create("A1", "x", created_by="boss"))
     with pytest.raises(BeeError, match="children"):
-        run(reg.create("A3", "x", created_by="coding"))
-    monkeypatch.setattr(bees, "MAX_BEES", len(reg.bees))
-    with pytest.raises(BeeError, match="limit"):
-        run(reg.create("Overflow", "x"))
+        run(reg.create("A2", "x", created_by="boss"))
 
 
 def test_delete_hands_children_to_the_grandparent(reg):
-    run(reg.create("Scout", "watches"))
+    run(reg.create("Scout", "watches", owner=U))
     run(reg.create("Kid", "helps", created_by="scout"))
     run(reg.create("Grandkid", "helps more", created_by="kid"))
     key = reg.key_for("kid")
     adopted = run(reg.delete("kid"))
     assert [b["id"] for b in adopted] == ["grandkid"] and reg.get("grandkid")["created_by"] == "scout"
     assert reg.by_key(key) is None and reg.calls["deleted"] == ["kid"]
-    with pytest.raises(BeeError, match="Built-in"):
-        run(reg.delete("coding"))
 
 
 def test_keys_are_secret_per_bee_and_stored_owner_only(reg, tmp_path):
-    run(reg.create("Scout", "watches"))
-    k1, k2 = reg.key_for("scout"), reg.key_for("coding")
+    run(reg.create("Scout", "watches", owner=U))
+    run(reg.create("Mail", "reads mail", owner=U))
+    k1, k2 = reg.key_for("scout"), reg.key_for("mail")
     assert k1 != k2 and len(k1) >= 24 and reg.by_key(k1)["id"] == "scout" and reg.by_key("nope") is None and reg.by_key("") is None
     assert oct((tmp_path / "bee_keys.json").stat().st_mode)[-3:] == "600"
     assert "key" not in reg.view(reg.get("scout")) and k1 not in json.dumps(reg.view(reg.get("scout")))
 
 
-def test_computers(reg, paid):
-    assert normalize_computer({"size": "max"})["cpus"] is None
-    assert normalize_computer({"cpus": 3})["size"] == "custom"
-    with pytest.raises(BeeError):
-        normalize_computer({"size": "galactic"})
-    with pytest.raises(BeeError):
-        normalize_computer({"where": "../etc"})
-    run(reg.create("Scout", "watches"))
-    b = run(reg.set_computer("scout", {"size": "xl", "gpu": True}))
-    assert b["computer"]["cpus"] == 8 and b["computer"]["gpu"]
+def test_the_plan_decides_the_computer(reg, monkeypatch, tmp_path):
+    from hive.plan import plan
+    run(reg.create("Scout", "watches", owner=U))
+    assert reg.get("scout")["computer"]["size"] == "free"
+    plan.grant(U, 30, {"id": "pay_1"})
+    changed = run(reg.apply_plan(U))
+    c = reg.get("scout")["computer"]
+    assert [b["id"] for b in changed] == ["scout"] and c["size"] == "pro" and c["cpus"] == 4 and c["memory_gb"] == 16
+    assert c["disk_gb"] == 100 and c["gpu"]
     (bee_id, old, new), = reg.calls["computer"]
-    assert bee_id == "scout" and old["size"] == "plus" and new["size"] == "xl"  # Plus is every Bee's computer on the Plus plan
+    assert old["size"] == "free" and new["size"] == "pro"
+    plan.revoke(U)
+    run(reg.apply_plan(U))
+    assert reg.get("scout")["computer"]["size"] == "free" and not reg.get("scout")["computer"]["gpu"]
+    assert run(reg.apply_plan(U)) == []  # nothing left to change
 
 
 def test_a_failed_move_keeps_the_old_computer(reg):
-    run(reg.create("Scout", "watches"))
+    run(reg.create("Scout", "watches", owner=U))
 
     async def boom(b, old):
         raise RuntimeError("server unreachable")
 
     reg.on_computer = boom
     with pytest.raises(RuntimeError):
-        run(reg.set_computer("scout", {"where": "gone-server"}))
+        run(reg.move("scout", "gone-server"))
     assert reg.get("scout")["computer"]["where"] == "here"
+    with pytest.raises(BeeError):
+        run(reg.move("scout", "../etc"))
 
 
 def test_find(reg):
-    run(reg.create("Mail Helper", "reads mail"))
-    assert reg.find("mail helper")["id"] == "mail_helper" and reg.find("the coding bee") is None
-    assert reg.find("coding")["id"] == "coding" and reg.find("Coding Bee")["id"] == "coding"
-    assert reg.find("") is None
+    run(reg.create("Mail Helper", "reads mail", owner=U))
+    assert reg.find("mail helper", U)["id"] == "mail_helper" and reg.find("Mail Helper Bee", U)["id"] == "mail_helper"
+    assert reg.find("mail", U)["id"] == "mail_helper" and reg.find("coding", U) is None
+    assert reg.find("", U) is None and reg.find("mail helper", "u_someone_else") is None
 
 
 # ---------------------------------------------------------------- cells: limits and remote paths
@@ -207,14 +220,15 @@ def test_bee_api_lets_a_bee_make_only_its_own_children(monkeypatch, tmp_path):
     r.on_created = r.on_deleted = r.on_computer = nothing
     monkeypatch.setattr(gw, "registry", r)
     client = TestClient(gw.app)
-    run(r.create("Scout", "watches prices"))
+    run(r.create("Scout", "watches prices", owner=U))
     key = r.key_for("scout")
     assert client.get("/bee-api/me").status_code == 401
     assert client.get("/bee-api/me", headers={"X-Bee-Key": "wrong"}).status_code == 401
     me = client.get("/bee-api/me", headers={"X-Bee-Key": key}).json()
     assert me["id"] == "scout" and "key" not in me
-    made = client.post("/bee-api/children", headers={"X-Bee-Key": key}, json={"name": "Price Alert", "skill": "sends alerts", "size": "medium"})
-    assert made.status_code == 200 and made.json()["created_by"] == "scout" and made.json()["computer"]["size"] == "medium"
+    made = client.post("/bee-api/children", headers={"X-Bee-Key": key}, json={"name": "Price Alert", "skill": "sends alerts"})
+    assert made.status_code == 200 and made.json()["created_by"] == "scout" and made.json()["computer"]["size"] == "free"
+    assert r.get("price_alert")["owner"] == U
     kids = client.get("/bee-api/children", headers={"X-Bee-Key": key}).json()
     assert [k["id"] for k in kids] == ["price_alert"]
     clash = client.post("/bee-api/children", headers={"X-Bee-Key": key}, json={"name": "Scout", "skill": "x"})
@@ -225,19 +239,13 @@ def test_bee_api_lets_a_bee_make_only_its_own_children(monkeypatch, tmp_path):
 
 # ---------------------------------------------------------------- chat phrases
 @pytest.mark.parametrize("text,want", [
-    ("create a bee called Scout that watches prices", {"kind": "create", "name": "Scout", "skill": "watches prices", "parent": None}),
-    ("tell the coding bee to create a bee called Tester that runs the tests", {"kind": "create", "name": "Tester", "parent": "coding"}),
-    ("make a new bee named Mail Helper to summarise my emails every morning", {"name": "Mail Helper", "skill": "summarise my emails every morning"}),
-    ("create a bee that translates Tamil", {"kind": "create", "name": "", "skill": "translates Tamil"}),
-    ("make a large bee with a gpu called Trainer that trains models", {"size": "large", "gpu": True, "name": "Trainer", "skill": "trains models"}),
-    ("give the coding bee a large computer", {"kind": "computer", "bee": "coding", "size": "large"}),
-    ("upgrade the coding bee to xl", {"kind": "computer", "bee": "coding", "size": "xl"}),
-    ("give the eval bee the most powerful computer", {"kind": "computer", "bee": "eval", "size": "max", "powerful": True}),
     ("list my bees", {"kind": "list"}),
     ("delete the scout bee", {"kind": "delete", "bee": "scout"}),
+    ("give the coding bee a large computer", {"kind": "computer"}),  # not a choice any more: it explains the plan
+    ("what computer do my bees get?", {"kind": "computer"}),
 ])
 def test_bee_phrases(text, want):
-    got = bee_chat.parse(text)
+    got = bee_chat.parse(text, U)
     assert got is not None
     for k, v in want.items():
         assert got[k] == v, (k, got)
@@ -245,30 +253,22 @@ def test_bee_phrases(text, want):
 
 @pytest.mark.parametrize("text", ["create a 10M model for stories", "run my stories model on the lpu", "train my model", "hello"])
 def test_not_bee_phrases(text):
-    assert bee_chat.parse(text) is None
+    assert bee_chat.parse(text, U) is None
 
 
-def test_cloud_and_gpu_bees_default_to_the_whole_machine(reg, tmp_path):
-    assert reg.get("cloud")["computer"]["size"] == "max" and reg.get("gpu")["computer"]["size"] == "max"
-    assert reg.get("cloud")["computer"]["cpus"] is None and reg.get("coding")["computer"]["size"] == "standard"
-    assert "whole machine" in reg.view(reg.get("gpu"))["computer_text"]
-
-
-def test_saved_built_ins_follow_the_default_until_you_choose(tmp_path):
-    state, keys = tmp_path / "hive.json", tmp_path / "bee_keys.json"
-    # a Hive saved before the default existed: every built-in is stored as Small
-    old = Registry(state, keys)
-    for b in old.bees:
-        b["computer"] = bees.default_computer()
-    old.save()
-    again = Registry(state, keys)
-    assert again.get("cloud")["computer"]["size"] == "max" and again.get("coding")["computer"]["size"] == "standard"
-    # you choose Small for Cloud on purpose: that sticks
-    run(again.set_computer("cloud", {"size": "small"}))
-    assert Registry(state, keys).get("cloud")["computer"]["size"] == "small"
-    # and a size you chose for another built-in is kept
-    run(again.set_computer("coding", {"size": "xl"}))
-    assert Registry(state, keys).get("coding")["computer"]["size"] == "xl"
+@pytest.mark.parametrize("text,want", [
+    ("create a bee called Scout that watches prices", {"name": "Scout", "description": "watches prices", "parent": None}),
+    ("tell the coding bee to create a bee called Tester that runs the tests", {"name": "Tester", "parent": "coding"}),
+    ("make a new bee named Mail Helper to summarise my emails every morning", {"name": "Mail Helper", "description": "summarise my emails every morning"}),
+    ("create a bee that translates Tamil", {"name": "", "description": "translates Tamil"}),
+    ("make a bot called Maya that is a friendly Tamil tutor", {"name": "Maya", "description": "a friendly Tamil tutor"}),
+])
+def test_making_a_bee_in_the_chat(text, want):
+    from hive import bots
+    got = bots.parse(text)
+    assert got is not None
+    for k, v in want.items():
+        assert got[k] == v, (k, got)
 
 
 def test_the_helper_reads_its_key_file_when_the_shell_starts_clean(tmp_path, monkeypatch):

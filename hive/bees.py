@@ -1,14 +1,16 @@
-"""The Bee registry: the built-in Bees, the Bees you create, and the Bees that Bees create.
+"""The Bee registry: the Bees each user makes, and the Bees that Bees make. There are no premade Bees: the Hive's
+own work (chat, memory, the browser, the phone, training) is done by functions, not Bees.
 
 Every Bee has
-  - a card: name, one-line skill, tools, schedule, whether it asks before acting
+  - an owner (hive/users.py): only they see it, chat with it and use its computer
+  - a card: name and its responsibility (one line), plus a profile: instructions, tone, greeting, starters,
+    memory, voice (hive/bots.py)
+  - its own chat (Peace mode), and a place on the board when all your Bees work together (Rush mode)
   - a family: who made it ("you" or another Bee); deleting a Bee hands its children to its own parent
-  - its own computer (a Cell): a size (CPUs, memory, GPU), where it runs (this server, or any cloud server
-    the Lab can reach over SSH: your own, or a rented GPU machine) and its operating system: Vortex OS, a web
-    desktop (hive/vortex.py), or plain Linux with a terminal only
+  - its own computer (a Cell) with Vortex OS. Nobody picks its size: the owner's plan decides it (Free or Pro)
   - a key that lets the Bee, from inside its own computer, create and list its children and nothing else
 
-Limits keep a Bee from filling the Hive: MAX_BEES in total, MAX_DEPTH generations, MAX_CHILDREN per Bee.
+Limits: the plan's number of Bees per user, MAX_DEPTH generations, MAX_CHILDREN per Bee, MAX_BEES on the Hive.
 """
 
 from __future__ import annotations
@@ -24,140 +26,58 @@ DATA = Path(__file__).resolve().parent.parent / "data"
 STATE_FILE = DATA / "hive.json"
 KEYS_FILE = DATA / "bee_keys.json"
 
-MAX_BEES = 64
+MAX_BEES = 400     # on the whole Hive; each user's plan has its own limit (hive/plan.py)
 MAX_DEPTH = 4       # you → Bee → child → grandchild → great-grandchild
 MAX_CHILDREN = 12
 
-DEFAULT_BEES = [
-    {"id": "chat", "name": "Chat", "skill": "Talks with you and answers questions", "tools": [], "approval": False, "builtin": True},
-    {"id": "memory", "name": "Memory", "skill": "Saves facts and recalls them before answering", "tools": ["memory"], "approval": False, "builtin": True},
-    {"id": "browser", "name": "Browser", "skill": "Uses any website like a person, in its own Chromium", "tools": ["browser"], "approval": True, "builtin": True},
-    {"id": "phone", "name": "Phone", "skill": "Taps, types and opens apps on your paired phone", "tools": ["phone"], "approval": True, "builtin": True},
-    {"id": "cloud", "name": "Cloud", "skill": "Trains AI models, keeps them and runs them as APIs, here or on any GPU server", "tools": ["lab"], "approval": True, "builtin": True,
-     "computer": {"size": "max"}},
-    {"id": "reader", "name": "Reader", "skill": "Reads your request and works out what you want", "tools": [], "approval": False, "builtin": True},
-    {"id": "architect", "name": "Architect", "skill": "Designs transformers for any size and estimates what training takes", "tools": ["lab"], "approval": False, "builtin": True},
-    {"id": "data", "name": "Data", "skill": "Gathers training text: datasets, your files, web pages", "tools": ["browser", "lab"], "approval": False, "builtin": True},
-    {"id": "gpu", "name": "GPU", "skill": "Opens cloud Docker and GPUs: your servers, clusters, or rented machines", "tools": ["lab"], "approval": True, "builtin": True,
-     "computer": {"size": "max"}},
-    {"id": "coding", "name": "Coding", "skill": "Writes the files for a training run (train.py, serve.py, config)", "tools": ["lab"], "approval": False, "builtin": True},
-    {"id": "eval", "name": "Eval", "skill": "Tests finished models with held-out prompts and reports back", "tools": ["lab"], "approval": False, "builtin": True},
-]
-
-# Computer sizes. Standard (8 GB memory, 40 GB disk) is what every Bee gets unless told otherwise.
-# "max" sets no limits: the Cell may use the whole machine it runs on.
+# Computers aren't chosen: every Bee gets its owner's plan's computer (hive/plan.py), with Vortex OS.
 SIZES = {
-    "small": {"cpus": 1, "memory_gb": 1, "disk_gb": 10, "label": "Small"},
-    "medium": {"cpus": 2, "memory_gb": 4, "disk_gb": 20, "label": "Medium"},
-    "standard": {"cpus": 2, "memory_gb": 8, "disk_gb": 40, "label": "Standard"},
-    "plus": {"cpus": 4, "memory_gb": 16, "disk_gb": 100, "gpu_vram_gb": 16, "label": "Plus"},
-    "large": {"cpus": 4, "memory_gb": 16, "disk_gb": 80, "label": "Large"},
-    "xl": {"cpus": 8, "memory_gb": 32, "disk_gb": 160, "label": "XL"},
-    "max": {"cpus": None, "memory_gb": None, "disk_gb": None, "label": "Max (the whole machine)"},
+    "free": {"cpus": 2, "memory_gb": 8, "disk_gb": 40, "label": "Free"},
+    "pro": {"cpus": 4, "memory_gb": 16, "disk_gb": 100, "gpu_vram_gb": 16, "label": "Pro"},
 }
-DEFAULT_SIZE = "standard"
-SIZE_WORDS = {"small": "small", "tiny": "small", "medium": "medium", "standard": "standard", "normal": "standard", "default": "standard",
-              "plus": "plus", "large": "large", "big": "large",
-              "xl": "xl", "huge": "xl", "extra large": "xl", "max": "max", "maximum": "max", "biggest": "max",
-              "most powerful": "max", "powerful": "max", "very powerful": "max", "strongest": "max", "full": "max"}
 ID_RE = re.compile(r"^[a-z0-9_]{1,40}$")
+# Ids the Hive's own functions use for their computers (the shared browser) or used before: never a user's Bee id.
+RESERVED_IDS = {"browser", "phone", "cloud", "gpu", "queen", "chat", "memory", "reader", "architect", "data", "coding", "eval", "hive"}
 
 
 class BeeError(ValueError):
-    """A Bee can't be created or changed that way (a limit, a name clash, a bad computer)."""
+    """A Bee can't be created or changed that way (a limit, a name clash)."""
 
 
-OS_CHOICES = {"vortex": "Vortex OS", "plain": "Plain Linux"}
+OS_CHOICES = {"vortex": "Vortex OS"}
 DEFAULT_OS = "vortex"
 
 
-def plan_size() -> str:
-    """Standard on the Free plan, Plus (16 GB, 100 GB, GPU) on Plus."""
+def computer_for(owner: str, base: dict | None = None) -> dict:
+    """The computer the owner's plan gives: Free or Pro. A Pro computer goes to the Hive's own cloud when it has room."""
     from .plan import plan
-    return plan.size if plan.size in SIZES else DEFAULT_SIZE
-
-
-def default_computer() -> dict:
-    size = plan_size()
+    size = plan.of(owner) if plan.of(owner) in SIZES else "free"
     z = SIZES[size]
-    where = "here"
-    if size == "plus":  # Plus computers go to the Hive's own cloud when it has room
+    base = dict(base or {})
+    where = base.get("where", "here")
+    if size == "pro" and where == "here" and not base:
         try:
             from .cloud import pool_place
             where = pool_place() or "here"
         except Exception:
             where = "here"
-    return {"size": size, "cpus": z["cpus"], "memory_gb": z["memory_gb"], "disk_gb": z["disk_gb"], "gpu": bool(z.get("gpu_vram_gb")),
-            "where": where, "os": DEFAULT_OS}
-
-
-def normalize_computer(c: dict | None, base: dict | None = None) -> dict:
-    """A complete computer spec from a partial one (size presets fill CPUs and memory unless given)."""
-    out = dict(base or default_computer())
-    c = dict(c or {})
-    if "size" in c and c["size"]:
-        size = str(c["size"]).lower()
-        if size not in SIZES:
-            raise BeeError(f"Unknown size {c['size']!r}: use one of {', '.join(SIZES)}")
-        out["size"] = size
-        out["cpus"], out["memory_gb"], out["disk_gb"] = SIZES[size]["cpus"], SIZES[size]["memory_gb"], SIZES[size]["disk_gb"]
-        if "gpu" not in c:  # Plus comes with its GPU and takes it away when you leave it; other sizes keep what the Bee had
-            if SIZES[size].get("gpu_vram_gb"):
-                out["gpu"] = True
-            elif (base or {}).get("size") == "plus":
-                out["gpu"] = False
-    for key, lo, hi in (("cpus", 0.25, 512), ("memory_gb", 0.25, 4096), ("disk_gb", 1, 65536)):
-        if c.get(key) is not None:
-            v = float(c[key])
-            if not lo <= v <= hi:
-                raise BeeError(f"{key} must be between {lo} and {hi}")
-            out[key] = v
-            out["size"] = "custom" if "size" not in c else out["size"]
-    if "gpu" in c:
-        out["gpu"] = bool(c["gpu"])
-    if c.get("where"):
-        where = str(c["where"])
-        if where != "here" and not re.fullmatch(r"[a-z0-9-]{1,48}", where):
-            raise BeeError("Bad server id")
-        out["where"] = where
-    if c.get("os"):
-        os_name = str(c["os"]).lower()
-        if os_name not in OS_CHOICES:
-            raise BeeError(f"Unknown operating system {c['os']!r}: use one of {', '.join(OS_CHOICES)}")
-        out["os"] = os_name
-    if out.get("os") not in OS_CHOICES:  # a Hive saved before the OS existed
-        out["os"] = DEFAULT_OS
-    if "disk_gb" not in out:  # saved before disks had a size
-        out["disk_gb"] = SIZES.get(out.get("size"), {}).get("disk_gb")
-    if c.get("cloud") is not None or "cloud" in out:  # the cloud machine this Bee owns (hive/cloud.py), if any
-        out["cloud"] = c["cloud"] if "cloud" in c else out.get("cloud")
-        if not out["cloud"]:
-            out.pop("cloud")
+    out = {"size": size, "cpus": z["cpus"], "memory_gb": z["memory_gb"], "disk_gb": z["disk_gb"], "gpu": bool(z.get("gpu_vram_gb")),
+           "where": where, "os": DEFAULT_OS}
+    if base.get("cloud"):
+        out["cloud"] = base["cloud"]
     return out
 
 
 def describe_computer(c: dict, where_name: str | None = None) -> str:
-    c = c or default_computer()
-    if c["size"] == "max":
-        parts = ["the whole machine"]
-    else:
-        parts = [f"{c['cpus']:g} CPU{'s' if c['cpus'] != 1 else ''}", f"{c['memory_gb']:g} GB RAM"]
-        if c.get("disk_gb"):
-            parts.append(f"{c['disk_gb']:g} GB disk")
+    c = c or computer_for("owner")
+    parts = [f"{c['cpus']:g} CPU{'s' if c['cpus'] != 1 else ''}", f"{c['memory_gb']:g} GB RAM"]
+    if c.get("disk_gb"):
+        parts.append(f"{c['disk_gb']:g} GB disk")
     if c.get("gpu"):
         vram = SIZES.get(c.get("size"), {}).get("gpu_vram_gb")
         parts.append(f"GPU {vram} GB VRAM" if vram else "GPU")
-    label = SIZES.get(c["size"], {}).get("label", "Custom")
-    return (f"{label} · {', '.join(parts)} · {OS_CHOICES.get(c.get('os') or DEFAULT_OS, 'Vortex OS')} · "
-            f"{where_name or ('this server' if c.get('where', 'here') == 'here' else c['where'])}")
-
-
-def check_plan(c: dict) -> None:
-    """GPUs and the Plus computer come with the Plus plan (free: hive/plan.py)."""
-    from .plan import plan
-    if (c.get("gpu") or c.get("size") == "plus") and not plan.allows_gpu():
-        raise BeeError("GPUs and the Plus computer come with Plus, which is free: subscribe on the Usage page "
-                       "or say “subscribe me to plus”")
+    label = SIZES.get(c["size"], {}).get("label", "Free")
+    return f"{label} · {', '.join(parts)} · Vortex OS"
 
 
 def slug(name: str) -> str:
@@ -173,17 +93,19 @@ class Registry:
             saved = json.loads(state_file.read_text()).get("bees") or []
         except (FileNotFoundError, json.JSONDecodeError):
             saved = []
-        have = {b["id"] for b in saved}
-        self.bees: list[dict] = [dict(b) for b in DEFAULT_BEES if b["id"] not in have] + saved
-        defaults = {b["id"]: b for b in DEFAULT_BEES}
+        from .bots import clean_profile
+        # The Hive's own work (chat, memory, the browser, the phone, training …) is done by functions, not Bees:
+        # Bees saved as built in are dropped. Every Bee is yours, with a responsibility, its own chat and a profile.
+        self.bees: list[dict] = [dict(b) for b in saved if not b.get("builtin")]
         for b in self.bees:
-            b.setdefault("created_by", None if b.get("builtin") else "you")
-            if b.get("builtin") and not b.get("computer_set") and b["id"] in defaults:
-                b["computer"] = defaults[b["id"]].get("computer")  # never chosen by you: follows the built-in default
+            b.setdefault("owner", "owner")  # made before users had their own Bees: the owner's
+            b.setdefault("created_by", "you")
+            if not isinstance(b.get("bot"), dict):
+                b["bot"] = clean_profile({})
             old = b.get("computer") or {}
-            if old.get("size") == "small" and "disk_gb" not in old and not b.get("computer_set"):
-                old = {**{k: v for k, v in old.items() if k not in ("cpus", "memory_gb")}, "size": DEFAULT_SIZE}  # saved on the old Small default: every Bee now gets Standard
-            b["computer"] = normalize_computer(old)
+            # always the owner's plan's computer now (sizes chosen before are gone); it stays on its server
+            b["computer"] = computer_for(b["owner"], {"where": old.get("where", "here"), "cloud": old.get("cloud")})
+            b.pop("computer_set", None)
         try:
             self.keys: dict[str, str] = json.loads(keys_file.read_text())
         except (FileNotFoundError, json.JSONDecodeError):
@@ -212,22 +134,33 @@ class Registry:
     def get(self, bee_id: str) -> dict | None:
         return next((b for b in self.bees if b["id"] == bee_id), None)
 
-    def find(self, words: str) -> dict | None:
-        """A Bee by id or name, ignoring case and a trailing 'bee'."""
+    def of(self, owner: str) -> list[dict]:
+        """One user's Bees."""
+        return [b for b in self.bees if b.get("owner", "owner") == owner]
+
+    def mine(self, bee_id: str, owner: str) -> dict | None:
+        """The Bee, if it belongs to this user (the Hive's owner can reach every Bee)."""
+        b = self.get(bee_id)
+        return b if b and (owner == "owner" or b.get("owner", "owner") == owner) else None
+
+    def find(self, words: str, owner: str | None = None) -> dict | None:
+        """One of the user's Bees by id or name, ignoring case and a trailing 'bee'."""
+        from .users import who
+        pool = self.of(owner or who())
         q = re.sub(r"\bbees?\b", "", (words or "").lower()).strip(" .,'\"")
         if not q:
             return None
-        for b in self.bees:
+        for b in pool:
             if q == b["name"].lower() or b["id"] in (q, slug(q)):
                 return b
-        hits = [b for b in self.bees if b["name"].lower().startswith(q)]
+        hits = [b for b in pool if b["name"].lower().startswith(q)]
         return hits[0] if len(hits) == 1 else None
 
     def children(self, bee_id: str) -> list[dict]:
         return [b for b in self.bees if b.get("created_by") == bee_id]
 
     def depth(self, bee_id: str | None) -> int:
-        """Generations below you: a Bee you made is 1, its child 2 …; built-in Bees count as 1."""
+        """Generations below you: a Bee you made is 1, its child 2 …"""
         d, cur, seen = 0, bee_id, set()
         while cur and cur != "you" and cur not in seen:
             seen.add(cur)
@@ -261,35 +194,45 @@ class Registry:
 
     # ----- changes -----
     async def create(self, name: str, skill: str, created_by: str = "you", tools: list[str] | None = None,
-                     schedule: str | None = None, approval: bool = True, computer: dict | None = None) -> dict:
+                     schedule: str | None = None, approval: bool = True, profile: dict | None = None,
+                     owner: str | None = None) -> dict:
+        """A new Bee: a name and its responsibility (one line). It gets its own chat and its plan's computer."""
+        from .bots import clean_profile
+        from .plan import plan
+        from .users import who
         name = " ".join((name or "").split())[:24]
         skill = " ".join((skill or "").split())[:90]
         if not name or not skill:
-            raise BeeError("A Bee needs a name and a one-line skill")
-        bee_id = slug(name)
-        if not ID_RE.match(bee_id):
-            raise BeeError("Use letters and numbers in the name")
-        if self.get(bee_id):
-            raise BeeError(f"A Bee called {self.get(bee_id)['name']} already exists")
-        if len(self.bees) >= MAX_BEES:
-            raise BeeError(f"The Hive already has {MAX_BEES} Bees, its limit; remove one first")
+            raise BeeError("A Bee needs a name and a responsibility")
         if created_by != "you":
             parent = self.get(created_by)
             if not parent:
                 raise BeeError("The parent Bee doesn't exist")
+            owner = parent.get("owner", "owner")
             if self.depth(created_by) + 1 > MAX_DEPTH:
                 raise BeeError(f"Bees can only go {MAX_DEPTH} generations deep")
             if len(self.children(created_by)) >= MAX_CHILDREN:
                 raise BeeError(f"{parent['name']} already has {MAX_CHILDREN} children, its limit")
-            # a child gets a Standard computer on the same machine as its parent, unless told otherwise
-            base = normalize_computer({"where": parent["computer"].get("where", "here")})
-        else:
-            base = default_computer()
-        computer = normalize_computer(computer, base)
-        check_plan(computer)
+        owner = owner or who()
+        mine = self.of(owner)
+        if any(b["name"].lower() == name.lower() for b in mine):
+            raise BeeError(f"You already have a Bee called {name}")
+        limit = plan.max_bees(owner)
+        if len(mine) >= limit:
+            raise BeeError(f"Your plan has room for {limit} Bees; remove one first"
+                           + ("" if plan.of(owner) == "pro" else ", or get Pro for more"))
+        if len(self.bees) >= MAX_BEES:
+            raise BeeError("The Hive is full right now; try again later")
+        base = slug(name)
+        if not ID_RE.match(base):
+            raise BeeError("Use letters and numbers in the name")
+        bee_id, n = base, 2
+        while self.get(bee_id) or bee_id in RESERVED_IDS:  # ids are unique across the Hive; names only within your own Bees
+            bee_id = f"{base[:36]}_{n}"
+            n += 1
         record = {"id": bee_id, "name": name, "skill": skill, "tools": list(tools or [])[:20], "schedule": schedule or None,
-                  "approval": bool(approval), "builtin": False, "created_by": created_by,
-                  "computer": computer}
+                  "approval": bool(approval), "builtin": False, "created_by": created_by, "owner": owner,
+                  "computer": computer_for(owner), "bot": clean_profile(profile or {})}
         self.bees.append(record)
         self.save()
         self.key_for(bee_id)
@@ -302,8 +245,6 @@ class Registry:
         b = self.get(bee_id)
         if not b:
             raise BeeError("No such Bee")
-        if b.get("builtin"):
-            raise BeeError("Built-in Bees can't be removed")
         adopted = self.children(bee_id)
         for c in adopted:
             c["created_by"] = b.get("created_by") or "you"
@@ -315,28 +256,54 @@ class Registry:
             await self.on_deleted(b)
         return adopted
 
-    async def set_computer(self, bee_id: str, change: dict, by_you: bool = True) -> dict:
+    async def move(self, bee_id: str, where: str, cloud: str | None = None) -> dict:
+        """The Hive moves a Bee's computer to another server (same size; files stay where they were)."""
         b = self.get(bee_id)
         if not b:
             raise BeeError("No such Bee")
+        if where != "here" and not re.fullmatch(r"[a-z0-9-]{1,48}", where):
+            raise BeeError("Bad server id")
         old = dict(b["computer"])
-        new = normalize_computer(change, old)
-        if new == old:
-            return b
-        if (new.get("gpu") and not old.get("gpu")) or (new.get("size") == "plus" and old.get("size") != "plus"):
-            check_plan(new)
+        new = {**old, "where": where}
+        new.pop("cloud", None)
+        if cloud:
+            new["cloud"] = cloud
         b["computer"] = new
-        if by_you:
-            b["computer_set"] = True  # your choice from now on, whatever the built-in default or the plan becomes
         self.save()
         if self.on_computer:
             try:
                 await self.on_computer(b, old)
             except Exception:
-                b["computer"] = old  # the move failed: keep the Bee where it was
+                b["computer"] = old
                 self.save()
                 raise
         return b
+
+    async def apply_plan(self, owner: str) -> list[dict]:
+        """Give each of the owner's Bees the computer their plan has now (after Pro starts or ends)."""
+        changed = []
+        for b in self.of(owner):
+            old = dict(b["computer"])
+            new = computer_for(owner, {"where": old.get("where", "here"), "cloud": old.get("cloud")})
+            if new.get("size") == "pro" and old.get("size") != "pro" and new.get("where") == "here":
+                try:
+                    from .cloud import pool_place
+                    new["where"] = pool_place() or "here"
+                except Exception:
+                    pass
+            if new == old:
+                continue
+            b["computer"] = new
+            self.save()
+            if self.on_computer:
+                try:
+                    await self.on_computer(b, old)
+                except Exception:
+                    b["computer"] = old  # the move failed: keep the Bee where it was
+                    self.save()
+                    continue
+            changed.append(b)
+        return changed
 
 
 # ---------- the helper each Bee gets inside its own computer ----------
@@ -345,8 +312,8 @@ HELPER = r'''#!/usr/bin/env python3
 
   python3 .mnx/mnx-bee me
   python3 .mnx/mnx-bee children
-  python3 .mnx/mnx-bee new "Name" "one-line skill" [small|medium|standard|plus|large|xl|max]
-  python3 .mnx/mnx-bee gpu train.py data.csv          run "python train.py" on the Hive's GPU (16 GB VRAM)
+  python3 .mnx/mnx-bee new "Name" "its responsibility"
+  python3 .mnx/mnx-bee gpu train.py data.csv          run "python train.py" on the Hive's GPU (Pro, 16 GB VRAM)
   python3 .mnx/mnx-bee gpu --cmd "bash go.sh" go.sh   any command; the files listed go with it
 """
 import json, os, sys, urllib.request
@@ -390,7 +357,7 @@ elif a[0] == "children":
     for c in call("GET", "/children"):
         print(f"{c['name']:24} {c['computer_text']}  ·  {c['skill']}")
 elif a[0] == "new" and len(a) >= 3:
-    c = call("POST", "/children", {"name": a[1], "skill": a[2], "size": a[3] if len(a) > 3 else None})
+    c = call("POST", "/children", {"name": a[1], "skill": a[2]})
     print(f"Created {c['name']} Bee ({c['computer_text']})")
 elif a[0] == "gpu" and len(a) >= 2:
     import base64, time

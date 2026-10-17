@@ -108,7 +108,7 @@ function render(u) {
   const b = u.bees;
   $("beeNote").textContent = b.docker_measured ? "CPU and memory measured by Docker" : "CPU and memory need Docker; disk and jobs are measured";
   $("beeStats").replaceChildren(
-    tile("Bees", `${b.count} / ${b.limit}`, `${b.built_in} built in · ${b.yours} made by you · ${b.by_bees} made by Bees`),
+    tile("Bees", `${b.count} / ${b.limit}`, `${b.yours} made by you · ${b.by_bees} made by your Bees`),
     tile("Deepest family", `${b.deepest} / ${b.max_depth}`, "generations"),
     tile("Children per Bee", `up to ${b.max_children}`, "limit"),
     tile("Jobs running", num(b.rows.reduce((a, r) => a + r.running, 0)), `of ${num(b.rows.reduce((a, r) => a + r.jobs, 0))} jobs`));
@@ -154,13 +154,13 @@ function render(u) {
 
   // ----- plan
   const pl = u.plan;
+  const date = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
   $("plan").replaceChildren(
-    h("div", { class: "plan-row" }, ...pl.plans.map((x) => h("button", {
-      class: `plan-opt${x.id === pl.plan ? " on" : ""}`, disabled: pl.locked || x.id === pl.plan,
-      onclick: async () => {
-        try { await api("/api/plan", { method: "PUT", body: { plan: x.id } }); load(); } catch (e) { alert(e.message); }
-      } }, h("b", {}, `${x.label} · ${x.price}`), h("span", {}, x.computer), x.id === pl.plan ? h("span", {}, "Your plan") : h("span", {}, x.id === "plus" ? "Subscribe, free" : "Switch")))));
-  $("planNote").textContent = pl.locked ? "Set by the server (MNX_PLAN)" : `Now: ${pl.label}`;
+    h("div", { class: "plan-row" }, ...pl.plans.map((x) => h("div", { class: `plan-opt${x.id === pl.plan ? " on" : ""}` },
+      h("b", {}, `${x.label} · ${x.price_inr ? `₹${x.price_inr} / 30 days` : "₹0"}`), h("span", {}, `${x.computer} · up to ${x.max_bees} Bees`),
+      x.id === pl.plan ? h("span", {}, pl.until ? `Yours until ${date(pl.until)}` : "Your plan") : "")),
+    pl.plan === "pro" && pl.owner ? "" : h("a", { class: "btn primary", href: "pro.html" }, pl.plan === "pro" ? "Add 30 more days" : "Get Pro")));
+  $("planNote").textContent = pl.locked ? "Set by the server (MNX_PLAN)" : pl.owner ? "You own this Hive: always Pro" : `Now: ${pl.label}`;
 
   // ----- cloud computers (one per Bee)
   const cl = u.cloud;
@@ -176,7 +176,7 @@ function render(u) {
     crow.push(h("p", { class: "hint" }, "No Bee has its own cloud computer yet. Say “give every bee a real cloud computer” in the chat, or pick “Its own cloud computer” in a Bee's Computer dialog."));
   }
   crow.push(h("p", { class: "hint", style: "margin-top:8px" },
-    cl.providers.map((p) => `${p.label}: ${p.connected ? "connected" : `save ${p.secret} in Cloud Bee · Lab → Secrets`}`).join(" · ") + `. ${cl.note}`));
+    cl.providers.map((p) => `${p.label}: ${p.connected ? "connected" : `save ${p.secret} in Lab → Secrets`}`).join(" · ") + `. ${cl.note}`));
   $("cloudBox").replaceChildren(...crow);
   $("cloudNote").textContent = cl.machines.length ? `${cl.machines.length} running` : "";
 
@@ -186,7 +186,7 @@ function render(u) {
     h("div", { class: "meter-row" }, h("span", { class: "lbl" }, "Tokens per message"), h("span"), h("span", { class: "val" }, levels.map(([, x]) => `${x.label} ${num(x.tokens)}`).join(" · "))),
     h("div", { class: "meter-row" }, h("span", { class: "lbl" }, "Bee computers"), h("span"),
       h("span", { class: "val" }, Object.values(lim.sizes).map((x) => x.cpus ? `${x.label} ${x.cpus} CPU, ${x.memory_gb} GB RAM, ${x.disk_gb} GB disk` : x.label).join(" · "))),
-    h("div", { class: "meter-row" }, h("span", { class: "lbl" }, "Bees"), h("span"), h("span", { class: "val" }, `${b.limit} in all · ${b.max_depth} generations · ${b.max_children} children each`)),
+    h("div", { class: "meter-row" }, h("span", { class: "lbl" }, "Bees"), h("span"), h("span", { class: "val" }, `${b.limit} on your plan · ${b.max_depth} generations · ${b.max_children} children each`)),
     h("div", { class: "meter-row" }, h("span", { class: "lbl" }, "File upload"), h("span"), h("span", { class: "val" }, `${lim.upload_mb} MB each`)));
 }
 

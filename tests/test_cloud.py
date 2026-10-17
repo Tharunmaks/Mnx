@@ -1,4 +1,4 @@
-"""Real cloud computers for Bees (Hetzner / DigitalOcean, faked here), the Standard computer and the Free/Paid plan."""
+"""Cloud servers (Hetzner / DigitalOcean, faked here) and the computers the Free and Pro plans give every Bee."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from hive import bee_chat, bees, cloud, plan as plan_mod  # noqa: E402
-from hive.bees import BeeError, Registry, normalize_computer  # noqa: E402
+from hive.bees import Registry, computer_for  # noqa: E402
 
 HCLOUD_TYPES = {"server_types": [
     {"name": "cx22", "cores": 2, "memory": 4.0, "disk": 40, "architecture": "x86", "deprecation": None,
@@ -101,45 +101,56 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def test_standard_computer_is_8gb_ram_40gb_disk():
-    c = normalize_computer(None)
-    assert (c["size"], c["cpus"], c["memory_gb"], c["disk_gb"]) == ("standard", 2, 8, 40)
-    assert "Standard · 2 CPUs, 8 GB RAM, 40 GB disk · Vortex OS" in bees.describe_computer(c)
-    assert normalize_computer({"disk_gb": 100}, c)["disk_gb"] == 100
+def test_free_gives_8gb_ram_40gb_disk_and_pro_16gb_100gb_and_a_16gb_gpu():
+    c = computer_for("u_free00000001")
+    assert (c["size"], c["cpus"], c["memory_gb"], c["disk_gb"], c["gpu"], c["os"]) == ("free", 2, 8, 40, False, "vortex")
+    assert bees.describe_computer(c) == "Free · 2 CPUs, 8 GB RAM, 40 GB disk · Vortex OS"
+    p = computer_for("owner")  # the owner is always on Pro
+    assert (p["size"], p["cpus"], p["memory_gb"], p["disk_gb"], p["gpu"]) == ("pro", 4, 16, 100, True)
+    assert bees.describe_computer(p) == "Pro · 4 CPUs, 16 GB RAM, 100 GB disk, GPU 16 GB VRAM · Vortex OS"
 
 
-def test_bees_saved_on_the_old_small_default_get_standard(tmp_path):
+def test_bees_saved_with_old_sizes_get_their_plans_computer(tmp_path):
     state = tmp_path / "hive.json"
-    old_small = {"size": "small", "cpus": 1, "memory_gb": 1, "gpu": False, "where": "here", "os": "vortex"}
-    state.write_text(json.dumps({"bees": [{"id": "scout", "name": "Scout", "skill": "x", "created_by": "you", "computer": old_small},
-                                          {"id": "tiny", "name": "Tiny", "skill": "x", "created_by": "you", "computer_set": True,
-                                           "computer": old_small}]}))
+    old_small = {"size": "small", "cpus": 1, "memory_gb": 1, "gpu": False, "where": "here", "os": "plain"}
+    old_std = {"size": "standard", "cpus": 2, "memory_gb": 8, "disk_gb": 40, "gpu": False, "where": "here", "os": "vortex"}
+    state.write_text(json.dumps({"bees": [
+        {"id": "scout", "name": "Scout", "skill": "x", "created_by": "you", "owner": "u_free00000001", "computer": old_small},
+        {"id": "tiny", "name": "Tiny", "skill": "x", "created_by": "you", "owner": "u_free00000001", "computer_set": True, "computer": old_small},
+        {"id": "std", "name": "Std", "skill": "x", "created_by": "you", "owner": "u_free00000001", "computer": old_std}]}))
     r = Registry(state, tmp_path / "keys.json")
-    assert r.get("scout")["computer"]["memory_gb"] == 8 and r.get("scout")["computer"]["disk_gb"] == 40
-    assert r.get("tiny")["computer"]["size"] == "small"  # you chose Small on purpose: kept
+    for bid in ("scout", "tiny", "std"):  # nobody's choice is kept: the plan decides
+        c = r.get(bid)["computer"]
+        assert (c["size"], c["memory_gb"], c["disk_gb"], c["os"]) == ("free", 8, 40, "vortex"), bid
+    assert "computer_set" not in r.get("tiny")
 
 
-def test_gpus_come_with_the_free_plus_plan(tmp_path, monkeypatch):
+def test_pro_is_paid_per_user_and_lasts_30_days(tmp_path, monkeypatch):
+    import time
     monkeypatch.delenv("MNX_PLAN", raising=False)
-    monkeypatch.setattr(plan_mod.plan, "path", tmp_path / "plan.json")
-    r = Registry(tmp_path / "hive.json", tmp_path / "keys.json")
-    assert plan_mod.plan.name == "free"
-    with pytest.raises(BeeError, match="Plus, which is free"):
-        run(r.create("Trainer", "trains", computer={"gpu": True}))
-    run(r.create("Scout", "watches"))
-    with pytest.raises(BeeError, match="Plus, which is free"):
-        run(r.set_computer("scout", {"gpu": True}))
-    plan_mod.plan.set("paid")  # the old name still means Plus
-    assert plan_mod.plan.name == "plus"
-    assert run(r.set_computer("scout", {"gpu": True}))["computer"]["gpu"]
-    plus = run(r.create("Trainer", "trains"))["computer"]  # on Plus every new Bee gets the Plus computer
-    assert (plus["size"], plus["cpus"], plus["memory_gb"], plus["disk_gb"], plus["gpu"]) == ("plus", 4, 16, 100, True)
-    assert "Plus · 4 CPUs, 16 GB RAM, 100 GB disk, GPU 16 GB VRAM" in bees.describe_computer(plus)
-    assert not run(r.set_computer("trainer", {"size": "standard"}))["computer"]["gpu"]  # leaving Plus drops its GPU
-    monkeypatch.setenv("MNX_PLAN", "free")  # a hosted Hive locks the plan from its billing
-    assert plan_mod.plan.name == "free" and plan_mod.plan.view()["locked"]
-    with pytest.raises(ValueError, match="MNX_PLAN"):
-        plan_mod.plan.set("paid")
+    p = plan_mod.Plan(tmp_path / "plans.json")
+    u, v = "u_aaaaaaaaaaaa", "u_bbbbbbbbbbbb"
+    assert p.of(u) == "free" and p.of("owner") == "pro" and not p.allows_gpu(u) and p.max_bees(u) == 5
+    assert p.grant(u, 30, {"id": "pay_1", "amount": 49900})
+    assert not p.grant(u, 30, {"id": "pay_1"})  # the same payment counts once
+    assert p.of(u) == "pro" and p.of(v) == "free" and p.allows_gpu(u) and p.max_bees(u) == 20
+    left = p.until(u) - time.time()
+    assert 29.9 * 86400 < left <= 30 * 86400
+    p.grant(u, 30, {"id": "pay_2"})  # paying again adds 30 more days
+    assert 59.9 * 86400 < p.until(u) - time.time() <= 60 * 86400
+    assert oct(p.path.stat().st_mode)[-3:] == "600"
+    view = p.view(u)
+    assert view["plan"] == "pro" and view["until"] and view["price_inr"] == 499 and [x["id"] for x in view["plans"]] == ["free", "pro"]
+    p.revoke(u)
+    assert p.of(u) == "free" and p.expired_users() == [u]
+    p.forget_expired(u)
+    assert p.expired_users() == [] and p.of(u) == "free"
+    p.set_price(799)
+    assert p.price_inr == 799
+    with pytest.raises(ValueError):
+        p.set_price(0)
+    monkeypatch.setenv("MNX_PLAN", "pro")  # a hosted Hive can put everyone on one plan
+    assert p.of(v) == "pro" and p.view(v)["locked"]
 
 
 def test_cheapest_type_with_8gb_and_40gb_wins(world):
@@ -186,24 +197,3 @@ def test_no_provider_says_how_to_connect(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "_lab", lambda: FakeLab({}))
     with pytest.raises(cloud.CloudError, match="HCLOUD_TOKEN"):
         run(m.quote())
-
-
-@pytest.mark.parametrize("text,kind,bee,gpu", [
-    ("give every bee a real cloud computer", "cloud", None, False),
-    ("give each bee its own cloud pc", "cloud", None, False),
-    ("give the coding bee a cloud computer with a gpu", "cloud", "coding", True),
-    ("give the cloud bee its own cloud computer", "cloud", "cloud", False),
-    ("move coding to the cloud", "cloud", "coding", False),
-    ("bring the bees back home from the cloud", "cloud_back", None, None),
-    ("delete the coding bee's cloud computer", "cloud_back", "coding", None),
-])
-def test_cloud_phrases(text, kind, bee, gpu):
-    i = bee_chat.parse(text)
-    assert i["kind"] == kind and i["bee"] == bee and (gpu is None or i["gpu"] == gpu)
-
-
-def test_cloud_phrases_dont_steal_the_cloud_bee():
-    assert bee_chat.parse("give the cloud bee a large computer")["kind"] == "computer"
-    assert bee_chat.parse("give the scout bee a cloud computer") == {"kind": "cloud", "bee": None, "missing": "scout"}
-    c = bee_chat.parse("create a bee called Scout that watches prices on its own cloud computer")
-    assert c["kind"] == "create" and c["where"] == "cloud" and c["skill"] == "watches prices"

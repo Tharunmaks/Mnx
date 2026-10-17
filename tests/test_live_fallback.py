@@ -38,7 +38,13 @@ def test_sending_needs_an_open_stream_and_a_token(gw):
 def test_a_message_over_the_stream_is_answered_in_that_streams_queue(gw):
     g, client, auth = gw
     sse = g.SseClient()
+    sse.user = "owner"  # /api/live notes whose stream it is; only they can send into it
     g.LIVE["sess_test1"] = sse
+    other = g.SseClient()
+    other.user = "u_someoneelse"
+    g.LIVE["sess_other"] = other
+    assert client.post("/api/live/send?sid=sess_other", headers=auth, json={"type": "user_message", "text": "hi"}).status_code == 409
+    g.LIVE.pop("sess_other", None)
     r = client.post("/api/live/send?sid=sess_test1", headers=auth,
                     json={"type": "user_message", "task": "t_sse1", "text": "roll call", "mode": "rush"})
     assert r.status_code == 200

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0d0d0f">
-  <title>Free cloud · Mnx Hive</title>
+  <title>Cloud setup · Mnx Hive</title>
   <link rel="icon" href="img/logo.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,27 +16,16 @@
   <main class="main">
     <header class="topbar">
       <a class="icon-btn" href="index.html" aria-label="Back to chat"><span data-icon="back"></span></a>
-      <h1>Free cloud · Plus</h1>
+      <h1>Cloud setup</h1>
       <span class="conn" id="conn"><i></i><span>Connecting</span></span>
     </header>
 
     <div class="scroll">
       <div class="page" id="page">
-        <p class="hint">Plus is free. Every Bee and bot gets 4 CPUs, 16 GB RAM, 100 GB disk and a GPU with 16 GB VRAM. Nobody but the Hive's owner ever adds a key or an account: the Hive gives users the GPU and the servers.</p>
-
-        <div class="step-card" id="stepPlan">
-          <div class="step-num">1</div>
-          <div class="step-body">
-            <h2>Plus plan</h2>
-            <p class="hint" id="planText"></p>
-            <button class="btn primary" id="subscribe" type="button">Subscribe to Plus · ₹0</button>
-          </div>
-        </div>
-
-        <div class="user-note" id="userNote"><b>Status</b><p class="hint" id="userStatus">Checking…</p><p class="hint">The Hive's owner sets up the GPU and servers. You never need to add a key or an account: just subscribe above, and your Bees get the Plus computer and the GPU.</p></div>
+        <p class="hint">Yours only, as the Hive's owner. Free Bees get 2 CPUs, 8 GB RAM and 40 GB disk; Pro Bees (paid with Razorpay) get 4 CPUs, 16 GB RAM, 100 GB disk and a GPU with 16 GB VRAM. Users never add a key or an account: the Hive gives them the GPU and the servers you set up here.</p>
 
         <div class="step-card owner-only" id="stepGpu">
-          <div class="step-num">2</div>
+          <div class="step-num">1</div>
           <div class="step-body">
             <h2>Free GPU · 16 GB VRAM</h2>
             <p class="hint">Kaggle gives every account a free NVIDIA GPU with 16 GB VRAM (T4 or P100), about 30 hours a week. The Hive sends Bees' GPU jobs there and brings the results back into their computers.</p>
@@ -55,10 +44,10 @@
         </div>
 
         <div class="step-card owner-only" id="stepServer">
-          <div class="step-num">3</div>
+          <div class="step-num">2</div>
           <div class="step-body">
             <h2>Free server · 24 GB RAM, 200 GB disk</h2>
-            <p class="hint">Oracle Cloud's Always Free machine (ARM, 4 CPUs, 24 GB RAM, 200 GB disk) costs nothing, forever. The Hive puts Plus Bees on it: two 16 GB Bees per machine (memory limits are ceilings, so they share it well). Add more machines for more Bees.</p>
+            <p class="hint">Oracle Cloud's Always Free machine (ARM, 4 CPUs, 24 GB RAM, 200 GB disk) costs nothing, forever. The Hive puts Pro Bees on it: two 16 GB Bees per machine (memory limits are ceilings, so they share it well). Add more machines for more Bees.</p>
             <ol class="howto">
               <li>Sign up free at <a href="https://www.oracle.com/cloud/free/" target="_blank" rel="noopener">oracle.com/cloud/free</a> (a card is asked to check you're real; Always Free isn't charged).</li>
               <li>Create a compute instance: image <b>Ubuntu</b>, shape <b>VM.Standard.A1.Flex</b> with 4 OCPUs and 24 GB, boot volume 200 GB.</li>
@@ -76,7 +65,7 @@
         </div>
 
         <div class="step-card owner-only" id="stepIota">
-          <div class="step-num">4</div>
+          <div class="step-num">3</div>
           <div class="step-body">
             <h2>Iotamine VPS (India)</h2>
             <p class="hint">Use your <a href="https://iotamine.com" target="_blank" rel="noopener">Iotamine</a> VPSes as the Hive's cloud. Make an API key on Iotamine → API Keys (scope “Read & write” to let the Hive deploy) and paste it. The key stays on the Hive; the page never shows it again.</p>

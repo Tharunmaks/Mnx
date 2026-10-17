@@ -11,9 +11,12 @@ never by users, and they never go into the code or git: they live in data/ (owne
   python3 -m hive.admin install-models id=link id=link ...   download, join and check models now (no clicking), e.g.
         mnx-1.5-max-coder=<Drive folder link>   mnx-1-lite=<link>   mnx-1=<link>   mnx-lonjer=<link>
   python3 -m hive.admin models                          your models and whether they're installed
+  python3 -m hive.admin price 499                       what Pro costs, in ₹ per 30 days (Razorpay)
+  python3 -m hive.admin pro <user token> [days]         give a user Pro without paying (default 30 days)
+  python3 -m hive.admin pro-off <user token>            end a user's Pro now
 
 Names the Hive knows: IOTAMINE_API_KEY, KAGGLE_USERNAME, KAGGLE_API_TOKEN, HCLOUD_TOKEN, DIGITALOCEAN_TOKEN,
-RUNPOD_API_KEY. Voice, brain and Twilio settings are on the owner's Settings (they need the owner token).
+RUNPOD_API_KEY, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET. Voice, brain and Twilio settings are on the owner's Settings (they need the owner token).
 """
 
 from __future__ import annotations
@@ -23,7 +26,8 @@ import os
 import secrets
 import sys
 
-KNOWN = ["IOTAMINE_API_KEY", "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY", "HCLOUD_TOKEN", "DIGITALOCEAN_TOKEN", "RUNPOD_API_KEY"]
+KNOWN = ["IOTAMINE_API_KEY", "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY", "HCLOUD_TOKEN", "DIGITALOCEAN_TOKEN", "RUNPOD_API_KEY",
+         "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"]
 
 
 def main(argv: list[str]) -> int:
@@ -55,6 +59,27 @@ def main(argv: list[str]) -> int:
         have = lab.secret_names()
         for n in sorted(set(KNOWN) | set(have)):
             print(f"{'✓' if n in have else '·'} {n}")
+        return 0
+    if cmd == "price" and rest:
+        from hive.plan import plan
+        try:
+            plan.set_price(int(rest[0].replace(",", "").lstrip("₹")))
+        except ValueError as exc:
+            print(exc)
+            return 1
+        print(f"Pro now costs ₹{plan.price_inr} for 30 days.")
+        return 0
+    if cmd in ("pro", "pro-off") and rest:
+        from hive.plan import plan
+        from hive.users import id_for_token
+        uid = id_for_token(rest[0].strip())
+        if cmd == "pro-off":
+            plan.revoke(uid)
+            print("Pro ended for that user (their Bees go back to Free computers within a minute, or at the next restart).")
+            return 0
+        days = int(rest[1]) if len(rest) > 1 else 30
+        plan.grant(uid, days, {"id": f"owner_{secrets.token_hex(6)}", "by": "owner"})
+        print(f"That user has Pro for {days} more days.")
         return 0
     if cmd == "model" and len(rest) >= 2:
         from hive.models import ModelError, models

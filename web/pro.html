@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0f">
+  <title>Pro · Mnx Hive</title>
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/mnx.css">
+</head>
+<body>
+<div class="app">
+  <main class="main">
+    <header class="topbar">
+      <a class="icon-btn" href="index.html" aria-label="Back to chat"><span data-icon="back"></span></a>
+      <h1>Plans</h1>
+      <span class="conn" id="conn"><i></i><span>Connecting</span></span>
+    </header>
+
+    <div class="scroll">
+      <div class="page pro-page">
+        <p class="pro-now" id="now"></p>
+        <div class="plan-grid">
+          <section class="plan-card" id="cardFree">
+            <h2>Free</h2>
+            <div class="price">₹0</div>
+            <ul class="plan-list" id="freeList"></ul>
+          </section>
+          <section class="plan-card pro" id="cardPro">
+            <h2>Pro</h2>
+            <div class="price"><span id="proPrice">₹—</span><small> / 30 days</small></div>
+            <ul class="plan-list" id="proList"></ul>
+            <button class="btn primary pay" id="pay" type="button" disabled>Get Pro</button>
+            <p class="hint" id="payNote"></p>
+          </section>
+        </div>
+        <p class="hint">Pay with UPI, cards, netbanking or wallets through Razorpay. Pro doesn't renew by itself: it lasts 30 days
+          from each payment, and paying again adds 30 more. When it ends, your Bees go back to Free computers; nothing is deleted.</p>
+
+        <div class="usage-card owner-only" id="ownerBox">
+          <b>Payments on your Hive</b>
+          <p class="hint" id="ownerState"></p>
+          <pre class="code-note">python3 -m hive.admin set RAZORPAY_KEY_ID
+python3 -m hive.admin set RAZORPAY_KEY_SECRET
+python3 -m hive.admin set RAZORPAY_WEBHOOK_SECRET   (optional)
+python3 -m hive.admin price 499</pre>
+          <p class="hint">Webhook (optional, Razorpay Dashboard → Webhooks): <code id="hookUrl"></code> with the events
+            payment.captured and order.paid. Use rzp_test_ keys first to try it without real money.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="https://checkout.razorpay.com/v1/checkout.js" defer></script>
+<script type="module" src="js/pro.js"></script>
+</body>
+</html>

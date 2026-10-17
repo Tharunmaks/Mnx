@@ -200,8 +200,10 @@ def card_answer(card: dict, said: str) -> tuple[str, dict] | None:
 # ---------------------------------------------------------------- one call
 class Call:
     def __init__(self, bee_id: str | None, reason: str = "", channel: str = "auto", at: float | None = None, talk: bool = False,
-                 request: str = ""):
-        b = registry.get(bee_id) if bee_id else None
+                 request: str = "", user: str | None = None):
+        from .users import who
+        self.user = user or who()  # whose call: it rings only their pages, and a phone only for the Hive's owner
+        b = registry.mine(bee_id, self.user) if bee_id else None
         self.id = "call_" + uuid.uuid4().hex[:10]
         self.secret = secrets.token_urlsafe(18)
         self.bee_id = b["id"] if b else None
@@ -237,11 +239,12 @@ class Call:
 
     def saved(self) -> dict:
         return {"id": self.id, "secret": self.secret, "bee_id": self.bee_id, "reason": self.reason, "channel": self.channel,
-                "at": self.at, "created": self.created, "talk": self.talk, "request": self.request}
+                "at": self.at, "created": self.created, "talk": self.talk, "request": self.request, "user": self.user}
 
     @classmethod
     def load(cls, d: dict) -> "Call":
-        c = cls(d.get("bee_id"), d.get("reason") or "", d.get("channel") or "auto", d.get("at"), bool(d.get("talk")), d.get("request") or "")
+        c = cls(d.get("bee_id"), d.get("reason") or "", d.get("channel") or "auto", d.get("at"), bool(d.get("talk")), d.get("request") or "",
+                d.get("user") or "owner")
         c.id, c.secret, c.created = d["id"], d["secret"], d.get("created") or time.time()
         return c
 
@@ -276,7 +279,7 @@ class Calls:
             await self.broadcast(event)
 
     async def _state(self, call: Call) -> None:
-        await self._send({"type": "call", "call": call.view()})
+        await self._send({"type": "call", "call": call.view(), "user": call.user})
 
     def get(self, call_id: str) -> Call:
         c = self.calls.get(call_id)
@@ -284,8 +287,8 @@ class Calls:
             raise KeyError("No such call")
         return c
 
-    def views(self) -> list[dict]:
-        return [c.view() for c in sorted(self.calls.values(), key=lambda c: c.created, reverse=True)]
+    def views(self, user: str | None = None) -> list[dict]:
+        return [c.view() for c in sorted(self.calls.values(), key=lambda c: c.created, reverse=True) if user is None or c.user == user]
 
     def _prune(self) -> None:
         ended = sorted((c for c in self.calls.values() if c.state in ENDED), key=lambda c: c.ended_at or 0)
@@ -314,11 +317,13 @@ class Calls:
 
     async def ring(self, call: Call) -> None:
         call.at = None
-        if call.channel in ("auto", "phone") and voice.twilio_ready:
+        owner = call.user == "owner"  # the phone number in Settings is the owner's
+        if owner and call.channel in ("auto", "phone") and voice.twilio_ready:
             await self._twilio_place(call)
             return
         if call.channel == "phone":
-            call.state, call.error = "failed", "Phone calls need " + voice.view()["phone_calls"].removeprefix("needs ")
+            call.state, call.error = "failed", ("Phone calls need " + voice.view()["phone_calls"].removeprefix("needs ") if owner
+                                                else "Calls ring in the Hive app")
             call.ended_at = time.time()
             await self._state(call)
             return
@@ -453,7 +458,8 @@ class Calls:
             elif kind == "task_error" and ev.get("text") and "Stopped" not in ev["text"]:
                 await self.say(call, ev["text"])
         # a Bee's call is that Bee's own chat (Peace); a call from the Hive has every Bee on it (Rush)
-        task = Task(f"t_{uuid.uuid4().hex[:10]}", call.id, text, emit, bee=call.bee_id, mode="peace" if call.bee_id else "rush")
+        task = Task(f"t_{uuid.uuid4().hex[:10]}", call.id, text, emit, bee=call.bee_id, mode="peace" if call.bee_id else "rush",
+                    user=call.user)
         call.task = task
 
         async def go() -> None:
@@ -606,13 +612,13 @@ async def handle_chat(task: Task) -> bool:
     if call.state == "failed":
         await task.answer(f"I couldn't place the call: {call.error}. Say “call me” without “on my phone” to ring the Hive app instead.")
         return True
-    how = (f"your phone {voice.s['phone']}" if call.via == "phone" or (call.channel != "app" and voice.twilio_ready)
+    how = (f"your phone {voice.s['phone']}" if call.via == "phone" or (task.user == "owner" and call.channel != "app" and voice.twilio_ready)
            else "the Hive app: keep a Hive page open (a paired phone running drone.py vibrates too)")
     tz = voice.s.get("timezone") or "Asia/Kolkata"
     when = (datetime.fromtimestamp(call.at, ZoneInfo(tz)).strftime("%a %d %b, %I:%M %p") + f" ({tz})") if call.at else "now"
     sound = (f"Fish Audio · {voice.s.get('voice_name') or voice.s.get('voice_id') or 'default voice'}" if voice.fish_ready
              else "your browser's voice (add a Fish Audio key in Settings → Voice for the Fish voice)")
-    details = [["From", f"{call.bee} Bee" if call.bee != "Mnx" else "your Hive"], ["When", when], ["Rings", how], ["Voice", sound]]
+    details = [["From", call.bee if call.bee != "Mnx" else "your Hive"], ["When", when], ["Rings", how], ["Voice", sound]]
     if call.reason and not call.request:
         details.append(["It says", call.reason])
     if call.request:

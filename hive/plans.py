@@ -1,85 +1,60 @@
-"""Plans in the chat: "subscribe me to plus", "switch to free", "what plan am I on". Both plans are free.
+"""Plans in the chat: "get pro", "upgrade", "what plan am I on". Paying happens on the Pro page (Razorpay).
 
-Changing the plan gives every Bee the plan's computer (Standard or Plus), except Bees whose computer you chose
-yourself and the Bees that get the whole machine (Cloud, GPU).
+When Pro starts or ends, every Bee of that user gets the plan's computer (apply).
 """
 
 from __future__ import annotations
 
 import re
+import time
 
-from .bees import SIZES, registry
+from .bees import registry
 from .core import Task
 from .plan import PLANS, plan
 
-SUBSCRIBE = re.compile(r"\b(?:subscribe|sign\s+me\s+up|upgrade|join|get|switch|move|go)\b.*\bplus\b|\bplus\s+(?:plan|subscription)\b", re.I)
-DOWN = re.compile(r"\b(?:unsubscribe|cancel\s+(?:my\s+)?(?:plus|subscription)|(?:switch|go|move)\s+(?:back\s+)?to\s+(?:the\s+)?free(?:\s+plan)?)\b", re.I)
+SUBSCRIBE = re.compile(r"\b(?:subscribe|sign\s+me\s+up|upgrade|join|get|buy|switch|move|go|pay\s+for)\b.*\b(?:pro|plus|premium)\b"
+                       r"|\b(?:pro|plus|premium)\s+(?:plan|subscription)\b|^\s*upgrade(?:\s+me)?\s*[.!]?\s*$", re.I)
+DOWN = re.compile(r"\b(?:unsubscribe|cancel\s+(?:my\s+)?(?:pro|plus|subscription)|(?:switch|go|move)\s+(?:back\s+)?to\s+(?:the\s+)?free(?:\s+plan)?)\b", re.I)
 WHICH = re.compile(r"\b(?:which|what)\s+plan\b|\bmy\s+(?:plan|subscription)\b", re.I)
 
 
 def parse(text: str) -> dict | None:
     t = text or ""
-    if re.search(r"\bbees?\b|\bbot\b", t, re.I):  # "upgrade the coding bee to plus" is about one Bee's computer
+    if re.search(r"\bbees?\b|\bbot\b", t, re.I):
         return None
     if DOWN.search(t):
-        return {"kind": "set", "plan": "free"}
+        return {"kind": "down"}
     if SUBSCRIBE.search(t):
-        return {"kind": "set", "plan": "plus"}
+        return {"kind": "up"}
     if WHICH.search(t):
         return {"kind": "which"}
     return None
 
 
-async def apply(new_plan: str) -> list[str]:
-    """Give every Bee the plan's computer (unless you chose its computer, or it has the whole machine)."""
-    size = PLANS[new_plan]["size"]
-    changed = []
-    for b in list(registry.bees):
-        c = b["computer"]
-        if b.get("computer_set") or c.get("size") in ("max", "custom") or c.get("size") == size or c.get("cloud"):
-            continue
-        z = SIZES[size]
-        change = {"size": size, "gpu": bool(z.get("gpu_vram_gb"))}
-        if size == "plus" and c.get("where", "here") == "here":
-            from .cloud import pool_place
-            spot = pool_place()  # the Hive's own cloud, when it has room
-            if spot:
-                change["where"] = spot
-        await registry.set_computer(b["id"], change, by_you=False)
-        changed.append(b["name"])
-    return changed
+async def apply(uid: str) -> list[str]:
+    """Give every one of the user's Bees the computer their plan has now."""
+    return [b["name"] for b in await registry.apply_plan(uid)]
+
+
+def _date(ts: int) -> str:
+    return time.strftime("%d %b %Y", time.localtime(ts))
 
 
 async def handle(task: Task, intent: dict) -> None:
-    if intent["kind"] == "which":
-        v = plan.view()
-        await task.emit("result", bee="Queen", service="Plan", title=f"You're on {v['label']} ({v['price']})", badge="Plan",
-                        details=[[p["label"], f"{p['price']} · {p['computer']}"] for p in v["plans"]])
-        await task.answer(f"You're on {v['label']}. " + ("Say “subscribe me to plus” for 16 GB RAM, 100 GB disk and a 16 GB GPU, free."
-                                                         if v["plan"] == "free" else "Every Bee has the Plus computer."))
+    v = plan.view(task.user)
+    if intent["kind"] == "which" or (intent["kind"] == "up" and v["plan"] == "pro"):
+        until = f" until {_date(v['until'])}" if v.get("until") else ""
+        await task.emit("result", service="Plan", title=f"You're on {v['label']}{until}", badge="Plan",
+                        details=[[p["label"], ("₹0" if p["id"] == "free" else f"₹{p['price_inr']} / 30 days") + f" · {p['computer']} · up to {p['max_bees']} Bees"]
+                                 for p in v["plans"]])
+        await task.answer(f"You're on {v['label']}{until}. " + ("Every Bee has the Pro computer." if v["plan"] == "pro" else
+                          f"Pro is ₹{v['price_inr']} for 30 days: open [Get Pro](pro.html)."))
         return
-    want = intent["plan"]
-    if plan.name == want:
-        await task.answer(f"You're already on {PLANS[want]['label']}.")
+    if intent["kind"] == "down":
+        await task.answer("Pro doesn't renew by itself, so there's nothing to cancel: it ends on its date and your Bees go back to "
+                          "Free computers." if v["plan"] == "pro" else "You're on Free already.")
         return
-    try:
-        plan.set(want)
-    except ValueError as exc:
-        await task.answer(str(exc))
-        return
-    s = await task.step("running", f"Giving every Bee the {PLANS[want]['label']} computer", bee="Queen")
-    try:
-        changed = await apply(want)
-    except Exception as exc:
-        await task.finish_step(s, status="error", text=str(exc)[:200])
-        await task.answer(f"You're on {PLANS[want]['label']} now, but some computers didn't change: {exc}")
-        return
-    await task.finish_step(s, text=f"{len(changed)} Bees upgraded" if want == "plus" else f"{len(changed)} Bees back on Standard")
-    from .gpu_pool import pool
-    gpu_note = ("" if want == "free" else
-                " The GPU is the Hive's: " + ("this machine's own GPU." if pool.local_ready() else
-                                              "a free 16 GB Kaggle GPU." if pool.kaggle_ready() else
-                                              "set up the free GPU once on the Free cloud page (Kaggle, 2 minutes)."))
-    await task.emit("result", bee="Queen", service="Plan", title=f"{PLANS[want]['label']} · {PLANS[want]['price']}", badge="Plan",
-                    details=[["Every Bee gets", PLANS[want]["computer"]], ["Changed", ", ".join(changed) or "nothing to change"]])
-    await task.answer(f"Done: you're on {PLANS[want]['label']}, free." + gpu_note)
+    await task.emit("result", service="Plan", title=f"Pro · ₹{v['price_inr']} for 30 days", badge="Pro",
+                    details=[["Every Bee gets", PLANS["pro"]["computer"]], ["Bees", f"up to {PLANS['pro']['max_bees']}"],
+                             ["Pay with", "UPI, cards, netbanking or wallets (Razorpay)"]])
+    await task.answer("Open [Get Pro](pro.html) to pay. Pro starts the moment the payment goes through.")

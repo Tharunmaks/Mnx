@@ -1,4 +1,4 @@
-"""Bots you make yourself, the brain they talk with, the free Plus plan, the Hive's GPU pool and its free cloud."""
+"""Bees you make yourself (Grok-style bots), the brain they talk with, the Pro plan, the Hive's GPU pool and its free cloud."""
 
 from __future__ import annotations
 
@@ -21,6 +21,9 @@ from hive.bees import Registry  # noqa: E402
 
 def run(coro):
     return asyncio.run(coro)
+
+
+U = "u_test0000001"  # a user (the owner is always on Pro)
 
 
 # ---------------------------------------------------------------- the brain
@@ -71,14 +74,14 @@ def test_brain_speaks_openai_chat_to_any_server(model, tmp_path):
 # ---------------------------------------------------------------- bots
 @pytest.fixture
 def hive(tmp_path, monkeypatch):
-    from hive import bees, modes, queen, bee_chat, calls
+    from hive import bees, modes, queen, bee_chat, calls, gpu_chat
     r = Registry(tmp_path / "hive.json", tmp_path / "keys.json")
 
     async def nothing(*a):
         return None
     r.on_created = r.on_deleted = r.on_computer = nothing
     monkeypatch.setattr(bees, "registry", r)
-    for mod in (modes, queen, bee_chat, calls, plans):
+    for mod in (modes, queen, bee_chat, calls, plans, gpu_chat):
         monkeypatch.setattr(mod, "registry", r)
     monkeypatch.setattr(bots, "store", bots.Store(tmp_path / "bots"))
     monkeypatch.delenv("MNX_PLAN", raising=False)
@@ -90,9 +93,9 @@ def test_make_a_bot_with_personality_knowledge_and_memory(hive):
     b = run(bots.create_bot("Maya", "a friendly Tamil tutor", {"emoji": "🌸", "personality": "Teach Tamil gently.", "tone": "caring",
                                                                "greeting": "Vanakkam!", "starters": ["Teach me numbers", "", "Quiz me"],
                                                                "visibility": "hive"},
-                            knowledge={"numbers.md": "Onru means one.\n\nIrandu means two.\n\nMoondru means three."}))
+                            knowledge={"numbers.md": "Onru means one.\n\nIrandu means two.\n\nMoondru means three."}, owner=U))
     assert b["id"] == "maya" and b["bot"]["starters"] == ["Teach me numbers", "Quiz me"] and b["tools"] == ["bot"]
-    assert b["computer"]["size"] == "standard"  # Free plan: the Standard computer, like every Bee
+    assert b["computer"]["size"] == "free" and b["owner"] == U  # Free plan: the Free computer, like every Bee of theirs
     hits = bots.store.search("maya", "what does irandu mean")
     assert hits[0]["file"] == "numbers.md" and "Irandu means two" in hits[0]["text"]
     bots.store.remember("maya", "I live in Madurai.")
@@ -110,13 +113,14 @@ def test_make_a_bot_with_personality_knowledge_and_memory(hive):
     assert exported["mnx_bot"] == 1 and exported["knowledge"]["numbers.md"].startswith("Onru")
 
 
-def test_bot_phrases():
+def test_bee_phrases():
     assert bots.parse("make a bot called Maya that is a friendly Tamil tutor") == \
-        {"name": "Maya", "description": "a friendly Tamil tutor", "template": None}
-    assert bots.parse("create my own companion")["template"] == "companion"
-    assert bots.parse("build me a custom gpt for interview practice") == {"name": "", "description": "interview practice", "template": None}
-    assert bots.parse("create a bee called Scout that watches prices") is None
+        {"name": "Maya", "description": "a friendly Tamil tutor", "parent": None}
+    assert bots.parse("create my own companion") == {"name": "", "description": "", "parent": None}  # no premade ones: you shape it
+    assert bots.parse("build me a custom gpt for interview practice") == {"name": "", "description": "interview practice", "parent": None}
+    assert bots.parse("create a bee called Scout that watches prices") == {"name": "Scout", "description": "watches prices", "parent": None}
     assert bots.parse("train my model") is None
+    assert not hasattr(bots, "TEMPLATES")
 
 
 class Collect:
@@ -133,14 +137,15 @@ class Collect:
 def _task(text, bee, history=None):
     from hive.core import Task
     c = Collect()
-    t = Task("t1", "c1", text, c, bee=bee, mode="peace")
+    t = Task("t1", "c1", text, c, bee=bee, mode="peace", user=U)
     t.history, t.user_name = history or [], "Tharun"
     return t, c
 
 
 def test_a_bot_without_a_brain_remembers_and_answers_from_its_knowledge(hive, model):
     from hive import queen
-    run(bots.create_bot("Maya", "Tamil tutor", {"greeting": "Vanakkam!"}, knowledge={"n.md": "Onru means one. Irandu means two. Moondru means three."}))
+    run(bots.create_bot("Maya", "Tamil tutor", {"greeting": "Vanakkam!"}, knowledge={"n.md": "Onru means one. Irandu means two. Moondru means three."},
+                        owner=U))
     t, c = _task("remember that I am learning for my trip", "maya")
     run(queen.handle(t))
     assert "I'll remember" in c.answer() and bots.store.memories("maya")[0]["text"] == "I am learning for my trip"
@@ -149,7 +154,7 @@ def test_a_bot_without_a_brain_remembers_and_answers_from_its_knowledge(hive, mo
     assert c.answer() == "From n.md: Irandu means two." and any(e.get("badge") == "Knowledge" for e in c.events)
     t, c = _task("tell me a joke", "maya")
     run(queen.handle(t))
-    assert c.answer().startswith("Vanakkam!") and "Settings → Brain" in c.answer()
+    assert c.answer().startswith("Vanakkam!") and "No model is running" in c.answer()
     assert {e["bee"] for e in c.events if e.get("bee")} == {"Maya"}
 
 
@@ -157,7 +162,7 @@ def test_a_bot_with_a_brain_talks_in_character_with_the_chat_so_far(hive, model)
     from hive import queen
     b, fake = model
     b.update({"url": "http://127.0.0.1:11434"})
-    run(bots.create_bot("Maya", "Tamil tutor", {"personality": "You are Maya, a Tamil tutor."}))
+    run(bots.create_bot("Maya", "Tamil tutor", {"personality": "You are Maya, a Tamil tutor."}, owner=U))
     bots.store.remember("maya", "I love filter coffee")
     t, c = _task("how do I say hello?", "maya", [{"role": "user", "text": "hi"}, {"role": "bot", "text": "Vanakkam!"}])
     run(queen.handle(t))
@@ -169,35 +174,46 @@ def test_a_bot_with_a_brain_talks_in_character_with_the_chat_so_far(hive, model)
 
 def test_chat_only_bots_dont_run_commands(hive, model):
     from hive import queen
-    run(bots.create_bot("Poet", "writes poems", {"computer": False}))
+    run(bots.create_bot("Poet", "writes poems", {"computer": False}, owner=U))
     t, c = _task("$ rm -rf /", "poet")
     run(queen.handle(t))
     assert "chat-only" in c.answer()
 
 
-# ---------------------------------------------------------------- the free Plus plan
-def test_plus_is_free_and_gives_16gb_100gb_and_a_16gb_gpu(hive):
-    assert plan_mod.PLANS["plus"]["price"] == "₹0" and plan_mod.PLANS["free"]["price"] == "₹0"
-    run(hive.create("Scout", "watches"))
-    run(hive.set_computer("coding", {"size": "xl"}))  # chosen by you: kept
-    plan_mod.plan.set("plus")
-    changed = run(plans.apply("plus"))
+def test_another_users_bee_never_answers_you(hive, model):
+    from hive import queen
+    run(bots.create_bot("Maya", "Tamil tutor", {}, owner="u_other000001"))
+    t, c = _task("$ cat ~/.ssh/id_rsa", "maya")
+    run(queen.handle(t))
+    assert "isn't one of yours" in c.answer() and not any(e["type"] == "output" for e in c.events)
+
+
+# ---------------------------------------------------------------- Pro (paid with Razorpay)
+def test_pro_gives_16gb_100gb_and_a_16gb_gpu_and_ends_on_its_date(hive):
+    run(hive.create("Scout", "watches", owner=U))
+    plan_mod.plan.grant(U, 30, {"id": "pay_x"})
+    changed = run(plans.apply(U))
     s = hive.get("scout")["computer"]
-    assert (s["size"], s["memory_gb"], s["disk_gb"], s["gpu"]) == ("plus", 16, 100, True)
-    assert "Scout" in changed and "Coding" not in changed and "Cloud" not in changed  # yours and the whole-machine Bees stay
-    assert hive.get("coding")["computer"]["size"] == "xl" and hive.get("cloud")["computer"]["size"] == "max"
-    assert not hive.get("scout").get("computer_set")  # still follows the plan
-    plan_mod.plan.set("free")
-    run(plans.apply("free"))
-    assert hive.get("scout")["computer"]["size"] == "standard" and not hive.get("scout")["computer"]["gpu"]
+    assert (s["size"], s["memory_gb"], s["disk_gb"], s["gpu"]) == ("pro", 16, 100, True) and changed == ["Scout"]
+    plan_mod.plan.revoke(U)
+    run(plans.apply(U))
+    assert hive.get("scout")["computer"]["size"] == "free" and not hive.get("scout")["computer"]["gpu"]
 
 
-@pytest.mark.parametrize("text,want", [("subscribe me to plus", "plus"), ("upgrade to the plus plan", "plus"),
-                                       ("switch back to free", "free"), ("cancel my subscription", "free"),
-                                       ("upgrade the coding bee to plus", None), ("what is 2 plus 2", None)])
+@pytest.mark.parametrize("text,want", [("subscribe me to pro", "up"), ("upgrade to the pro plan", "up"), ("get plus", "up"),
+                                       ("upgrade", "up"), ("switch back to free", "down"), ("cancel my subscription", "down"),
+                                       ("what plan am I on", "which"), ("upgrade the coding bee to pro", None), ("what is 2 plus 2", None)])
 def test_plan_phrases(text, want):
     got = plans.parse(text)
-    assert (got or {}).get("plan") == want
+    assert (got or {}).get("kind") == want
+
+
+def test_upgrading_in_the_chat_points_to_the_pro_page(hive):
+    from hive import queen
+    t, c = _task("upgrade to pro", None)
+    t.mode = "rush"
+    run(queen.handle(t))
+    assert "pro.html" in c.answer() and "499" in json.dumps(c.events)
 
 
 # ---------------------------------------------------------------- the Hive's GPU (Kaggle, with a stand-in CLI)
@@ -257,12 +273,15 @@ def gpu(tmp_path, monkeypatch, hive):
     return p, secrets, state
 
 
-def test_the_gpu_needs_plus_and_the_hives_kaggle(gpu):
+def test_the_gpu_needs_pro_and_the_hives_kaggle(gpu, hive):
     p, secrets, _ = gpu
-    with pytest.raises(gpu_pool.GpuError, match="Plus, which is free"):
+    run(hive.create("Scout", "watches", owner=U))
+    with pytest.raises(gpu_pool.GpuError, match="Pro"):
         run(p.submit("scout", "python a.py", {}))
-    plan_mod.plan.set("plus")
-    with pytest.raises(gpu_pool.GpuError, match="Free cloud"):
+    with pytest.raises(gpu_pool.GpuError, match="No such Bee"):
+        run(p.submit("ghost", "python a.py", {}))
+    plan_mod.plan.grant(U, 30, {"id": "pay_g"})
+    with pytest.raises(gpu_pool.GpuError, match="owner adds it"):
         run(p.submit("scout", "python a.py", {}))
     secrets.update(KAGGLE_USERNAME="tharun", KAGGLE_API_TOKEN="KGAT_x")
     assert p.kaggle_ready() and p.source() == "kaggle"
@@ -270,9 +289,9 @@ def test_the_gpu_needs_plus_and_the_hives_kaggle(gpu):
         run(p.submit("scout", "ls", {"../etc/passwd": b"x"}))
 
 
-def test_a_gpu_job_runs_the_bees_files_and_brings_the_outputs_back(gpu):
+def test_a_gpu_job_runs_the_bees_files_and_brings_the_outputs_back(gpu, hive):
     p, secrets, state = gpu
-    plan_mod.plan.set("plus")
+    run(hive.create("Scout", "watches"))  # the owner's Bee: the owner is on Pro
     secrets.update(KAGGLE_USERNAME="tharun", KAGGLE_API_TOKEN="KGAT_x")
     delivered = {}
 
@@ -300,9 +319,9 @@ def test_a_gpu_job_runs_the_bees_files_and_brings_the_outputs_back(gpu):
     assert "kernels push" in calls and "kernels status" in calls and "kernels output" in calls
 
 
-def test_a_failing_command_is_reported(gpu):
+def test_a_failing_command_is_reported(gpu, hive):
     p, secrets, _ = gpu
-    plan_mod.plan.set("plus")
+    run(hive.create("Scout", "watches"))  # the owner's Bee: the owner is on Pro
     secrets.update(KAGGLE_USERNAME="tharun", KAGGLE_KEY="0" * 32)
 
     async def scenario():
@@ -313,9 +332,9 @@ def test_a_failing_command_is_reported(gpu):
     assert job["status"] == "error" and job["exit"] == 3 and "exited with 3" in job["error"]
 
 
-def test_weekly_free_hours_are_respected(gpu):
+def test_weekly_free_hours_are_respected(gpu, hive):
     p, secrets, _ = gpu
-    plan_mod.plan.set("plus")
+    run(hive.create("Scout", "watches"))  # the owner's Bee: the owner is on Pro
     secrets.update(KAGGLE_USERNAME="tharun", KAGGLE_API_TOKEN="KGAT_x")
     import time
     now = time.time()
@@ -344,8 +363,7 @@ def test_plus_bees_go_to_the_hives_free_cloud_when_it_has_room(hive, monkeypatch
     import hive.lab as lab_mod
     monkeypatch.setattr(lab_mod, "lab", Lab)
     assert cloud.slots(targets["oracle"]) == 2  # 24 GB × 2 overcommit / 16 GB
-    plan_mod.plan.set("plus")
-    a = run(hive.create("Alpha", "x"))
+    a = run(hive.create("Alpha", "x"))  # the owner's Bees: Pro computers
     b = run(hive.create("Beta", "y"))
     c = run(hive.create("Gamma", "z"))
     assert a["computer"]["where"] == "oracle" and b["computer"]["where"] == "oracle" and c["computer"]["where"] == "here"
@@ -371,12 +389,12 @@ def test_bots_api_make_teach_share_and_import(gw):
     assert client.post("/api/bots", json={"name": "Maya"}).status_code == 401
     made = client.post("/api/bots", headers=auth, json={"name": "Maya", "tagline": "Tamil tutor",
                                                          "profile": {"emoji": "🌸", "personality": "Teach Tamil.", "starters": ["Quiz me"]}})
-    assert made.status_code == 200 and made.json()["bot"]["emoji"] == "🌸" and made.json()["knowledge"] == []
+    assert made.status_code == 200 and made.json()["knowledge"] == [] and "owner" not in made.json()
     up = client.post("/api/bots/maya/knowledge?name=words.md", headers=auth, content="Nandri means thank you.".encode())
     assert up.status_code == 200 and up.json()["name"] == "words.md"
     assert client.post("/api/bots/maya/knowledge?name=a.exe", headers=auth, content=b"MZ").status_code == 400
     edited = client.put("/api/bots/maya", headers=auth, json={"tagline": "Tamil and Hindi tutor", "profile": {"tone": "playful"}}).json()
-    assert edited["skill"] == "Tamil and Hindi tutor" and edited["bot"]["tone"] == "playful" and edited["bot"]["emoji"] == "🌸"
+    assert edited["skill"] == "Tamil and Hindi tutor" and edited["bot"]["tone"] == "playful"
     listed = client.get("/api/bots", headers=auth).json()
     assert [b["id"] for b in listed] == ["maya"] and listed[0]["knowledge"][0]["name"] == "words.md"
     exported = client.get("/api/bots/maya/export", headers=auth).json()
@@ -385,7 +403,7 @@ def test_bots_api_make_teach_share_and_import(gw):
     assert client.post("/api/bots/import", headers=auth, json={"hello": 1}).status_code == 400
     remix = client.post("/api/bots", headers=auth, json={"name": "Mini Maya", "remix_of": "maya", "profile": {}}).json()
     assert remix["knowledge"][0]["name"] == "words.md"
-    assert client.get("/api/bots/templates", headers=auth).json()["templates"][0]["id"] == "companion"
+    assert client.get("/api/bots/templates", headers=auth).json()["templates"] == []  # no premade Bees
     assert client.delete("/api/bees/maya", headers=auth).status_code == 200
     assert client.get("/api/bots/maya/memory", headers=auth).status_code == 404
 
@@ -397,7 +415,6 @@ def test_brain_and_free_cloud_api(gw, monkeypatch):
     assert client.post("/api/brain/test", headers=auth).json()["ok"]
     assert client.put("/api/brain", headers=auth, json={"url": "nope"}).status_code == 400
     free = client.get("/api/cloud/free", headers=auth).json()
-    assert {"gpu", "pool", "hive_key", "plan"} <= set(free) and free["plan"]["plan"] == "free"
-    plus = client.put("/api/plan", headers=auth, json={"plan": "plus"}).json()
-    assert plus["plan"] == "plus" and "Chat" in plus["changed"]
-    assert client.get("/api/bees", headers=auth).json()[0]["computer"]["memory_gb"] == 16
+    assert {"gpu", "pool", "hive_key", "plan"} <= set(free) and free["plan"]["plan"] == "pro"  # the owner is always on Pro
+    assert client.put("/api/plan", headers=auth, json={"plan": "pro"}).status_code in (404, 405)  # Pro is paid for, not switched on
+    assert client.get("/api/bees", headers=auth).json() == []  # no premade Bees

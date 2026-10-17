@@ -17,7 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from hive import bees, cells as cells_mod, vortex  # noqa: E402
-from hive.bees import BeeError, normalize_computer  # noqa: E402
+from hive.bees import computer_for  # noqa: E402
 
 VORTEX_CHECKOUT = Path(os.getenv("MNX_TEST_VORTEX_DIR", "/home/user/tharunmaks/vortex-os-"))
 
@@ -76,13 +76,9 @@ def test_remote_script_prefers_docker_then_node_and_quotes_secrets():
     assert "MNX_VORTEX_NEEDS: Docker or Node.js" in sc and "127.0.0.1:8421:8420" in sc
 
 
-def test_os_choice():
-    assert normalize_computer(None)["os"] == "vortex"
-    assert normalize_computer({"os": "plain"})["os"] == "plain"
-    assert normalize_computer({"os": None}, {"size": "small", "cpus": 1, "memory_gb": 1, "gpu": False, "where": "here"})["os"] == "vortex"
-    with pytest.raises(BeeError):
-        normalize_computer({"os": "windows"})
-    assert "Vortex OS" in bees.describe_computer(normalize_computer(None))
+def test_every_bee_gets_vortex_os():
+    assert computer_for("u_free00000001")["os"] == "vortex" and computer_for("owner")["os"] == "vortex"
+    assert "Vortex OS" in bees.describe_computer(computer_for("u_free00000001"))
 
 
 def test_a_plain_computer_has_no_desktop(tmp_path, monkeypatch):
@@ -107,7 +103,7 @@ def test_failing_vortex_image_falls_back_to_a_plain_computer(tmp_path, monkeypat
 
     monkeypatch.setattr(cells_mod, "_run", fake_run)
     monkeypatch.setattr(vortex, "ensure_image", no_image)
-    cell = cells_mod.Cell("scout", "Scout", "docker", normalize_computer(None))
+    cell = cells_mod.Cell("scout", "Scout", "docker", computer_for("u_free00000001"))
     asyncio.run(cell.ensure_up())
     run_argv = next(a for a in calls if a[:2] == ["docker", "run"])
     assert run_argv[-3:] == [cells_mod.IMAGE, "sleep", "infinity"] and "build failed" in cell.os_error
@@ -125,7 +121,7 @@ def test_a_bee_gets_a_real_vortex_desktop_on_its_own_files(tmp_path, monkeypatch
     monkeypatch.setattr(vortex, "DIR", VORTEX_CHECKOUT)
     monkeypatch.setattr(vortex, "creds", vortex.Creds(tmp_path / "vortex.json"))
     monkeypatch.setattr(vortex, "PORT_BASE", 18421)
-    cell = cells_mod.Cell("scout", "Scout", "local", normalize_computer(None))
+    cell = cells_mod.Cell("scout", "Scout", "local", computer_for("u_free00000001"))
     (cell.work / "prices.csv").write_text("item,price\ntea,10\n")
     d = vortex.Desktops()
     try:

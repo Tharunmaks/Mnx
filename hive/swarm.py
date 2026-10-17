@@ -132,7 +132,7 @@ async def gather_data(task: Task, parent: str, purpose: str, arch_params: float 
         {"name": "source", "label": "Where should the text come from?", "input": "select", "value": "hf",
          "options": [{"value": "hf", "label": f"A public dataset · suggested: {ds_label}"},
                      {"value": "upload", "label": "My own file (.txt, .md, .jsonl, .csv)"},
-                     {"value": "web", "label": "Web pages (the Browser Bee reads them)"},
+                     {"value": "web", "label": "Web pages (the Hive's browser reads them)"},
                      {"value": "sample", "label": "Demo stories (built in, ~400 KB)"}]},
         {"name": "hf_dataset", "label": "Hugging Face dataset", "value": ds, "show_if": {"source": "hf"}},
     ]
@@ -148,7 +148,7 @@ async def gather_data(task: Task, parent: str, purpose: str, arch_params: float 
         {"name": "urls", "label": "Page addresses, one per line (up to 15)", "input": "textarea",
          "placeholder": "https://en.wikipedia.org/wiki/Kochi", "show_if": {"source": "web"}},
     ]
-    reply = await ask(task, "clarify", parent=parent, title="Data Bee: what should the model learn from?", fields=fields,
+    reply = await ask(task, "clarify", parent=parent, title="Data: what should the model learn from?", fields=fields,
                       text="More text makes a better model. A tiny model is fine with a few MB; bigger ones want millions of documents.",
                       actions=[{"id": "ok", "label": "Use this data"}, {"id": "cancel", "label": "Cancel", "style": "danger"}])
     if reply["action"] != "ok":
@@ -168,7 +168,7 @@ async def gather_data(task: Task, parent: str, purpose: str, arch_params: float 
             sources = [{"name": name, "data_dir": f"data/{l}", "column": col, "max_examples": rows} for l in chosen]
             out["hf"] = {"hf_dataset": "", "hf_config": "", "hf_datasets": json.dumps(sources), "max_examples": rows}
             for l in chosen:
-                s = await task.step("fetching", f"Browser Bee: adding {l} code ({ds_label.split(' (')[0]}, up to {rows:,} files)",
+                s = await task.step("fetching", f"Adding {l} code ({ds_label.split(' (')[0]}, up to {rows:,} files)",
                                     bee=BROWSER, parent=parent)
                 await task.finish_step(s)
             out["label"] = f"{ds_label.split(' (')[0]}: {', '.join(chosen)} · up to {rows:,} files each"
@@ -202,7 +202,7 @@ async def gather_data(task: Task, parent: str, purpose: str, arch_params: float 
         browser = cells.get("browser", "Browser").browser
         got = 0
         for i, url in enumerate(urls, 1):
-            s = await task.step("reading", f"Browser Bee is reading {url[:70]}", bee=BROWSER, parent=parent)
+            s = await task.step("reading", f"Reading {url[:70]}", bee=BROWSER, parent=parent)
             try:
                 page = await browser.do("goto", url=url)
                 text = (await browser.do("read"))["text"]
@@ -278,7 +278,7 @@ async def acquire_hardware(task: Task, parent: str, arch: dict, allow_smaller: b
         if fitting:
             text += f" {_short(fitting[0]['label'])} can hold it."
         default = fitting[0] if fitting else candidates[0]
-        reply = await ask(task, "clarify", parent=parent, title="GPU Bee: where should it train?", text=text,
+        reply = await ask(task, "clarify", parent=parent, title="Hardware: where should it train?", text=text,
                           fields=[{"name": "where", "label": "Train on", "input": "select",
                                    "value": "__cluster__" if default["nodes"] else default["target_id"], "options": options}],
                           actions=[{"id": "ok", "label": "Continue"}, {"id": "cancel", "label": "Cancel", "style": "danger"}])
@@ -330,7 +330,7 @@ async def acquire_hardware(task: Task, parent: str, arch: dict, allow_smaller: b
                 return plan, arch
         elif reply["action"] == "later":
             await task.answer(f"The blueprint is saved in the Lab. A {arch['params_text']} model needs {need}× 80 GB GPUs; "
-                              f"connect them (Cloud Bee → Servers) and say “train the {arch['params_text']} blueprint”.")
+                              f"connect them (Lab → Servers) and say “train the {arch['params_text']} blueprint”.")
             return None, arch
         else:
             return None, arch
@@ -346,7 +346,7 @@ async def rent_gpu(task: Task, parent: str, arch: dict) -> str | None:
         gpus = await providers.runpod_gpu_types(key)
     except providers.ProviderError as exc:
         await task.finish_step(s, status="error", text=str(exc))
-        await task.answer("RunPod didn't answer. Check the API key under Cloud Bee → Servers → Secrets.")
+        await task.answer("RunPod didn't answer. Check the API key under Lab → Servers → Secrets.")
         return None
     need_gb = architect.TRAIN_BYTES_PER_PARAM_GPU * arch["params"] / 1e9
     await task.finish_step(s, text=f"{len(gpus)} GPU types available")
@@ -389,7 +389,7 @@ async def rent_gpu(task: Task, parent: str, arch: dict) -> str | None:
         await task.answer("Renting didn't work. Check runpod.io to make sure nothing is left running.")
         return None
     if rec["status"] != "ready":
-        await task.finish_step(s, status="error", text="The machine is up but SSH login failed; see Cloud Bee → Servers")
+        await task.finish_step(s, status="error", text="The machine is up but SSH login failed; see Lab → Servers")
         return None
     await task.finish_step(s, text="GPU machine connected")
     return rec["target"]
@@ -405,7 +405,7 @@ def _readme(name: str, purpose: str, arch: dict, data_label: str, where: str, to
               f"- Test: {test_prompts:,} held-out prompts (next-token accuracy and perplexity)", "",
               "## Files", "", "- train.py — builds the tokenizer and the model, trains it (DDP/FSDP, multi-node), tests it, saves it",
               "- serve.py — the chat API used by Run it", "- params.json — the settings of this run",
-              "- architect.py — the design helper", "- run.sh / launch.sh — how the Cloud Bee starts it in Docker or over SSH", ""]
+              "- architect.py — the design helper", "- run.sh / launch.sh — how the Lab starts it in Docker or over SSH", ""]
     return "\n".join(lines)
 
 
@@ -414,8 +414,8 @@ async def create_model(task: Task, size: float | None, purpose: str, test_prompt
     status.set_busy(*SWARM)
     started_run = False
     try:
-        plan_step = await task.step("planning", "Plan: Reader → Architect → Browser & Data Bees → GPU Bee → Coding Bee → "
-                                                "Cloud Bee trains → Eval Bee tests", bee=QUEEN)
+        plan_step = await task.step("planning", "Plan: read the request → design → gather data → find hardware → write the files → "
+                                                "train → test", bee=QUEEN)
         await task.finish_step(plan_step)
 
         # Reader Bee: understand the request, ask what's missing.
@@ -438,7 +438,7 @@ async def create_model(task: Task, size: float | None, purpose: str, test_prompt
                 {"name": "size", "label": "Size", "input": "select", "value": "10M",
                  "options": [{"value": l, "label": f"{l} parameters"} for l, _ in architect.SIZES]},
                 {"name": "purpose", "label": "What should the AI do?", "value": purpose, "placeholder": "A maximum coding AI"}],
-                text="Tiny models (1M–50M) train on a CPU in minutes. 1B+ needs GPUs; above ~30B you need many (the GPU Bee finds them). "
+                text="Tiny models (1M–50M) train on a CPU in minutes. 1B+ needs GPUs; above ~30B you need many (the Hive finds them). "
                      "500B is the maximum.",
                 actions=[{"id": "ok", "label": "Continue"}, {"id": "cancel", "label": "Cancel", "style": "danger"}])
             if reply["action"] != "ok":
@@ -556,7 +556,7 @@ async def create_model(task: Task, size: float | None, purpose: str, test_prompt
         run["chat"]["eval_parent"] = eval_bee
         lab._save_run(run)
         await task.answer(f"Your {arch['params_text']} model is being created on {where}. The card updates live, training keeps going "
-                          f"if you close the app, and the Eval Bee posts “your model is ready” here with the test results. "
+                          f"if you close the app, and “your model is ready” is posted here with the test results. "
                           "Then press Run it and talk to it.")
     finally:
         if started_run:
@@ -592,8 +592,8 @@ async def add_data(task: Task, model_query: str, purpose: str) -> None:
     status.set_busy("data", "gpu", "cloud", "eval")
     started_run = False
     try:
-        plan_step = await task.step("planning", f"Plan: Data Bee gathers more text → GPU Bee finds hardware → Cloud Bee keeps training "
-                                                f"{model['name']} → Eval Bee tests", bee=QUEEN)
+        plan_step = await task.step("planning", f"Plan: gather more text → find hardware → keep training "
+                                                f"{model['name']} → test", bee=QUEEN)
         await task.finish_step(plan_step)
         arch = model.get("arch") or (model.get("result") or {})
         n_params = (model.get("result") or {}).get("params") or (arch.get("params") if isinstance(arch, dict) else None) or 1e7

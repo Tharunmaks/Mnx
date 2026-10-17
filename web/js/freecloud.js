@@ -1,4 +1,4 @@
-// Mnx Hive — Free cloud: the free Plus plan, the free GPU (Kaggle) and free servers (Oracle Always Free).
+// Mnx Hive — Cloud setup (owner only): the free GPU (Kaggle) and servers (Oracle Always Free, Iotamine) Pro Bees run on.
 
 import { ICONS, HiveClient, api, connLabel, h, installTokenPrompt, toast, whoami } from "./shared.js";
 import { installVoice } from "./voice.js";
@@ -6,34 +6,14 @@ import { installVoice } from "./voice.js";
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll("[data-icon]").forEach((el) => { el.outerHTML = ICONS[el.dataset.icon]; });
 
-async function loadUser() {
-  const [st, mine] = await Promise.all([api("/api/cloud/status"), api("/api/plan")]);
-  const plus = mine.plan === "plus";
-  $("planText").textContent = plus ? "You're on Plus. Every Bee has the Plus computer." : `You're on Free (${mine.computer}). Plus is free too.`;
-  $("subscribe").textContent = plus ? "On Plus ✓" : "Subscribe to Plus · ₹0";
-  $("subscribe").disabled = plus || mine.locked;
-  $("userStatus").textContent = (st.gpu_ready ? `Free GPU ready (${st.hours_week.toFixed(1)} of ${st.weekly_limit} hours used this week). ` : "The free GPU isn't set up yet. ")
-    + (st.servers ? `${st.servers} Hive server${st.servers === 1 ? "" : "s"} running your Bees.` : "Your Bees run on the Hive's own machine for now.");
-}
-
 async function load() {
-  if ((await whoami()) !== "owner") {
-    document.documentElement.classList.remove("is-owner");
-    try { await loadUser(); } catch { $("planText").textContent = "Couldn't reach the Hive."; }
-    return;
-  }
-  $("userNote").classList.add("hidden");
+  if ((await whoami()) !== "owner") { location.replace("pro.html"); return; }  // setup is the owner's; users see their plan
   let s;
-  try { s = await api("/api/cloud/free"); } catch { $("planText").textContent = "Couldn't reach the Hive."; return; }
-  const plus = s.plan.plan === "plus";
-  $("planText").textContent = plus ? "You're on Plus. Every Bee has the Plus computer." : `You're on Free (${s.plan.computer}). Plus is free too.`;
-  $("subscribe").textContent = plus ? "On Plus ✓" : "Subscribe to Plus · ₹0";
-  $("subscribe").disabled = plus || s.plan.locked;
-  $("stepPlan").classList.toggle("done", plus);
+  try { s = await api("/api/cloud/free"); } catch { $("gpuText").textContent = "Couldn't reach the Hive."; return; }
 
   const g = s.gpu;
   $("stepGpu").classList.toggle("done", g.kaggle || g.local);
-  $("gpuText").textContent = g.local ? "This machine has its own GPU: Plus Bees use it directly."
+  $("gpuText").textContent = g.local ? "This machine has its own GPU: Pro Bees use it directly."
     : g.kaggle ? `Connected as ${s.kaggle_user}. ${g.hours_week.toFixed(1)} of ${g.weekly_limit} free GPU hours used this week.` + (g.cli ? "" : " The Kaggle tool isn't installed on the Hive yet: run  pip install kaggle")
     : "Not connected yet.";
   if (s.kaggle_user) $("kaggleForm").username.value = s.kaggle_user;
@@ -42,7 +22,7 @@ async function load() {
   $("stepServer").classList.toggle("done", s.pool.some((p) => p.status === "ok"));
   $("poolList").replaceChildren(...s.pool.map((p) => h("div", { class: "pool-row" },
     h("b", {}, p.name), h("span", { class: "hint" }, `${p.cpus || "?"} CPUs · ${p.ram_gb || "?"} GB · ${p.status}${p.setup ? " · " + p.setup : ""}`),
-    h("span", { class: "hint" }, `${p.bees.length} of ${p.slots} Plus Bees: ${p.bees.join(", ") || "none yet"}`),
+    h("span", { class: "hint" }, `${p.bees.length} of ${p.slots} Pro Bees: ${p.bees.join(", ") || "none yet"}`),
     h("button", { class: "btn danger", type: "button", onclick: async () => {
       try { await api(`/api/cloud/pool/${p.id}`, { method: "DELETE" }); load(); } catch (e) { toast(e.message, "error"); }
     } }, "Remove"))));
@@ -92,11 +72,6 @@ $("iotaDeploy").addEventListener("submit", async (e) => {
     await api("/api/cloud/iotamine/deploy", { method: "POST", body: { ...body, pop: q.pop, confirm: true } });
     toast("Deploying: it shows up here in a few minutes");
   } catch (err) { toast(err.message, "error"); }
-});
-
-$("subscribe").addEventListener("click", async () => {
-  try { const r = await api("/api/plan", { method: "PUT", body: { plan: "plus" } }); toast(`You're on Plus. ${r.changed.length} Bees got the Plus computer.`); load(); }
-  catch (e) { toast(e.message, "error"); }
 });
 
 $("kaggleForm").addEventListener("submit", async (e) => {

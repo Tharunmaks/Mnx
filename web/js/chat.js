@@ -21,7 +21,7 @@ $("welcomeLogo").innerHTML = logoSVG("wordmark-hex");
 
 // ---------- state ----------
 let chats = store.get(CHATS_KEY, []);
-// Rush: every Bee works together on one page (the Queen's chats). Peace: a separate chat with each Bee.
+// Rush: all your Bees work together on one page. Peace: a separate chat with each of your Bees (like Grok's bots).
 let mode = store.get("mnx.mode", "rush") === "peace" ? "peace" : "rush";
 let rushId = store.get(ACTIVE_KEY, null);
 let peaceBee = store.get("mnx.peaceBee", null);
@@ -114,7 +114,7 @@ function send(text) {
   let chat = activeChat();
   if (!chat && mode === "peace") {
     const b = bees.find((x) => x.id === peaceBee);
-    if (!b) return;
+    if (!b) { openNewBee(); return; }
     chat = { id: `peace_${b.id}`, bee: b.id, title: b.name, created: Date.now(), updated: Date.now(), turns: [] };
     chats.unshift(chat);
   } else if (!chat) {
@@ -196,13 +196,15 @@ function renderAll(smooth = false) {
   slot.append(...composer.childNodes, ...[...$("welcomeSlot").childNodes, ...$("bottomSlot").childNodes].filter((n) => n.parentNode !== slot));
 
   const pb = mode === "peace" ? bees.find((b) => b.id === peaceBee) : null;
-  $("chatTitle").textContent = pb ? pb.name : chat ? chat.title : "Rush";
-  document.title = `${pb ? pb.name : chat ? chat.title : "Rush"} · Mnx Hive`;
+  const title = pb ? pb.name : mode === "peace" ? "Peace" : chat ? chat.title : "Rush";
+  $("chatTitle").textContent = title;
+  document.title = `${title} · Mnx Hive`;
   for (const btn of $("modeSwitch").querySelectorAll("button")) btn.classList.toggle("on", btn.dataset.mode === mode);
   $("board").classList.toggle("hidden", mode !== "rush" || !bees.length);
   $("newChat").classList.toggle("hidden", mode === "peace");
-  $("historyLabel").textContent = mode === "peace" ? "Bees · one chat each" : "Rush chats";
-  input.placeholder = pb ? `Message ${pb.name}… (“$ ls” runs on its computer)` : "Ask the whole Hive… (“roll call”, “everyone run …”)";
+  $("newBee").classList.toggle("hidden", mode !== "peace");
+  $("historyLabel").textContent = mode === "peace" ? "Your Bees" : "Rush chats";
+  input.placeholder = pb ? `Message ${pb.name}…` : mode === "peace" ? "Make a Bee first…" : bees.length ? "Ask all your Bees…" : "Ask anything…";
   $("talkBtn").title = pb ? `Talk with ${pb.name} (Fish Audio voice)` : "Talk with the Hive (Fish Audio voice)";
   renderWelcome(pb);
   renderBoard();
@@ -245,13 +247,9 @@ function scheduleRender(turn) {
 function rerenderTurn(turn, scroll = true) {
   const run = runs.get(turn.task);
   if (!run) return;
-  const el = renderRun(buildModel(turn.events), { onAction: onAction(turn), cardCache: run.cardCache });
+  const el = renderRun(buildModel(turn.events), { onAction: onAction(turn), cardCache: run.cardCache, beeNames: new Set(bees.map((b) => b.name)) });
   const owner = turn.bee && bees.find((b) => b.id === turn.bee);
-  if (owner) {
-    const badge = owner.bot ? Object.assign(document.createElement("span"), { className: "logo emoji", textContent: owner.bot.emoji || "🤖" })
-      : Object.assign(document.createElement("span"), { className: "logo", innerHTML: beeHex(owner.name, owner.color) });
-    el.querySelector(".logo")?.replaceWith(badge);
-  }
+  if (owner) el.querySelector(".logo")?.replaceWith(Object.assign(document.createElement("span"), { className: "logo", innerHTML: beeHex(owner.name, owner.color) }));
   run.el.replaceChildren(el);
   if (scroll) scrollDown();
 }
@@ -489,14 +487,14 @@ async function loadTools() {
 // ---------- Bees side panel ----------
 async function loadBees() {
   try { bees = await api("/api/bees"); } catch { /* offline */ }
-  if (mode === "peace" && !bees.find((b) => b.id === peaceBee) && bees.length) { peaceBee = (bees.find((b) => b.id === "chat") || bees[0]).id; syncActive(); }
+  if (mode === "peace" && !bees.find((b) => b.id === peaceBee)) { peaceBee = bees.length ? bees[0].id : null; syncActive(); }
   renderAll();
   const list = $("beeList");
   list.replaceChildren();
   $("beeCount").textContent = bees.length || "";
-  if (!bees.length) list.append(h("div", { class: "empty-note" }, "No Bees yet."));
+  if (!bees.length) list.append(h("div", { class: "empty-note" }, "No Bees yet. Make one in Peace."));
   for (const b of bees) {
-    const row = h("a", { class: "bee-row", href: `cell.html?bee=${encodeURIComponent(b.id)}`, title: `Open ${b.name}'s Cell` });
+    const row = h("a", { class: "bee-row", href: `cell.html?bee=${encodeURIComponent(b.id)}`, title: `Open ${b.name}'s computer` });
     row.innerHTML = beeHex(b.name, b.color);
     row.append(
       h("div", { class: "meta" }, h("div", { class: "name" }, b.name), h("div", { class: "skill" }, b.skill || "")),
@@ -507,7 +505,7 @@ async function loadBees() {
 $("hiveToggle").addEventListener("click", () => {
   const p = $("hivePanel");
   if (getComputedStyle(p).position === "absolute" || !p.offsetParent) p.classList.toggle("open");
-  else location.href = "hive.html";
+  else location.href = "bots.html";
 });
 
 // ---------- mobile rail ----------
@@ -530,22 +528,22 @@ for (const btn of $("modeSwitch").querySelectorAll("button")) {
   btn.addEventListener("click", () => {
     if (mode === btn.dataset.mode) return;
     mode = btn.dataset.mode;
-    if (mode === "peace" && !peaceBee && bees.length) peaceBee = (bees.find((b) => b.id === "chat") || bees[0]).id;
+    if (mode === "peace" && !peaceBee && bees.length) peaceBee = bees[0].id;
     syncActive();
     saveChats();
     renderAll();
   });
 }
 
-// Peace: each Bee in the rail, with the last thing said in its chat.
+// Peace: each of your Bees in the rail, with the last thing said in its chat.
 function renderBeeList(box) {
   if (!bees.length) { box.append(h("div", { class: "empty-note" }, "No Bees yet")); return; }
-  const ordered = [...bees.filter((b) => b.bot), ...bees.filter((b) => !b.bot)];  // your bots first
-  for (const b of ordered) {
+  const last = (b) => (chats.find((c) => c.id === `peace_${b.id}`) || {}).updated || 0;
+  for (const b of [...bees].sort((x, y) => last(y) - last(x))) {
     const chat = chats.find((c) => c.id === `peace_${b.id}`);
     const last = chat && [...chat.turns].reverse().find((t) => t.role === "user" || (t.events || []).some((e) => e.type === "answer"));
     const preview = !last ? b.skill : last.role === "user" ? `You: ${last.text}` : (last.events.find((e) => e.type === "answer") || {}).text || "";
-    const icon = b.bot ? h("span", { class: "bee-mini emoji" }, b.bot.emoji || "🤖") : h("span", { class: "bee-mini", html: beeHex(b.name, b.color) });
+    const icon = h("span", { class: "bee-mini", html: beeHex(b.name, b.color) });
     box.append(h("button", {
       class: `rail-btn${b.id === peaceBee ? " active" : ""}`, title: `${b.name}: ${b.skill}`,
       onclick: () => { peaceBee = b.id; syncActive(); saveChats(); renderAll(); closeRail(); input.focus(); },
@@ -555,37 +553,41 @@ function renderBeeList(box) {
 
 function renderWelcome(pb) {
   const head = $("peaceHead");
-  head.classList.toggle("hidden", !pb);
+  const empty = mode === "peace" && !pb;  // Peace with no Bees yet: make the first one
+  head.classList.toggle("hidden", !pb && !empty);
   $("welcomeLogo").classList.toggle("hidden", !!pb);
-  $("wordmark").classList.toggle("hidden", !!pb);
+  $("wordmark").classList.toggle("hidden", !!pb || empty);
   $("greeting").classList.toggle("hidden", !!pb);
+  const name = getSettings().name.trim();
+  if (empty) {
+    $("greeting").textContent = "Peace: a separate chat with each of your Bees.";
+    head.replaceChildren(h("div", { class: "skill" }, "Make a Bee and give it a responsibility, like “Scout: watches prices and tells me when they drop”."),
+      h("div", { class: "starters" }, h("button", { type: "button", onclick: () => openNewBee() }, "Make your first Bee")));
+    return;
+  }
   if (!pb) {
-    const name = getSettings().name.trim();
-    $("greeting").textContent = `${name ? `Hi ${name}` : "Hi there"}, Rush mode: every Bee works on what you ask, together.`;
+    $("greeting").textContent = bees.length ? `${name ? `Hi ${name}` : "Hi there"}, Rush: your ${bees.length} Bee${bees.length > 1 ? "s" : ""} work on what you ask, together.`
+      : `${name ? `Hi ${name}` : "Hi there"}, what can I help with?`;
     return;
   }
   head.replaceChildren();
-  if (pb.bot) {
-    head.append(h("div", { class: "emoji-big" }, pb.bot.emoji || "🤖"), h("h2", { class: "wordmark" }, pb.name), h("div", { class: "skill" }, pb.skill),
-      pb.bot.greeting ? h("div", { class: "greet" }, pb.bot.greeting) : "",
-      h("div", { class: "starters" }, ...(pb.bot.starters || []).map((t) => h("button", { type: "button", onclick: () => send(t) }, t))),
-      h("div", { class: "comp" }, h("a", { href: `bots.html#edit=${encodeURIComponent(pb.id)}` }, "Edit this bot →"), "  ·  “remember that …”  ·  “call me”"));
-    return;
-  }
   head.insertAdjacentHTML("beforeend", beeHex(pb.name, pb.color));
+  const p = pb.bot || {};
   head.append(h("h2", { class: "wordmark" }, pb.name), h("div", { class: "skill" }, pb.skill),
-    h("div", { class: "comp" }, pb.computer_text || ""),
-    h("div", { class: "comp" }, h("a", { href: `cell.html?bee=${encodeURIComponent(pb.id)}` }, "Open its computer →"), "  ·  “$ ls” runs a command there  ·  “call me” rings you"));
+    p.greeting ? h("div", { class: "greet" }, p.greeting) : "",
+    (p.starters || []).length ? h("div", { class: "starters" }, ...p.starters.map((t) => h("button", { type: "button", onclick: () => send(t) }, t))) : "",
+    h("div", { class: "comp" }, h("a", { href: `bots.html#edit=${encodeURIComponent(pb.id)}` }, "Edit"), "  ·  ",
+      h("a", { href: `cell.html?bee=${encodeURIComponent(pb.id)}` }, "Its computer"), `  ·  ${pb.computer_text || ""}`));
 }
 
-// Rush board: one tile per Bee, showing what it's doing right now.
+// Rush board: one tile per Bee of yours, showing what it's doing right now.
 function renderBoard() {
   const board = $("board");
   if (mode !== "rush") return;
-  const names = ["Queen", ...bees.map((b) => b.name)];
+  const names = bees.map((b) => b.name);
   board.replaceChildren(...names.map((name) => {
     const b = bees.find((x) => x.name === name);
-    const st = boardState.get(name) || { text: name === "Queen" ? "Hands out the work" : (b && b.status !== "idle" ? b.status : "Ready"), state: b && b.status === "busy" ? "busy" : "" };
+    const st = boardState.get(name) || { text: b && b.status !== "idle" ? b.status : "Ready", state: b && b.status === "busy" ? "busy" : "" };
     const tile = h("div", { class: `tile ${st.state}`, "data-bee": name, title: st.text },
       h("div", { class: "top", html: beeHex(name, b && b.color) }, h("span", {}, name)),
       h("div", { class: "what" }, st.text));
@@ -594,7 +596,7 @@ function renderBoard() {
 }
 
 function boardEvent(ev) {
-  if (mode !== "rush") return;
+  if (mode !== "rush" || !bees.some((b) => b.name === ev.bee)) return;  // the Hive's own functions aren't Bees
   const prev = boardState.get(ev.bee) || {};
   let state = prev.state || "";
   if (["step", "planning", "searching", "reading", "running", "opening", "fetching", "writing", "waiting", "thinking"].includes(ev.type)) {
@@ -616,6 +618,46 @@ function boardSettle() {
 
 // ---------- voice ----------
 $("talkBtn").addEventListener("click", () => { stopSpeaking(); startTalk(mode === "peace" ? peaceBee : null); });
+
+// ---------- New Bee: a name and a responsibility, then straight into its own chat ----------
+let planView = null;
+async function loadPlan() {
+  try { planView = await api("/api/plan"); } catch { return; }
+  $("proLabel").textContent = planView.plan === "pro" ? "Pro" : "Get Pro";
+  $("proBtn").classList.toggle("is-pro", planView.plan === "pro");
+}
+function openNewBee() {
+  const f = $("beeForm");
+  f.reset();
+  $("beeErr").textContent = "";
+  $("beeNote").textContent = planView ? `It gets its own chat, memory and computer (${planView.computer}). ${bees.length} of ${planView.max_bees} Bees on ${planView.label}.` : "";
+  $("beeDlg").showModal();
+  closeRail();
+  f.name.focus();
+}
+$("newBee").addEventListener("click", openNewBee);
+$("beeForm").addEventListener("submit", async (e) => {
+  if (e.submitter?.value !== "make") return;
+  e.preventDefault();
+  const f = e.target;
+  $("beeErr").textContent = "Making it…";
+  try {
+    const b = await api("/api/bots", { method: "POST", body: { name: f.name.value.trim(), tagline: f.tagline.value.trim(),
+      profile: { personality: f.personality.value.trim() } } });
+    $("beeDlg").close();
+    mode = "peace";
+    peaceBee = b.id;
+    syncActive();
+    saveChats();
+    await loadBees();
+    input.focus();
+  } catch (err) {
+    $("beeErr").textContent = err.message;
+  }
+});
+client.addEventListener("state", (e) => { if (e.detail === "online") loadPlan(); });
+client.addEventListener("event", (e) => { if (e.detail.type === "plan_changed") loadPlan(); });
+loadPlan();
 
 // Settings → Voice: kept on the server (the key never comes back to the page).
 let voiceSeen = null;

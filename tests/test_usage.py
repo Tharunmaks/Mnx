@@ -111,7 +111,7 @@ def test_usage_endpoint(monkeypatch, tmp_path):
     assert client.get("/api/usage").status_code == 401
     u = client.get("/api/usage", headers={"Authorization": f"Bearer {auth.TOKEN}"}).json()
     assert u["tokens"]["today"]["tokens"] == 100 and u["tokens"]["today"]["messages"] == 1
-    assert u["bees"]["limit"] == 64 and u["bees"]["count"] == len(u["bees"]["rows"]) >= 11
+    assert u["bees"]["limit"] == 20 and u["bees"]["count"] == len(u["bees"]["rows"])  # the owner's Bees, on Pro's limit
     assert all(r["cpu_percent"] is None and r["measured"] is False for r in u["bees"]["rows"])  # not measured, not invented
     assert u["limits"]["efforts"]["med"]["tokens"] == 4000 and u["limits"]["efforts"]["maxxxx"]["tokens"] == 76800
     assert u["server"]["disk"]["total"] > 0 and u["rentals"]["active_cost"] >= 0 and "invoice" in u["rentals"]["note"]
@@ -143,5 +143,5 @@ def test_usage_in_the_chat(monkeypatch, tmp_path):
     assert asyncio.run(cloud_chat.handle(Task("t", "c", "show my usage", emit, effort="high")))
     card = next(e for e in events if e["type"] == "result")
     rows = dict(card["details"])
-    assert "100 in 1 message" in rows["Tokens today"] and "16,000 tokens at High" in rows["Limit per message"] and "of 64" in rows["Bees"]
+    assert "100 in 1 message" in rows["Tokens today"] and "16,000 tokens at High" in rows["Limit per message"] and "of 20 on Pro" in rows["Bees"]
     assert "nothing billing" in rows["Rented GPUs"]

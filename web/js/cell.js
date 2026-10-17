@@ -83,7 +83,7 @@ async function loadDesktop() {
   $("deskUser").textContent = d.user || "";
   const plain = d.os !== "vortex";
   $("deskNote").textContent = plain
-    ? "This Bee's computer runs plain Linux (terminal only). Switch its OS to Vortex OS on the Hive page (Computer) to give it a desktop."
+    ? "This Bee's computer runs plain Linux (terminal only). Vortex OS starts with its computer; restart the computer to get the desktop."
     : d.bind === "127.0.0.1" && !["localhost", "127.0.0.1", "::1"].includes(location.hostname)
       ? "The desktop listens on the Hive machine only (MNX_VORTEX_BIND=127.0.0.1). Open it on that machine, or set MNX_VORTEX_BIND=0.0.0.0 to reach it from here."
       : "A Debian desktop for this Bee: windows, a real terminal, files, an editor, a browser and a system monitor. Its home folder is this Bee's work folder.";

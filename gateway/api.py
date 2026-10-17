@@ -37,6 +37,8 @@ from hive.lab import lab
 from hive import bots, cloud, system, usage
 from hive.gpu_pool import GpuError, pool as gpu
 from hive.plan import plan
+from hive import users
+from hive.billing import BillingError, billing
 from hive.calls import calls, twilio_signature_ok
 from hive.voice import VoiceError, voice
 
@@ -45,20 +47,19 @@ WEB = ROOT / "web"
 DATA = ROOT / "data"
 STATE_FILE = DATA / "hive.json"
 
-# ---------- Bees: built-in, yours, and Bees made by Bees (hive/bees.py) ----------
+# ---------- Bees: each user's own, and Bees made by Bees (hive/bees.py) ----------
 BEES = registry.bees  # the same list: the registry adds and removes in place
 BEE_STATUS: dict[str, str] = {}  # bee id → busy | failed (default idle / scheduled)
 EVENT_LOG: deque[dict] = deque(maxlen=500)
 CLIENTS: set[WebSocket] = set()
+CLIENT_USER: dict = {}  # an open page → who it belongs to (hive/users.py)
 TASKS: dict[str, tuple[Task, asyncio.Task]] = {}
 
 
 def bee_view(b: dict) -> dict:
-    training = b["id"] == "cloud" and any(r["status"] in ("queued", "preparing", "running") for r in lab.runs.values())
-    st = BEE_STATUS.get(b["id"]) or status.busy.get(b["id"]) or ("busy" if training else None) or cells.busy(b["id"]) or ("scheduled" if b.get("schedule") else "idle")
+    st = BEE_STATUS.get(b["id"]) or status.busy.get(b["id"]) or cells.busy(b["id"]) or ("scheduled" if b.get("schedule") else "idle")
     cell = cells.cells.get(b["id"])
-    return {**registry.view(b), "status": st, "cell": cell.view() if cell else None,
-            "cloud_machine": cloud.machines.for_bee(b["id"]), "cloud_starting": b["id"] in CLOUD_JOBS}
+    return {**{k: v for k, v in registry.view(b).items() if k != "owner"}, "status": st, "cell": cell.view() if cell else None}
 
 
 # ---------- each Bee's computer: here, or on a cloud server the Lab reaches over SSH ----------
@@ -131,7 +132,11 @@ cells.remote_for, cells.env_for = _remote_for, _env_for
 
 
 async def broadcast(event: dict) -> None:
+    """To every open page; an event that carries a "user" (a call) only to that user's pages."""
+    only = event.get("user")
     for ws in list(CLIENTS):
+        if only and CLIENT_USER.get(ws, getattr(ws, "user", None)) != only:
+            continue
         try:
             await ws.send_json(event)
         except Exception:
@@ -166,7 +171,9 @@ async def lifespan(app: FastAPI):
     gpu.resume()
     from hive.models import models as _mnx_models
     _mnx_models.on_change = lambda: loop.create_task(broadcast({"type": "models_changed"}))
+    plans_loop = asyncio.create_task(_plan_loop())
     yield
+    plans_loop.cancel()
     await _mnx_models.stop_all()
     calls.stop_loop()
     health.cancel()
@@ -174,6 +181,22 @@ async def lifespan(app: FastAPI):
     await lab.shutdown()
     await cells.shutdown()
     await stop_playwright()
+
+
+async def _plan_loop() -> None:
+    """Every minute: users whose Pro ran out get Free computers again; users given Pro (owner CLI) get Pro ones."""
+    from hive import plans
+    while True:
+        try:
+            for uid in plan.expired_users():
+                await plans.apply(uid)
+                plan.forget_expired(uid)
+            for uid in plan.pro_users():
+                if any(b["computer"].get("size") != "pro" for b in registry.of(uid)):
+                    await plans.apply(uid)
+        except Exception as exc:  # never let the loop die
+            log("Queen", "plan", f"computers didn't change: {exc}")
+        await asyncio.sleep(60)
 
 
 async def _report(run: dict) -> None:
@@ -253,6 +276,17 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.middleware("http")
+async def who_is_asking(request: Request, call_next):
+    """The caller's id for this request (hive/users.py), from their token: their Bees, their plan."""
+    uid = auth.user_of(_token_of(request))
+    token = users.current.set(uid or "anonymous")
+    try:
+        return await call_next(request)
+    finally:
+        users.current.reset(token)
+
+
+@app.middleware("http")
 async def cache_headers(request: Request, call_next):
     """Libraries and images are cached for a week; the app's own files are re-checked
     (cheap 304s via ETag) so an update shows up on the next page load."""
@@ -327,19 +361,20 @@ async def _docker_stats() -> dict:
 
 @api.get("/usage")
 async def usage_report(request: Request):
-    from hive.bees import MAX_BEES, MAX_CHILDREN, MAX_DEPTH, SIZES
+    from hive.bees import MAX_CHILDREN, MAX_DEPTH, SIZES
     from hive.lab import MODELS
     stats = system.stats()
     docker = await _docker_stats()
     rows = []
-    for b in BEES:
+    mine = registry.of(users.who())
+    for b in mine:
         cell = cells.cells.get(b["id"])
         view = registry.view(b)
         c = b["computer"]
         measured = docker.get(cell.container) if cell else None
         disk = await cell.disk_usage_cached() if cell and cell.mode != "remote" else None
         rows.append({
-            "id": b["id"], "name": b["name"], "builtin": bool(b.get("builtin")), "parent": view["parent_name"], "computer": view["computer_text"],
+            "id": b["id"], "name": b["name"], "parent": view["parent_name"], "computer": view["computer_text"],
             "where": c.get("where", "here"), "cpus_limit": c.get("cpus"), "memory_limit_gb": c.get("memory_gb"),
             "limits": cell.view()["limits"] if cell else None, "container": cell.container_state if cell else "no Cell yet",
             "cpu_percent": measured["cpu"] if measured else None, "memory_bytes": measured["mem"] if measured else None,
@@ -360,10 +395,10 @@ async def usage_report(request: Request):
         "tokens": usage.token_summary(usage.ledger),
         "server": {"cpus": stats["cpus"], "load": stats["load"], "cpu_percent": stats["cpu_percent"], "memory": stats["memory"], "disk": stats["disk"],
                    "gpus": stats["gpus"], "uptime": stats["uptime"], "data_bytes": data_dir, "cell_mode": cells.mode},
-        "bees": {"count": len(BEES), "limit": MAX_BEES, "built_in": sum(1 for b in BEES if b.get("builtin")),
-                 "yours": sum(1 for b in BEES if b.get("created_by") == "you"),
-                 "by_bees": sum(1 for b in BEES if b.get("created_by") not in (None, "you")),
-                 "deepest": max((registry.depth(b["id"]) for b in BEES), default=0), "max_depth": MAX_DEPTH, "max_children": MAX_CHILDREN,
+        "bees": {"count": len(mine), "limit": plan.max_bees(), "hive_count": len(BEES) if users.is_owner() else None,
+                 "yours": sum(1 for b in mine if b.get("created_by") == "you"),
+                 "by_bees": sum(1 for b in mine if b.get("created_by") not in (None, "you")),
+                 "deepest": max((registry.depth(b["id"]) for b in mine), default=0), "max_depth": MAX_DEPTH, "max_children": MAX_CHILDREN,
                  "rows": rows, "docker_measured": bool(docker)},
         "lab": {"runs": len(runs), "by_status": by_status, "training_seconds": round(sum(usage.run_seconds(r, ts) for r in runs)),
                 "running": sum(1 for r in runs if r["status"] in ("preparing", "running")),
@@ -391,11 +426,7 @@ def _cloud_view() -> dict:
             "note": "Cost is hours x the price the provider listed; its invoice is the authority."}
 
 
-# ---------- plan (Free / Paid) and real cloud computers ----------
-class PlanBody(BaseModel):
-    plan: str = Field(max_length=12)
-
-
+# ---------- plans (Free / Pro) and paying with Razorpay ----------
 def _token_of(request: Request) -> str | None:
     h = request.headers.get("authorization", "")
     return h[7:].strip() if h.lower().startswith("bearer ") else request.query_params.get("token")
@@ -408,36 +439,78 @@ def _is_owner(request: Request) -> bool:
 @api.get("/whoami")
 def whoami(request: Request):
     """"owner" or "user": the pages hide setup and credentials from users."""
-    return {"role": auth.role(_token_of(request))}
+    return {"role": auth.role(_token_of(request)), "plan": plan.of()}
 
 
 @api.get("/cloud/status")
 def cloud_public_status():
-    """What users may see of the free cloud: whether the plan, the GPU and servers are ready. No keys, no addresses."""
+    """What users may see of the cloud: their plan and whether the GPU is ready. No keys, no addresses."""
     g = gpu.view()
-    return {"plan": plan.view(), "gpu_ready": bool(g["source"]), "gpu_source": g["source"], "hours_week": g["hours_week"],
-            "weekly_limit": g["weekly_limit"], "servers": sum(1 for t in cloud.pool_servers() if t.get("status") == "ok")}
+    return {"plan": plan.view(), "gpu_ready": bool(g["source"]), "hours_week": g["hours_week"], "weekly_limit": g["weekly_limit"]}
 
 
 @api.get("/plan")
 def get_plan():
-    return plan.view()
+    return {**plan.view(), "billing": billing.view()}
 
 
-@api.put("/plan")
-async def set_plan(body: PlanBody):
+@api.get("/billing")
+def billing_status():
+    return {**billing.view(), "plan": plan.view()}
+
+
+@api.post("/billing/order")
+async def billing_order():
+    """Step 1 of paying for Pro: a Razorpay order for this user, at today's price."""
+    if users.is_owner():
+        raise HTTPException(400, "You own this Hive: you're always on Pro")
     try:
-        plan.set(body.plan)
-    except ValueError as exc:
+        return await billing.create_order(users.who())
+    except BillingError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+class PaidBody(BaseModel):
+    razorpay_order_id: str = Field(max_length=64)
+    razorpay_payment_id: str = Field(max_length=64)
+    razorpay_signature: str = Field(max_length=256)
+
+
+async def _pro_started(uid: str) -> list[str]:
     from hive import plans
     try:
-        changed = await plans.apply(plan.name)  # every Bee gets the plan's computer
-    except (BeeError, RuntimeError) as exc:
-        changed = []
+        changed = await plans.apply(uid)
+    except Exception as exc:
         log("Queen", "plan", f"some computers didn't change: {exc}")
+        changed = []
     await broadcast({"type": "plan_changed"})
-    return {**plan.view(), "changed": changed}
+    await broadcast({"type": "bees_changed"})
+    return changed
+
+
+@api.post("/billing/confirm")
+async def billing_confirm(body: PaidBody):
+    """Step 3: Checkout says it's paid. The signature proves it; then this user is on Pro."""
+    uid = users.who()
+    try:
+        r = billing.confirm(uid, body.razorpay_order_id, body.razorpay_payment_id, body.razorpay_signature)
+    except BillingError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    changed = await _pro_started(uid)
+    return {**plan.view(uid), "changed": changed, "new": r["new"]}
+
+
+@app.post("/razorpay/webhook")
+async def razorpay_webhook(request: Request):
+    """Razorpay tells the Hive a payment went through (in case the page closed before step 3)."""
+    body = await request.body()
+    try:
+        r = billing.webhook(body, request.headers.get("x-razorpay-signature", ""))
+    except BillingError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if r.get("user"):
+        await _pro_started(r["user"])
+    return {"ok": True}
 
 
 @api.get("/cloud", dependencies=[Depends(auth.require_owner)])
@@ -454,113 +527,35 @@ async def cloud_quote(provider: str | None = None):
     return {**q, "text": cloud.describe_quote(q), "inr_month": cloud.to_rupees(q["price_month"], q["currency"])}
 
 
-CLOUD_JOBS: dict[str, asyncio.Task] = {}
-
-
-@api.post("/bees/{bee_id}/cloud", dependencies=[Depends(auth.require_owner)])
-async def bee_cloud(bee_id: str, provider: str | None = None):
-    """Give the Bee its own cloud computer (8 GB RAM, 40 GB disk). Starts in the background; takes a few minutes."""
-    b = registry.get(bee_id)
-    if not b:
-        raise HTTPException(404, "No such Bee")
-    if cloud.machines.for_bee(bee_id) or bee_id in CLOUD_JOBS:
-        raise HTTPException(409, "This Bee already has a cloud computer (or one is starting)")
-    try:
-        q = await cloud.machines.quote(provider or None)
-    except cloud.CloudError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-    async def go():
-        try:
-            await cloud.give_bee(bee_id, q)
-            log(b["name"], "cloud", f"moved to its own cloud computer: {cloud.describe_quote(q)}")
-        except Exception as exc:
-            log(b["name"], "cloud_error", str(exc))
-            await broadcast({"type": "cloud_error", "bee": bee_id, "text": str(exc)[:300]})
-        finally:
-            CLOUD_JOBS.pop(bee_id, None)
-            await broadcast({"type": "bees_changed", "bee": bee_id})
-    CLOUD_JOBS[bee_id] = asyncio.create_task(go())
-    return {"ok": True, "starting": cloud.describe_quote(q)}
-
-
-@api.delete("/bees/{bee_id}/cloud", dependencies=[Depends(auth.require_owner)])
-async def bee_cloud_release(bee_id: str):
-    try:
-        await cloud.take_back(bee_id)
-    except (cloud.CloudError, BeeError) as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return bee_view(registry.get(bee_id)) if registry.get(bee_id) else {"ok": True}
-
-
 # ---------- Bees ----------
 @api.get("/bees")
 def list_bees():
-    return [bee_view(b) for b in BEES]
-
-
-class Computer(BaseModel):
-    os: str | None = Field(default=None, max_length=12)
-    size: str | None = Field(default=None, max_length=12)
-    cpus: float | None = None
-    memory_gb: float | None = None
-    disk_gb: float | None = None
-    gpu: bool | None = None
-    where: str | None = Field(default=None, max_length=48)
+    """Your Bees (each user sees only their own)."""
+    return [bee_view(b) for b in registry.of(users.who())]
 
 
 class NewBee(BaseModel):
     name: str = Field(min_length=1, max_length=24)
     skill: str = Field(min_length=1, max_length=90)
-    tools: list[str] = Field(default_factory=list, max_length=20)
-    schedule: str | None = Field(default=None, max_length=40)
-    approval: bool = True
     created_by: str = Field(default="you", max_length=40)
-    computer: Computer | None = None
-
-
-def _check_where(where: str | None) -> None:
-    if where and where != "here" and where not in lab.targets:
-        raise HTTPException(400, "That server isn't connected (add it in Cloud Bee · Lab → Servers)")
 
 
 @api.post("/bees")
 async def add_bee(bee: NewBee):
-    comp = bee.computer.model_dump(exclude_none=True) if bee.computer else None
-    _check_where((comp or {}).get("where"))
+    if bee.created_by != "you" and not registry.mine(bee.created_by, users.who()):
+        raise HTTPException(404, "No such Bee")
     try:
-        record = await registry.create(bee.name, bee.skill, bee.created_by, bee.tools, bee.schedule, bee.approval, comp)
+        record = await registry.create(bee.name, bee.skill, bee.created_by, owner=users.who())
     except BeeError as exc:
         raise HTTPException(400, str(exc)) from exc
     return bee_view(record)
 
 
-@api.put("/bees/{bee_id}/computer")
-async def bee_computer(bee_id: str, body: Computer):
-    """Resize a Bee's computer or move it to another server (files stay where they were)."""
-    change = body.model_dump(exclude_none=True)
-    _check_where(change.get("where"))
-    try:
-        b = await registry.set_computer(bee_id, change)
-    except BeeError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(502, str(exc)) from exc
-    return bee_view(b)
-
-
 @api.get("/computers")
-def computer_options(request: Request):
-    """What a Bee's computer can be: the sizes, this server's capacity, and every connected cloud server."""
-    servers = [{"id": "here", "name": "This server", **machine(), "gpu": lab.gpu_local, "status": "ok"}]
-    for t in lab.targets.values():
-        info = t.get("info") or {}
-        servers.append({"id": t["id"], "name": t["name"], "cpus": info.get("cpus"), "memory_gb": round(int(info.get("ram_mb") or 0) / 1024, 1) or None,
-                        "gpu": bool(t.get("gpu")), "gpus": info.get("gpus") or [], "status": t.get("status")})
-    from hive.bees import OS_CHOICES
-    return {"sizes": SIZES, "servers": servers, "cell_mode": cells.mode, "os": OS_CHOICES,
-            "cloud": cloud.machines.configured() if _is_owner(request) else [], "plan": plan.view(),
-            "limits": "enforced" if cells.mode == "docker" else "not enforced on this server (no Docker); remote servers give the whole machine"}
+def computer_options():
+    """What a Bee's computer is: nobody picks it, the plan decides (Free or Pro)."""
+    return {"sizes": SIZES, "plan": plan.view(), "cell_mode": cells.mode,
+            "limits": "enforced" if cells.mode == "docker" else "not enforced on this server (no Docker)"}
 
 
 async def _boot_cell(cell) -> None:
@@ -573,8 +568,7 @@ async def _boot_cell(cell) -> None:
 
 @api.delete("/bees/{bee_id}")
 async def delete_bee(bee_id: str):
-    if not registry.get(bee_id):
-        raise HTTPException(404, "No such Bee")
+    _bee(bee_id)
     try:
         adopted = await registry.delete(bee_id)
     except BeeError as exc:
@@ -582,7 +576,7 @@ async def delete_bee(bee_id: str):
     return {"ok": True, "adopted": [b["id"] for b in adopted]}
 
 
-@api.get("/events")
+@api.get("/events", dependencies=[Depends(auth.require_owner)])
 def recent_events(limit: int = 50):
     limit = max(1, min(limit, 500))
     return list(EVENT_LOG)[-limit:]
@@ -679,14 +673,22 @@ class BrowserAction(BaseModel):
     dy: float | None = None
 
 
+FUNCTION_CELLS = {"browser": "Browser"}  # the Hive's own browser: a function, not a Bee, and the owner's
+
+
 def _bee(bee_id: str) -> dict:
-    bee = next((b for b in BEES if b["id"] == bee_id), None)
+    """One of the caller's Bees (the owner can reach every Bee)."""
+    bee = registry.mine(bee_id, users.who())
     if not bee:
         raise HTTPException(404, "No such Bee")
     return bee
 
 
 def _cell(bee_id: str):
+    if bee_id in FUNCTION_CELLS and not registry.get(bee_id):
+        if not users.is_owner():
+            raise HTTPException(403, "Only the Hive's owner can use the Hive's own browser; each of your Bees has its own")
+        return cells.get(bee_id, FUNCTION_CELLS[bee_id])
     bee = _bee(bee_id)
     try:
         return cells.get(bee["id"], bee["name"], bee.get("computer"))
@@ -963,7 +965,7 @@ async def file_delete(bee_id: str, path: str):
 
 
 # ---------- Phone Drone ----------
-@api.get("/phones")
+@api.get("/phones", dependencies=[Depends(auth.require_owner)])
 def list_phones():
     return [p.view() for p in phone.PHONES.values()]
 
@@ -974,7 +976,7 @@ class PhoneCommand(BaseModel):
     confirmed: bool = False
 
 
-@api.post("/phones/{phone_id}/cmd")
+@api.post("/phones/{phone_id}/cmd", dependencies=[Depends(auth.require_owner)])
 async def phone_cmd(phone_id: str, body: PhoneCommand):
     try:
         p = phone.get(phone_id)
@@ -1470,10 +1472,11 @@ def effort_levels():
 async def term_ws(ws: WebSocket, bee_id: str):
     """A Bee's terminal. The shell keeps running after you disconnect."""
     await ws.accept()
-    if not auth.valid(ws.query_params.get("token")):
+    uid = auth.user_of(ws.query_params.get("token"))
+    if not uid:
         await ws.close(code=4401)
         return
-    bee = next((b for b in BEES if b["id"] == bee_id), None)
+    bee = registry.mine(bee_id, uid)
     if not bee:
         await ws.close(code=4404)
         return
@@ -1512,7 +1515,7 @@ async def term_ws(ws: WebSocket, bee_id: str):
 @app.websocket("/ws/drone")
 async def drone_ws(ws: WebSocket):
     await ws.accept()
-    if not auth.valid(ws.query_params.get("token")):
+    if auth.role(ws.query_params.get("token")) != "owner":  # a phone pairs with the owner's Hive only
         await ws.close(code=4401)
         return
     p = None
@@ -1552,16 +1555,19 @@ async def _prefetch_apps(p: phone.Phone) -> None:
         pass
 
 
-async def handle_client_message(msg: dict, emit) -> None:
-    """One message from the web app (over a WebSocket or the streaming fallback): a chat message, a tapped card, a stop."""
+async def handle_client_message(msg: dict, emit, user: str) -> None:
+    """One message from the web app (over a WebSocket or the streaming fallback): a chat message, a tapped card, a stop.
+    `user` is who sent it: a card or a stop only reaches that user's own messages."""
     kind = msg.get("type")
     if kind == "user_message":
         text = str(msg.get("text", ""))[:8000].strip()
         if not text:
             return
         task_id = str(msg.get("task") or f"t_{uuid.uuid4().hex[:10]}")[:40]
+        if task_id in TASKS:
+            return
         task = Task(task_id, str(msg.get("chat", ""))[:40], text, emit, effort=str(msg.get("effort") or "")[:12],
-                    bee=str(msg.get("bee") or "")[:40] or None, mode=str(msg.get("mode") or "")[:8])
+                    bee=str(msg.get("bee") or "")[:40] or None, mode=str(msg.get("mode") or "")[:8], user=user)
         hist = msg.get("history") if isinstance(msg.get("history"), list) else []
         task.history = [{"role": "bot" if h.get("role") == "bot" else "user", "text": str(h.get("text", ""))[:4000]}
                         for h in hist[-24:] if isinstance(h, dict)]
@@ -1572,22 +1578,25 @@ async def handle_client_message(msg: dict, emit) -> None:
         TASKS[task_id] = (task, asyncio.create_task(run_task(task)))
     elif kind == "action":
         entry = TASKS.get(str(msg.get("task")))
-        if entry:
+        if entry and entry[0].user == user:
             values = msg.get("values") if isinstance(msg.get("values"), dict) else {}
             entry[0].resolve(str(msg.get("ref")), str(msg.get("action")), values)
     elif kind == "stop":
-        entry = TASKS.pop(str(msg.get("task")), None)
-        if entry:
+        entry = TASKS.get(str(msg.get("task")))
+        if entry and entry[0].user == user:
+            TASKS.pop(str(msg.get("task")), None)
             entry[1].cancel()
 
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
-    if not auth.valid(ws.query_params.get("token")):
+    uid = auth.user_of(ws.query_params.get("token"))
+    if not uid:
         await ws.close(code=4401)
         return
     CLIENTS.add(ws)
+    CLIENT_USER[ws] = uid
 
     async def emit(event: dict) -> None:
         EVENT_LOG.append(event)
@@ -1598,11 +1607,12 @@ async def ws_endpoint(ws: WebSocket):
 
     try:
         while True:
-            await handle_client_message(await ws.receive_json(), emit)
+            await handle_client_message(await ws.receive_json(), emit, uid)
     except (WebSocketDisconnect, json.JSONDecodeError, RuntimeError):
         pass
     finally:
         CLIENTS.discard(ws)
+        CLIENT_USER.pop(ws, None)
 
 
 # ---------- the streaming fallback: the same conversation without WebSockets ----------
@@ -1630,6 +1640,7 @@ LIVE: dict[str, SseClient] = {}
 async def live_stream(request: Request, sid: str = Query(min_length=6, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")):
     """Server-sent events: every Hive event for this browser, kept open (a comment every 15 s keeps proxies awake)."""
     client = SseClient()
+    client.user = users.who()
     LIVE[sid] = client
     CLIENTS.add(client)
 
@@ -1655,7 +1666,7 @@ async def live_stream(request: Request, sid: str = Query(min_length=6, max_lengt
 @api.post("/live/send")
 async def live_send(request: Request, sid: str = Query(min_length=6, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")):
     client = LIVE.get(sid)
-    if not client:
+    if not client or getattr(client, "user", None) != users.who():
         raise HTTPException(409, "Not connected: reload the page")
     try:
         msg = await request.json()
@@ -1666,13 +1677,14 @@ async def live_send(request: Request, sid: str = Query(min_length=6, max_length=
         EVENT_LOG.append(event)
         await client.send_json(event)
     if isinstance(msg, dict):
-        await handle_client_message(msg, emit)
+        await handle_client_message(msg, emit, users.who())
     return {"ok": True}
 
 
 async def run_task(task: Task) -> None:
     from hive.models import selected as _selected_model
     _selected_model.set(getattr(task, "model", None))  # this message is answered by the model the user picked
+    users.current.set(task.user)  # their Bees, their plan
     try:
         await _run_task(task)
     finally:
@@ -1723,9 +1735,9 @@ async def brain_test():
 
 
 def _bot(bot_id: str) -> dict:
-    b = registry.get(bot_id)
+    b = registry.mine(bot_id, users.who())
     if not bots.is_bot(b):
-        raise HTTPException(404, "No such bot")
+        raise HTTPException(404, "No such Bee")
     return b
 
 
@@ -1735,12 +1747,22 @@ def _bot_view(b: dict) -> dict:
 
 @api.get("/bots")
 def list_bots():
-    return [_bot_view(b) for b in BEES if bots.is_bot(b)]
+    """Your Bees, with their profiles (the Bees page)."""
+    return [_bot_view(b) for b in registry.of(users.who())]
+
+
+@api.get("/bots/shared")
+def shared_bots():
+    """Bees their owners shared with everyone on this Hive: you can remix them into your own (not use theirs)."""
+    me = users.who()
+    return [{"id": b["id"], "name": b["name"], "skill": b["skill"], "tone": b["bot"].get("tone"),
+             "starters": b["bot"].get("starters") or [], "files": len(bots.store.files(b["id"]))}
+            for b in BEES if bots.is_bot(b) and b["bot"].get("visibility") == "hive" and b.get("owner", "owner") != me]
 
 
 @api.get("/bots/templates")
 def bot_templates():
-    return {"templates": bots.TEMPLATES, "tones": bots.TONES, "knowledge_types": sorted(bots.KNOWLEDGE_TYPES)}
+    return {"templates": [], "tones": bots.TONES, "knowledge_types": sorted(bots.KNOWLEDGE_TYPES)}
 
 
 class BotBody(BaseModel):
@@ -1755,10 +1777,13 @@ class BotBody(BaseModel):
 async def new_bot(body: BotBody):
     if not body.name:
         raise HTTPException(400, "A bot needs a name")
+    src = registry.get(body.remix_of) if body.remix_of else None
+    if src and not (registry.mine(src["id"], users.who()) or (src.get("bot") or {}).get("visibility") == "hive"):
+        src = None  # someone else's private Bee: nothing to copy
     try:
-        b = await bots.create_bot(body.name, body.tagline, body.profile, knowledge=body.knowledge)
-        if body.remix_of and bots.is_bot(registry.get(body.remix_of)):
-            bots.store.copy(body.remix_of, b["id"])
+        b = await bots.create_bot(body.name, body.tagline, body.profile, knowledge=body.knowledge, owner=users.who())
+        if src and bots.is_bot(src):
+            bots.store.copy(src["id"], b["id"])
     except (BeeError, bots.BotError) as exc:
         raise HTTPException(400, str(exc)) from exc
     await broadcast({"type": "bees_changed"})
@@ -1768,7 +1793,7 @@ async def new_bot(body: BotBody):
 @api.put("/bots/{bot_id}")
 async def edit_bot(bot_id: str, body: BotBody):
     try:
-        b = bots.update_bot(_bot(bot_id), {"profile": body.profile, "tagline": body.tagline})
+        b = bots.update_bot(_bot(bot_id), {"profile": body.profile, "tagline": body.tagline, "name": body.name})
     except bots.BotError as exc:
         raise HTTPException(400, str(exc)) from exc
     await broadcast({"type": "bees_changed"})
@@ -1814,11 +1839,11 @@ async def bot_import(body: dict):
     if body.get("mnx_bot") != 1 or not body.get("name"):
         raise HTTPException(400, "That isn't an exported Mnx bot")
     name = str(body["name"])[:24]
-    while registry.get(re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")):
+    while registry.find(name, users.who()):
         name = (name[:20] + " 2") if not name.endswith(" 2") else name[:-2] + " 3"
     try:
         b = await bots.create_bot(name, str(body.get("tagline") or ""), body.get("profile") or {},
-                                  knowledge={k: str(v) for k, v in (body.get("knowledge") or {}).items()})
+                                  knowledge={k: str(v) for k, v in (body.get("knowledge") or {}).items()}, owner=users.who())
     except (BeeError, bots.BotError) as exc:
         raise HTTPException(400, str(exc)) from exc
     await broadcast({"type": "bees_changed"})
@@ -1841,7 +1866,11 @@ async def _deliver_gpu_output(bee_id: str, rel: str, data: bytes) -> None:
 
 @api.get("/gpu")
 def gpu_status():
-    return gpu.view()
+    v = gpu.view()
+    if not users.is_owner():
+        own = {b["id"] for b in registry.of(users.who())}
+        v = {**v, "jobs": [j for j in v.get("jobs", []) if j.get("bee") in own]}
+    return v
 
 
 class GpuJob(BaseModel):
@@ -1853,9 +1882,7 @@ class GpuJob(BaseModel):
 @api.post("/gpu/jobs")
 async def gpu_job(body: GpuJob):
     from hive.gpu_chat import read_bee_file
-    b = registry.get(body.bee)
-    if not b:
-        raise HTTPException(404, "No such Bee")
+    b = _bee(body.bee)
     try:
         files = {rel: await read_bee_file(b, rel) for rel in body.files}
     except (FileNotFoundError, ValueError, OSError) as exc:
@@ -1868,6 +1895,9 @@ async def gpu_job(body: GpuJob):
 
 @api.get("/gpu/jobs/{job_id}/files/{name:path}")
 def gpu_file(job_id: str, name: str):
+    job = gpu.jobs.get(job_id)
+    if not job or not registry.mine(job["bee"], users.who()):
+        raise HTTPException(404, "No such output")
     try:
         return FileResponse(gpu.output_path(job_id, name))
     except FileNotFoundError as exc:
@@ -2059,9 +2089,11 @@ async def model_action(model_id: str, action: str):
 
 # ---------- voice (Fish Audio) and calls ----------
 async def _ring_phones(call) -> None:
-    """A paired phone (drone.py) vibrates and shows who's calling; it opens the Hive when MNX_PUBLIC_URL is set."""
+    """The owner's paired phone (drone.py) vibrates and shows who's calling; it opens the Hive when MNX_PUBLIC_URL is set."""
+    if getattr(call, "user", "owner") != "owner":
+        return
     for p in list(phone.PHONES.values()):
-        for cmd, args in (("vibrate", {"ms": 1200}), ("toast", {"text": f"📞 {call.bee} Bee is calling you. Open the Hive to answer."})):
+        for cmd, args in (("vibrate", {"ms": 1200}), ("toast", {"text": f"{call.bee} is calling you. Open the Hive to answer."})):
             if cmd in p.capabilities:
                 try:
                     await p.call(cmd, args, timeout=10)
@@ -2133,12 +2165,12 @@ class NewCall(BaseModel):
 
 @api.get("/calls")
 def list_calls():
-    return calls.views()
+    return calls.views(users.who())
 
 
 @api.post("/calls")
 async def new_call(body: NewCall):
-    if body.bee and not registry.get(body.bee):
+    if body.bee and not registry.mine(body.bee, users.who()):
         raise HTTPException(404, "No such Bee")
     at = time.time() + body.in_minutes * 60 if body.in_minutes else None
     call = await calls.start(body.bee, body.reason, at, body.channel, answer=body.answer, talk=body.answer, request=body.request)
@@ -2147,9 +2179,12 @@ async def new_call(body: NewCall):
 
 def _call(call_id: str):
     try:
-        return calls.get(call_id)
+        c = calls.get(call_id)
     except KeyError as exc:
         raise HTTPException(404, "No such call") from exc
+    if c.user != users.who():
+        raise HTTPException(404, "No such call")
+    return c
 
 
 @api.get("/calls/{call_id}")
@@ -2190,6 +2225,7 @@ async def call_action(call_id: str, what: str, request: Request):
 
 @api.get("/calls/{call_id}/audio/{n}")
 def call_audio(call_id: str, n: int):
+    _call(call_id)
     try:
         return Response(calls.audio_for(call_id, n), media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=3600"})
     except KeyError as exc:
@@ -2228,7 +2264,6 @@ def twilio_audio(call_id: str, secret: str, n: int):
 class ChildBee(BaseModel):
     name: str = Field(min_length=1, max_length=24)
     skill: str = Field(min_length=1, max_length=90)
-    size: str | None = Field(default=None, max_length=12)
     tools: list[str] = Field(default_factory=list, max_length=20)
 
 
@@ -2253,8 +2288,7 @@ def bee_children(request: Request):
 async def bee_new_child(body: ChildBee, request: Request):
     parent = _calling_bee(request)
     try:
-        child = await registry.create(body.name, body.skill, parent["id"], body.tools, None, True,
-                                      {"size": body.size} if body.size else None)
+        child = await registry.create(body.name, body.skill, parent["id"], body.tools, None, True)
     except BeeError as exc:
         raise HTTPException(400, str(exc)) from exc
     return bee_view(child)

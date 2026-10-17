@@ -13,7 +13,7 @@ from .core import Task
 
 
 async def handle(task: Task) -> None:
-    peace = task.bee and registry.get(task.bee)
+    peace = task.bee and registry.mine(task.bee, task.user)
     if peace:
         task.speaker = peace["name"]  # Peace mode: this Bee answers in its own chat
     received = await task.step("planning", "Reading your message", bee="Queen")
@@ -22,7 +22,7 @@ async def handle(task: Task) -> None:
     # "call me", "call me in 10 minutes and tell me …": a voice call with the Fish Audio voice
     if await calls.handle_chat(task):
         return
-    if bots.parse(task.text):  # "make a bot called … that …"
+    if bots.parse(task.text):  # "make a bee called … that …"
         await bots.create_flow(task, bots.parse(task.text))
         return
     if plans.parse(task.text):  # "subscribe me to plus"
@@ -49,16 +49,14 @@ async def handle(task: Task) -> None:
     if not brain.is_connected():
         await task.step(
             "error",
-            "Mnx brain isn't connected yet",
+            "No model is running yet",
             bee="Queen",
-            detail="set MNX_BRAIN_URL and implement hive/brain.py",
+            detail="the Hive's owner sets up the models",
         )
         await task.answer(
-            "I got your message, but my brain (the Mnx model) isn't connected to the Hive yet, "
-            "so I can't plan or answer that yet. What already works without it: training and running models, "
-            "e.g. “train Qwen 2.5 Coder”, “how is my training going?”, “stop training”, “run my model”, "
-            "“give every bee a real cloud computer”, “call me”"
-            + (", and in Rush: “everyone run …”, “roll call”." if task.mode == "rush" else ".")
+            "I got your message, but no model is running on this Hive yet, so I can't answer that. "
+            "What already works without one: “make a bee called … that …”, “list my bees”, “what plan am I on”, "
+            "“call me”" + (", and in Rush: “everyone run …”, “roll call”." if task.mode == "rush" else ".")
         )
         return
 

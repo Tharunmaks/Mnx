@@ -60,8 +60,10 @@ def _auto_choice(card_type: str, card: dict) -> tuple[str, dict, str] | None:
 
 class Task:
     def __init__(self, task_id: str, chat_id: str, text: str, emit: Emit, effort: str | None = None,
-                 bee: str | None = None, mode: str | None = None):
+                 bee: str | None = None, mode: str | None = None, user: str | None = None):
+        from .users import who
         self.id = task_id
+        self.user = user or who()  # who sent it (hive/users.py): their Bees and plan
         self.bee = bee  # Peace mode: the Bee whose own chat this is; it answers as itself
         self.mode = mode if mode in ("rush", "peace") else None
         self.speaker: str | None = None  # Peace: the Bee's name, used in place of "Queen"

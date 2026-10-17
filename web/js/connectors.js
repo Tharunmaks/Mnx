@@ -117,7 +117,7 @@ async function search(q) {
 
   group("Connected", null, r.connected.map((c) => resultRow(c.name, `Layer ${c.layer} · ${c.tools.length} tools`, h("span", { class: "badge ok" }, "Connected"))));
 
-  group("Browser Bee — any website", "Layer 6", r.browser.map((b) => resultRow(b.name, b.url,
+  group("Browser — any website", "Layer 6", r.browser.map((b) => resultRow(b.name, b.url,
     h("a", { class: "btn primary", href: `browser.html?url=${encodeURIComponent(b.url)}` }, "Open in browser"))));
 
   group("On your phone", "Layer 6", r.phone.map((a) => resultRow(a.label, a.package,
@@ -135,7 +135,7 @@ async function search(q) {
     if (s.repo) sub.append(" · ", h("a", { href: s.repo, target: "_blank", rel: "noopener noreferrer" }, "source"));
     return resultRow(s.name, sub, action);
   }));
-  if (!r.registry.length && !r.registry_error) box.append(h("p", { class: "hint" }, "No MCP servers matched. The Browser Bee can still use the website."));
+  if (!r.registry.length && !r.registry_error) box.append(h("p", { class: "hint" }, "No MCP servers matched. The Hive's browser can still use the website."));
 
   group("Native Bees", "Layer 1 · built one by one", r.native.map((n) => resultRow(n.name, n.category, h("span", { class: "badge wait" }, "Planned"))));
 }

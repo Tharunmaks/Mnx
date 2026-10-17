@@ -348,7 +348,7 @@ async def train(task: Task, intent: Intent) -> None:
     if need and target["mem_gb"] and need > target["mem_gb"]:
         warnings.append(f"It needs about {need} GB but {target['label'].split(' · ')[0]} has {target['mem_gb']} GB, so it may run out of memory.")
     if model.get("gated"):
-        warnings.append("This model is gated: accept its licence on Hugging Face and save HF_TOKEN in Cloud Bee → Servers → Secrets.")
+        warnings.append("This model is gated: accept its licence on Hugging Face and save HF_TOKEN in Lab → Servers → Secrets.")
     big = (size or 0) >= 3
     params = {
         "base_model": model["id"], "epochs": max(1, min(int(float(v.get("epochs") or 1)), 50)),
@@ -400,7 +400,7 @@ async def add_gpu_server(task: Task, parent: str) -> str | None:
                               {"name": "user", "label": "User", "value": "root"}],
                       actions=[{"id": "connect", "label": "Connect"}, {"id": "cancel", "label": "Cancel", "style": "danger"}])
     if reply["action"] != "connect":
-        await task.answer("Okay. You can also connect GPU servers later in Cloud Bee → Servers.")
+        await task.answer("Okay. You can also connect GPU servers later in Lab → Servers.")
         return None
     v = reply["values"]
     s = await task.step("opening", f"Connecting to {v.get('host')}", bee=BEE, parent=parent)
@@ -415,7 +415,7 @@ async def add_gpu_server(task: Task, parent: str) -> str | None:
     if t["status"] != "ok":
         await task.finish_step(s, status="error", text="Couldn't log in", detail=(t.get("error") or "")[-160:])
         await task.answer("I couldn't log in to that server. Check the key command ran there and the host is right, "
-                          "then press Test in Cloud Bee → Servers.")
+                          "then press Test in Lab → Servers.")
         return None
     gpus = (t.get("info") or {}).get("gpus") or []
     await task.finish_step(s, text=f"Connected to {t['name']}" + (f" · GPU {gpus[0]}" if gpus else " · no GPU found"))

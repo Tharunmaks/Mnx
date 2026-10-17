@@ -1,14 +1,14 @@
-"""Two ways to work with the Bees.
+"""Two ways to work with your Bees (each user has their own; there are no premade Bees).
 
-Rush   every Bee works together on one page. The Queen hands the message to all of them at once and the page
-       shows each Bee's live work side by side.
+Rush   all your Bees work together on one page. The message is split between them by their responsibilities and
+       the page shows each Bee's live work side by side.
          "everyone run pip install numpy"   the same command on every Bee's own computer, in parallel
          "roll call" · "everyone report"    each Bee reports its status, computer, jobs and disk
          anything the Hive understands (train, create a model, create bees …) runs with all the Bees it needs
-Peace  a separate chat with each Bee, like chatting with one bot. The Bee answers as itself, in its own chat.
+Peace  a separate chat with each Bee, like Grok's bots. The Bee answers as itself, in its own chat.
          "$ ls -la" · "run `df -h`"         runs on that Bee's own computer
          "who are you" · "status"           what it does, its computer, jobs and children
-         "create a bee called …"            a child of this Bee
+         "make a bee called …"              a child of this Bee
          everything else the Hive understands, answered by this Bee
 
 Without the Mnx brain, both modes use fixed phrases (no AI). With the brain, Rush lets the Queen split any goal
@@ -56,15 +56,15 @@ async def _exec(b: dict, command: str, timeout: float = 120) -> tuple[int, str]:
 # ---------------------------------------------------------------- Peace: one Bee, its own chat
 async def peace(task: Task) -> bool:
     """A message in a Bee's own chat. Returns False to let the Hive's shared skills answer it (as this Bee)."""
-    b = registry.get(task.bee or "")
+    b = registry.mine(task.bee or "", task.user)
     if not b:
-        await task.answer("That Bee isn't in the Hive any more.")
+        await task.answer("That Bee isn't one of yours any more.")
         return True
     name = b["name"]
     from . import bots
     cmd = shell_command(task.text)
     if cmd and bots.is_bot(b) and not b["bot"].get("computer", True):
-        await task.answer("I'm a chat-only bot: my computer is switched off. Turn it on in Bots → Edit if you want me to run commands.")
+        await task.answer("I'm a chat-only Bee: my computer is switched off. Turn it on in Bees → Edit if you want me to run commands.")
         return True
     if cmd:
         s = await task.step("running", f"$ {cmd[:120]}", bee=name)
@@ -82,8 +82,8 @@ async def peace(task: Task) -> bool:
         return True
     if WHO.match(task.text):
         await task.emit("result", bee=name, **_who(b))
-        await task.answer(f"I'm the {name} Bee: {b['skill']}. Send “$ command” to run something on my computer, "
-                          "or ask me anything the Hive can do.")
+        await task.answer(f"I'm {name}. My responsibility: {b['skill']}. Send “$ command” to run something on my computer, "
+                          "or ask me anything.")
         return True
     return False
 
@@ -93,31 +93,30 @@ def _who(b: dict) -> dict:
     v = registry.view(b)
     cell = cells.cells.get(b["id"])
     kids = registry.children(b["id"])
-    details = [["Skill", b["skill"]], ["Computer", v["computer_text"]],
-               *([["Personality", (b["bot"].get("personality") or "")[:160]]] if b.get("bot") else []),
-               ["Made by", "built in" if b.get("builtin") else v["parent_name"] or "you"],
+    details = [["Responsibility", b["skill"]], ["Computer", v["computer_text"]],
+               *([["Instructions", (b["bot"].get("personality") or "")[:160]]] if b.get("bot") and b["bot"].get("personality") else []),
+               ["Made by", v["parent_name"] or "you"],
                ["Children", ", ".join(k["name"] for k in kids) or "none yet"]]
     if cell:
         cv = cell.view()
-        details += [["Jobs", f"{cv['jobs']} ({cv['running']} running)"], ["Its Cell", f"/cell.html?bee={b['id']}"]]
+        details += [["Jobs", f"{cv['jobs']} ({cv['running']} running)"], ["Its computer", f"/cell.html?bee={b['id']}"]]
     return {"service": "Hive", "title": b["name"], "badge": "Bee", "details": details}
 
 
 async def peace_fallback(task: Task) -> None:
     """Nothing in the Hive understood it: the Bee answers with its brain, or says what it can do."""
-    b = registry.get(task.bee or "") or {"name": "Bee", "skill": ""}
+    b = registry.mine(task.bee or "", task.user) or {"name": "Bee", "skill": ""}
     from . import bots
     if bots.is_bot(b):
         await task.answer(bots.offline_reply(b))
         return
     if brain.is_connected():
-        await task.answer(await brain.ask(f"You are the {b['name']} Bee in the Mnx Hive. Your job: {b['skill']}. "
-                                          f"Answer as yourself, briefly.\n\nUser: {task.text}", task.effort))
+        await task.answer(await brain.ask(f"You are {b['name']}, a Bee in the Mnx Hive. Your responsibility: {b['skill']}. "
+                                          f"Answer as yourself.\n\nUser: {task.text}", task.effort, getattr(task, "history", None)))
         return
-    await task.answer(f"I'm the {b['name']} Bee ({b['skill']}). My brain (the Mnx model) isn't connected yet, so I can't chat "
+    await task.answer(f"I'm {b['name']} ({b['skill']}). No model is running on this Hive yet, so I can't chat "
                       "freely. What I can do now: “$ command” runs it on my computer, “status” tells you about me, "
-                      "“create a bee called … that …” makes a child of mine, “call me” rings you with my voice, "
-                      "and everything else the Hive understands (training, models, GPUs, bees).")
+                      "“make a bee called … that …” makes a child of mine and “call me” rings you with my voice.")
 
 
 # ---------------------------------------------------------------- Rush: every Bee together
@@ -134,7 +133,10 @@ async def rush(task: Task) -> bool:
     kind = rush_kind(task.text)
     if not kind:
         return False
-    bs = list(registry.bees)
+    bs = registry.of(task.user)
+    if not bs:
+        await task.answer("You don't have any Bees yet. Make one first: “make a bee called … that …”, or New Bee in Peace.")
+        return True
     await task.emit("rush", bee="Queen", text=f"Rush: {len(bs)} Bees on it", bees=[b["name"] for b in bs])
     if kind == "roll":
         await _fan(task, bs, _report)
@@ -194,9 +196,12 @@ async def rush_plan(task: Task) -> bool:
     """With the brain: split the goal between the Bees and work on every part at once."""
     if not brain.is_connected():
         return False
-    bs = {b["id"]: b for b in registry.bees}
+    bs = {b["id"]: b for b in registry.of(task.user)}
+    if not bs:
+        return False
     roster = "\n".join(f"- {b['id']}: {b['skill']}" for b in bs.values())
-    raw = await brain.ask("Split this goal between these Bees. Reply only with JSON {\"bee id\": \"its part\"}.\n"
+    raw = await brain.ask("Split this goal between these Bees by their responsibilities; leave out Bees with nothing to do. "
+                          "Reply only with JSON {\"bee id\": \"its part\"}.\n"
                           f"Bees:\n{roster}\n\nGoal: {task.text}", task.effort)
     try:
         parts = {k: str(v) for k, v in json.loads(raw[raw.index("{"):raw.rindex("}") + 1]).items() if k in bs}
@@ -208,7 +213,9 @@ async def rush_plan(task: Task) -> bool:
 
     async def work(t, b):
         s = await t.step("running", parts[b["id"]][:160], bee=b["name"])
-        out = await brain.ask(f"You are the {b['name']} Bee: {b['skill']}. Do your part and report briefly: {parts[b['id']]}", t.effort)
+        out = await brain.ask(f"You are {b['name']}, responsible for: {b['skill']}. "
+                              + (f"Your instructions: {b['bot'].get('personality')}. " if (b.get('bot') or {}).get('personality') else "")
+                              + f"Do your part and report briefly: {parts[b['id']]}", t.effort)
         await t.finish_step(s, text=out[:300])
         return out
     outs = await _fan(task, [bs[k] for k in parts], work)

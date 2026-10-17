@@ -162,11 +162,15 @@ class GpuPool:
 
     # ----- jobs -----
     async def submit(self, bee_id: str, command: str, files: dict[str, bytes]) -> dict:
+        from .bees import registry
         from .plan import plan
-        if not plan.allows_gpu():
-            raise GpuError("The GPU comes with Plus, which is free: subscribe on the Usage page or say “subscribe me to plus”")
+        b = registry.get(bee_id)
+        if not b:
+            raise GpuError("No such Bee")
+        if not plan.allows_gpu(b.get("owner", "owner")):
+            raise GpuError("The GPU comes with Pro: open Get Pro in the menu")
         if not self.kaggle_ready():
-            raise GpuError("The Hive's GPU pool isn't set up yet: open the Free cloud page and add the Kaggle account (free)")
+            raise GpuError("The Hive's GPU isn't set up yet; the Hive's owner adds it")
         if self.hours_this_week() >= WEEKLY_HOURS:
             raise GpuError(f"The free GPU's {WEEKLY_HOURS:g} hours this week are used up; it frees up as the week rolls on")
         command = (command or "").strip()
