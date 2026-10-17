@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/mnx.css">
+  <link rel="stylesheet" href="css/polish.css">
 </head>
 <body>
 <div class="app">
@@ -20,14 +21,26 @@
       <span class="conn" id="conn"><i></i><span>Connecting</span></span>
     </header>
 
-    <div class="scroll">
+    <div class="scroll" id="scroller">
       <div class="page" id="page">
-        <p class="hint" id="stamp">Loading what the Hive has used…</p>
+        <section class="page-hero fade-in">
+          <span class="eyebrow">Live · measured, never guessed</span>
+          <h2>Your Hive at a <em>glance</em>.</h2>
+          <p id="stamp">Loading what the Hive has used…</p>
+          <div class="chiprow" id="heroChips"></div>
+        </section>
 
-        <div class="section-title"><h2>Plan</h2><span class="hint" id="planNote"></span></div>
+        <div class="ring-grid" id="rings"></div>
+
+        <nav class="subnav" id="subnav" aria-label="Sections">
+          <a href="#sec-plan" class="on">Plan</a><a href="#sec-tokens">Tokens</a><a href="#sec-server">Server</a><a href="#sec-bees">Bees</a>
+          <a href="#sec-lab">Training</a><a href="#sec-cloud">Cloud</a><a href="#sec-limits">Limits</a>
+        </nav>
+
+        <div class="section-title" id="sec-plan"><h2>Plan</h2><span class="hint" id="planNote"></span></div>
         <div class="usage-card" id="plan"></div>
 
-        <div class="section-title"><h2>Tokens</h2><span class="hint" id="tokNote"></span></div>
+        <div class="section-title" id="sec-tokens"><h2>Tokens</h2><span class="hint" id="tokNote"></span></div>
         <div class="stats" id="tokStats"></div>
         <div class="usage-card">
           <div class="usage-head"><b>Last 14 days</b>
@@ -39,23 +52,23 @@
           <div class="utable" id="effortTable"></div>
         </div>
 
-        <div class="section-title"><h2>This server</h2><span class="hint" id="serverNote"></span></div>
+        <div class="section-title" id="sec-server"><h2>This server</h2><span class="hint" id="serverNote"></span></div>
         <div class="usage-card" id="serverMeters"></div>
 
-        <div class="section-title"><h2>Bees</h2><span class="hint" id="beeNote"></span></div>
+        <div class="section-title" id="sec-bees"><h2>Bees</h2><span class="hint" id="beeNote"></span></div>
         <div class="stats" id="beeStats"></div>
         <div class="usage-card"><div class="utable" id="beeTable"></div></div>
 
-        <div class="section-title"><h2>Training and models</h2></div>
+        <div class="section-title" id="sec-lab"><h2>Training and models</h2></div>
         <div class="stats" id="labStats"></div>
 
-        <div class="section-title"><h2>Cloud computers</h2><span class="hint" id="cloudNote"></span></div>
+        <div class="section-title" id="sec-cloud"><h2>Cloud computers</h2><span class="hint" id="cloudNote"></span></div>
         <div class="usage-card" id="cloudBox"></div>
 
         <div class="section-title"><h2>Rented GPUs</h2></div>
         <div class="usage-card" id="rentals"></div>
 
-        <div class="section-title"><h2>Limits</h2></div>
+        <div class="section-title" id="sec-limits"><h2>Limits</h2></div>
         <div class="usage-card" id="limits"></div>
       </div>
     </div>

@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/mnx.css">
+  <link rel="stylesheet" href="css/polish.css">
 </head>
 <body>
 <div class="app">
@@ -22,34 +23,67 @@
 
     <div class="scroll">
       <div class="page pro-page">
-        <p class="pro-now" id="now"></p>
-        <div class="plan-grid">
-          <section class="plan-card" id="cardFree">
-            <h2>Free</h2>
-            <div class="price">₹0</div>
-            <ul class="plan-list" id="freeList"></ul>
+        <section class="page-hero fade-in">
+          <span class="eyebrow">Mnx Hive Pro</span>
+          <h2>Bigger computers for <em>every Bee</em>.</h2>
+          <p>Double the power, a GPU for your jobs, and room for 20 Bees, each with its own chat. Pay once for 30 days with UPI or card.
+            No auto-renew, nothing to cancel.</p>
+          <div class="chiprow" id="status"></div>
+        </section>
+
+        <div class="price-grid">
+          <section class="tier fade-in" id="cardFree">
+            <h3>Free <span class="pill ok hidden" id="freeNow"><i></i>Your plan</span></h3>
+            <div class="amount"><b>₹0</b><span>forever</span></div>
+            <p class="blurb">Everything you need to make Bees and try the Hive.</p>
+            <ul id="freeList"></ul>
+            <div class="cta"><button class="btn lg" type="button" disabled id="freeBtn">Included</button></div>
           </section>
-          <section class="plan-card pro" id="cardPro">
-            <h2>Pro</h2>
-            <div class="price"><span id="proPrice">₹—</span><small> / 30 days</small></div>
-            <ul class="plan-list" id="proList"></ul>
-            <button class="btn primary pay" id="pay" type="button" disabled>Get Pro</button>
-            <p class="hint" id="payNote"></p>
+
+          <section class="tier pro fade-in" id="cardPro">
+            <span class="ribbon">Most popular</span>
+            <h3>Pro <span class="pill honey hidden" id="proNow"><i></i>Your plan</span></h3>
+            <div class="amount"><b id="proPrice">₹—</b><span>/ 30 days</span></div>
+            <p class="blurb">More of everything. Pay when you need it; your Bees drop back to Free when it ends. Nothing is deleted.</p>
+            <ul id="proList"></ul>
+            <div class="cta">
+              <button class="btn primary lg pay" id="pay" type="button" disabled>Get Pro</button>
+              <p class="hint" id="payNote" style="margin:10px 0 0;text-align:center"></p>
+              <div class="paywith" style="justify-content:center">Pay with <span>UPI</span><span>Cards</span><span>Netbanking</span><span>Wallets</span></div>
+            </div>
           </section>
         </div>
-        <p class="hint">Pay with UPI, cards, netbanking or wallets through Razorpay. Pro doesn't renew by itself: it lasts 30 days
-          from each payment, and paying again adds 30 more. When it ends, your Bees go back to Free computers; nothing is deleted.</p>
 
-        <div class="usage-card owner-only" id="ownerBox">
-          <b>Payments on your Hive</b>
-          <p class="hint" id="ownerState"></p>
-          <pre class="code-note">python3 -m hive.admin set RAZORPAY_KEY_ID
+        <div class="section-title"><h2>Compare</h2></div>
+        <div class="cmp fade-in" id="cmp"></div>
+
+        <div class="section-title"><h2>How it works</h2></div>
+        <div class="how-grid">
+          <div class="how"><b>Pay with Razorpay</b><span>UPI, cards, netbanking or wallets. Razorpay handles the payment; the Hive never sees your card.</span></div>
+          <div class="how"><b>Your Bees upgrade</b><span>Every Bee you've made gets a Pro computer straight away, with its Vortex OS desktop.</span></div>
+          <div class="how"><b>Use it for 30 days</b><span>Pay again any time to add 30 more days. It never renews by itself.</span></div>
+        </div>
+
+        <div class="section-title"><h2>Questions</h2></div>
+        <div class="faq">
+          <details><summary>What happens when Pro ends?</summary><p>Your Bees go back to Free computers. Nothing is deleted: your files, chats and Bees are kept.</p></details>
+          <details><summary>Is my payment safe?</summary><p>Payments run on Razorpay's own checkout. The Hive creates the order and checks the payment's signature on the server; your card or UPI details never reach it.</p></details>
+          <details><summary>Does Pro renew automatically?</summary><p>No. It lasts 30 days from each payment, and paying again adds 30 more days on top.</p></details>
+          <details><summary>What is the GPU for?</summary><p>Pro Bees can run training and heavy jobs on the Hive's 16 GB GPU, for example training a small model from the chat.</p></details>
+        </div>
+
+        <details class="admin-box owner-only" id="ownerBox">
+          <summary>Payments on your Hive (owner)</summary>
+          <div>
+            <p class="hint" id="ownerState"></p>
+            <pre class="code-note">python3 -m hive.admin set RAZORPAY_KEY_ID
 python3 -m hive.admin set RAZORPAY_KEY_SECRET
 python3 -m hive.admin set RAZORPAY_WEBHOOK_SECRET   (optional)
 python3 -m hive.admin price 499</pre>
-          <p class="hint">Webhook (optional, Razorpay Dashboard → Webhooks): <code id="hookUrl"></code> with the events
-            payment.captured and order.paid. Use rzp_test_ keys first to try it without real money.</p>
-        </div>
+            <p class="hint">Webhook (optional, Razorpay Dashboard → Webhooks): <code id="hookUrl"></code> with the events
+              payment.captured and order.paid. Use rzp_test_ keys first to try it without real money.</p>
+          </div>
+        </details>
       </div>
     </div>
   </main>

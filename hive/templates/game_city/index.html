@@ -13,16 +13,18 @@
 <body>
   <canvas id="game" aria-label="The game world"></canvas>
   <div id="hud">
-    <div class="row"><b id="title">Neon Bay</b><span id="money">$0</span></div>
-    <div id="mission">Drive to the yellow marker</div>
-    <div id="speed">0 km/h</div>
+    <div class="panel money"><b id="title">NEON BAY</b><span id="money">$0</span><span id="clock">17:18</span></div>
+    <div class="panel mission"><div id="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2l8 18-8-5-8 5z"/></svg></div>
+      <div><div id="mission">Pick up the package</div><small id="dist">0 m</small></div></div>
   </div>
-  <canvas id="map" width="140" height="140" aria-label="Minimap"></canvas>
-  <div id="help">WASD / arrows to drive · Space brake · C camera · N night · R reset</div>
+  <canvas id="map" width="180" height="180" aria-label="Minimap"></canvas>
+  <div id="speedo"><div id="speed">0</div><small>km/h</small><div id="bar"></div></div>
+  <div id="help">WASD / arrows drive · Space handbrake · C camera · N day/night · T rain · M sound · R reset</div>
   <div id="touch" aria-hidden="true">
     <div class="pad"><button data-k="left">◀</button><button data-k="right">▶</button></div>
     <div class="pad"><button data-k="brake">■</button><button data-k="gas">▲</button></div>
   </div>
   <div id="toast"></div>
+  <div id="loading"><div class="spin"></div><b>Neon Bay</b><span>building the city…</span></div>
 </body>
 </html>

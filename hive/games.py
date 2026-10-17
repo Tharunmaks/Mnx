@@ -37,6 +37,9 @@ STYLES = {"gta": "GTA", "grand theft auto": "GTA", "minecraft": "Minecraft", "po
           "watch dogs": "Watch Dogs", "spider-man": "Spider-Man", "spiderman": "Spider-Man", "batman": "Batman"}
 UNITY = re.compile(r"\bunity\b|\bunreal\b", re.I)
 FIX_ROUNDS = 2
+READY_WAIT = 25   # seconds a game gets to say window.__game.ready
+
+KIT = ("gfx.js",)   # the graphics kit: the model uses it, never rewrites it, and isn't sent its code (only its API, below)
 
 SPEC = """You make complete, fun browser games with three.js. You get a working 3D game to start from; change and extend it
 into the game the user asked for. Write every file of the game in this exact format, nothing before or after:
@@ -57,6 +60,20 @@ Rules
 - If the user names a famous game (GTA, Minecraft …), make an ORIGINAL game in that style: your own title, city or world,
   characters, missions and art made from shapes and colours. Never copy names, logos, characters, maps, music or text from it.
 - Keep it light enough for a phone: instanced meshes for many objects, few lights, modest shadows.
+
+The game already has a graphics kit, gfx.js (not shown, never rewrite it, import from it: `from "./gfx.js"`). Use it so the game
+looks great: real sky with a sun, moon and stars, soft shadows, bloom, tone mapping, rain, fog, detailed cars, textures.
+  const stage = createStage(canvas, { time: 17.3 })   → { renderer, scene, camera, setTime(hours 0-24), setRain(bool), night (0-1),
+        wetAmount, follow(vec3: keeps the shadow box around the player), update(dt), render(dt, speed01), glow(material, dayI, nightI) (a
+        material that lights up at night), wet(material) (shinier in rain), onQuality(fn), level (0-2, set by the device) }
+        per frame: stage.update(dt); stage.follow(player.position); stage.render(dt, speed01). Use stage.scene and stage.camera.
+  buildCar(stage, { kind: "coupe"|"sedan"|"hatch"|"van", color, detail: 0|1, player: bool }) → Group facing +z on y = 0;
+        animateCar(car, dt, speed, steer, braking) spins and steers its wheels and lights the brake lamps.
+  facadeTextures(seed) (building fronts with lit windows), asphaltTextures(), concreteTextures(), makeWater(size, y) (call
+        water.userData.update(dt)), Particles(scene, max, {additive}) with .spawn(pos, vel, {life,size,grow,color,alpha,gravity}) and
+        .update(dt), makeAudio() (an engine sound: .start(), .update(speed01, throttle, slip, rain)), rng(seed), lerp.
+Prefer MeshStandardMaterial / MeshPhysicalMaterial (real light and reflections), not Basic or Lambert. Everything the game needs
+besides gfx.js you write in game.js.
 """
 
 
@@ -131,7 +148,7 @@ def name_for(goal: str, styles: list[str]) -> str:
 
 
 async def write_game(task: Task, goal: str, current: dict, errors: list[str] | None = None) -> dict:
-    listing = "\n".join(f"=== FILE: {p} ===\n{v}\n=== END ===" for p, v in current.items() if isinstance(v, str))
+    listing = "\n".join(f"=== FILE: {p} ===\n{v}\n=== END ===" for p, v in current.items() if isinstance(v, str) and p not in KIT)
     glbs = [p for p, v in current.items() if isinstance(v, bytes) and p.endswith(".glb")]
     if glbs:
         listing += ("\n\n3D models the user made for this game (glTF, y up, front faces +z, real size in metres); load them with "
@@ -144,10 +161,10 @@ async def write_game(task: Task, goal: str, current: dict, errors: list[str] | N
     raw = await brain.brain.chat([{"role": "system", "content": SPEC}, {"role": "user", "content": f"{ask}\n\n{listing}"}],
                                  task.effort, max_tokens=12000, temperature=0.5)
     files, _ = sites.parse_files(raw)
-    files = {p: v for p, v in files.items() if p.endswith((".html", ".js", ".css", ".json"))}
+    files = {p: v for p, v in files.items() if p.endswith((".html", ".js", ".css", ".json")) and p not in KIT}
     if "index.html" not in files or not any(p.endswith(".js") for p in files):
         raise sites.SiteError("the model didn't write a whole game")
-    keep = {p: v for p, v in current.items() if (p.endswith(".css") or isinstance(v, bytes)) and p not in files}
+    keep = {p: v for p, v in current.items() if (p.endswith(".css") or isinstance(v, bytes) or p in KIT) and p not in files}
     return {**keep, **files}
 
 
@@ -159,8 +176,13 @@ async def play(url: str) -> dict:
     b = BrowserSession(allow={f"127.0.0.1:{port}", f"localhost:{port}"})
     try:
         await b.do("goto", url=sites.chroma.url + url)
-        await asyncio.sleep(4)
-        ready = (await b.do("eval", js="Boolean(window.__game && window.__game.ready)")).get("value")
+        ready = False
+        for _ in range(READY_WAIT * 2):          # a rich scene takes a while to build on a slow machine: wait until it says it's ready
+            await asyncio.sleep(0.5)
+            ready = bool((await b.do("eval", js="Boolean(window.__game && window.__game.ready)")).get("value"))
+            if ready:
+                await asyncio.sleep(1.5)         # let a few frames draw before the picture is taken
+                break
         errs = (await b.do("errors")).get("errors") or []
         shot = (await b.do("screenshot")).get("image", "")
         return {"ok": bool(ready) and not errs, "ready": bool(ready), "errors": errs[:10],

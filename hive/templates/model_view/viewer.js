@@ -1,13 +1,19 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 const canvas = document.getElementById("view");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 1.05;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x14161d);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;   // studio reflections on the paint and glass
+scene.environmentIntensity = 0.9;
 const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 2000);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
@@ -15,7 +21,7 @@ controls.autoRotate = true;
 controls.autoRotateSpeed = 1.2;
 canvas.addEventListener("pointerdown", () => { controls.autoRotate = false; });
 
-scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x30281e, 1.4));
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x30281e, 0.5));
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
 sun.position.set(5, 9, 6);
 sun.castShadow = true;

@@ -8,41 +8,74 @@ document.querySelectorAll("[data-icon]").forEach((el) => { el.outerHTML = ICONS[
 
 let state = null;
 
-function date(ts) {
-  return new Date(ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
-}
+const date = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+const spec = (p, re) => (p.computer.match(re) || [])[1];
+const cpu = (p) => spec(p, /(\d+)\s*CPUs?/i);
+const ram = (p) => spec(p, /(\d+)\s*GB\s*RAM/i);
+const disk = (p) => spec(p, /(\d+)\s*GB\s*disk/i);
+const vram = (p) => spec(p, /(\d+)\s*GB\s*VRAM/i);
 
 function features(p) {
-  return [`Every Bee: ${p.computer}`, `Up to ${p.max_bees} Bees, each with its own chat`,
-    p.gpu ? "The Hive's GPU for your Bees' jobs" : "No GPU", "Vortex OS desktop on every Bee's computer"];
+  return [
+    h("li", {}, `${cpu(p)} CPUs, ${ram(p)} GB RAM and ${disk(p)} GB disk on every Bee`),
+    h("li", {}, `Up to ${p.max_bees} Bees, each with its own chat`),
+    h("li", { class: p.gpu ? "" : "no" }, p.gpu ? `The Hive's ${vram(p) || 16} GB GPU for your Bees' jobs` : "No GPU"),
+    h("li", {}, "Vortex OS desktop on every Bee's computer"),
+    h("li", {}, "Games, websites and 3D models in your private Sandbox"),
+  ];
+}
+
+function compare(free, pro) {
+  const rows = [
+    ["CPUs per Bee", cpu(free), cpu(pro)], ["Memory per Bee", `${ram(free)} GB`, `${ram(pro)} GB`], ["Disk per Bee", `${disk(free)} GB`, `${disk(pro)} GB`],
+    ["Bees", free.max_bees, pro.max_bees], ["GPU for jobs", free.gpu ? "Yes" : "No", pro.gpu ? `${vram(pro) || 16} GB` : "No"],
+    ["Mnx Studio and Sandbox", "Yes", "Yes"], ["Apps, websites and games", "Yes", "Yes"],
+  ];
+  $("cmp").replaceChildren(
+    h("div", { class: "cmp-row head" }, h("span", {}, "Feature"), h("span", {}, "Free"), h("span", {}, "Pro")),
+    ...rows.map(([k, a, b]) => h("div", { class: "cmp-row" }, h("span", {}, k), h("span", {}, String(a)), h("span", { class: "pro-col" }, String(b)))));
 }
 
 async function load() {
-  try { state = await api("/api/billing"); } catch (e) { $("now").textContent = `Couldn't reach the Hive: ${e.message}`; connLabel($("conn"), "offline"); return; }
+  try { state = await api("/api/billing"); } catch (e) {
+    $("status").replaceChildren(h("span", { class: "pill bad" }, h("i"), `Couldn't reach the Hive: ${e.message}`));
+    connLabel($("conn"), "offline");
+    return;
+  }
   connLabel($("conn"), "online");
   const p = state.plan;
   const free = p.plans.find((x) => x.id === "free");
   const pro = p.plans.find((x) => x.id === "pro");
-  $("freeList").replaceChildren(...features(free).map((f) => h("li", {}, f)));
-  $("proList").replaceChildren(...features(pro).map((f) => h("li", {}, f)));
+  $("freeList").replaceChildren(...features(free));
+  $("proList").replaceChildren(...features(pro));
   $("proPrice").textContent = `₹${state.price_inr.toLocaleString("en-IN")}`;
-  $("cardFree").classList.toggle("current", p.plan === "free");
-  $("cardPro").classList.toggle("current", p.plan === "pro");
+  compare(free, pro);
+  const isPro = p.plan === "pro";
+  $("cardFree").classList.toggle("current", !isPro);
+  $("cardPro").classList.toggle("current", isPro);
+  $("freeNow").classList.toggle("hidden", isPro);
+  $("proNow").classList.toggle("hidden", !isPro);
+
+  const chips = [];
   const pay = $("pay");
   if (p.owner) {
-    $("now").textContent = "You own this Hive, so you're always on Pro.";
+    chips.push(h("span", { class: "pill honey" }, h("i"), "You own this Hive: always Pro"));
     pay.disabled = true;
     pay.textContent = "Always Pro";
-  } else if (p.plan === "pro") {
-    $("now").textContent = p.until ? `You're on Pro until ${date(p.until)}.` : "You're on Pro.";
+  } else if (isPro) {
+    const left = p.until ? Math.max(0, Math.ceil((p.until * 1000 - Date.now()) / 86_400_000)) : null;
+    chips.push(h("span", { class: "pill honey" }, h("i"), p.until ? `Pro until ${date(p.until)}` : "You're on Pro"));
+    if (left != null) chips.push(h("span", { class: "pill" }, `${left} day${left === 1 ? "" : "s"} left`));
     pay.disabled = !state.ready;
     pay.textContent = "Add 30 more days";
   } else {
-    $("now").textContent = "You're on Free.";
+    chips.push(h("span", { class: "pill ok" }, h("i"), "You're on Free"));
     pay.disabled = !state.ready;
-    pay.textContent = "Get Pro";
+    pay.textContent = `Get Pro · ₹${state.price_inr.toLocaleString("en-IN")}`;
   }
-  $("payNote").textContent = state.ready ? (state.test ? "Test mode: no real money moves." : "") : "Payments aren't switched on for this Hive yet.";
+  if (state.test) chips.push(h("span", { class: "pill" }, "Test mode: no real money moves"));
+  $("status").replaceChildren(...chips);
+  $("payNote").textContent = state.ready ? "" : "Payments aren't switched on for this Hive yet.";
   $("ownerState").textContent = state.ready ? `Razorpay is set up (${state.test ? "test" : "live"} keys). Pro costs ₹${state.price_inr} for 30 days.`
     : "Razorpay isn't set up yet. On the Hive's machine, run:";
   $("hookUrl").textContent = `${location.origin}/razorpay/webhook`;

@@ -26,6 +26,14 @@ function meter(label, used, total, text) {
     h("span", { class: "val" }, text + (total ? ` · ${p.toFixed(0)}%` : "")));
 }
 
+function ring(label, p, big, sub, tone) {
+  const cls = tone || (p >= 90 ? "hot" : p >= 75 ? "warn" : "");
+  const r = h("div", { class: `ring ${cls}`, role: "img", "aria-label": `${label}: ${Math.round(p)}%` }, h("b", {}, `${Math.round(p)}%`));
+  requestAnimationFrame(() => requestAnimationFrame(() => r.style.setProperty("--p", Math.max(0, Math.min(100, p)))));
+  return h("div", { class: "ring-card fade-in" }, r,
+    h("div", {}, h("div", { class: "t" }, label), h("div", { class: "v" }, big), sub ? h("div", { class: "s" }, sub) : null));
+}
+
 function table(el, cols, rows) {
   const tpl = cols.map((c) => c.w || "1fr").join(" ");
   el.replaceChildren(
@@ -68,7 +76,22 @@ function drawChart(t) {
 
 function render(u) {
   last = u;
-  $("stamp").textContent = `Measured ${new Date(u.at * 1000).toLocaleTimeString()}; refreshes every 10 seconds.`;
+  $("stamp").textContent = `Measured ${new Date(u.at * 1000).toLocaleTimeString()}. It refreshes every 10 seconds.`;
+
+  // ----- the glance: rings and chips
+  const sv = u.server;
+  const mu = sv.memory.total && sv.memory.available != null ? sv.memory.total - sv.memory.available : null;
+  const dUsed = sv.disk.total - sv.disk.free;
+  $("rings").replaceChildren(
+    ring("CPU", sv.cpu_percent ?? 0, sv.cpu_percent == null ? "measuring…" : `${sv.cpus} CPUs`, sv.cpu_percent == null ? "" : `load ${sv.load[0]}`, sv.cpu_percent == null ? "violet" : ""),
+    ring("Memory", mu && sv.memory.total ? pct(mu, sv.memory.total) : 0, mu == null ? "—" : fmtSize(mu), sv.memory.total ? `of ${fmtSize(sv.memory.total)}` : ""),
+    ring("Disk", pct(dUsed, sv.disk.total), fmtSize(dUsed), `of ${fmtSize(sv.disk.total)}`),
+    ring("Bees", pct(u.bees.count, u.bees.limit), `${u.bees.count} of ${u.bees.limit}`, `${num(u.tokens.today.tokens)} tokens today`, "violet"));
+  $("heroChips").replaceChildren(
+    h("span", { class: "pill ok" }, h("i"), `Up ${fmtDuration(sv.uptime)}`),
+    h("span", { class: "pill" }, `${u.bees.count} / ${u.bees.limit} Bees`),
+    h("span", { class: "pill" }, `${num(u.tokens.week.tokens)} tokens this week`),
+    h("span", { class: u.plan.plan === "pro" ? "pill honey" : "pill" }, h("i"), u.plan.owner ? "Owner · Pro" : u.plan.label));
 
   // ----- tokens
   const t = u.tokens;
@@ -203,3 +226,18 @@ installTokenPrompt(() => client.reconnectNow());
 client.connect();
 load();
 setInterval(load, 10_000);
+
+// the section chips follow the page as you scroll, and jump to a section when tapped
+const scroller = $("scroller");
+const chips = [...document.querySelectorAll("#subnav a")];
+const sections = chips.map((a) => document.querySelector(a.getAttribute("href")));
+scroller.addEventListener("scroll", () => {
+  const top = scroller.getBoundingClientRect().top + 120;
+  let on = 0;
+  sections.forEach((el, i) => { if (el && el.getBoundingClientRect().top <= top) on = i; });
+  chips.forEach((a, i) => a.classList.toggle("on", i === on));
+}, { passive: true });
+chips.forEach((a) => a.addEventListener("click", (e) => {
+  e.preventDefault();
+  document.querySelector(a.getAttribute("href"))?.scrollIntoView({ behavior: "smooth", block: "start" });
+}));

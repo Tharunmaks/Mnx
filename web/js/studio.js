@@ -5,6 +5,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { api, fillIcons, gatewayBase, getSettings, h, installTokenPrompt } from "./shared.js";
 
 const SHAPES = ["box", "sphere", "cylinder", "cone", "torus", "capsule", "plane"];
@@ -22,14 +23,18 @@ const canvas = $("canvas");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.NeutralToneMapping;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1b1d24);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.9;
 const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 5000);
 camera.position.set(6, 4.5, 7);
 const orbit = new OrbitControls(camera, canvas);
 orbit.enableDamping = true;
 orbit.target.set(0, 0.8, 0);
-scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x30281e, 1.3));
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x30281e, 0.5));
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
 sun.position.set(8, 14, 10);
 sun.castShadow = true;
