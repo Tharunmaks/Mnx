@@ -130,7 +130,7 @@ function send(text) {
   chat.updated = Date.now();
 
   const ok = client.send({ type: "user_message", chat: chat.id, task, text, name: getSettings().name || undefined, effort: getSettings().effort,
-    mode: chat.bee ? "peace" : "rush", bee: chat.bee || undefined, history: chat.bee ? historyOf(chat) : undefined,
+    mode: chat.bee ? "peace" : "rush", bee: chat.bee || undefined, history: historyOf(chat),
     model: selectedModel() || undefined });
   if (!ok) {
     turn.events.push(
@@ -142,7 +142,7 @@ function send(text) {
   renderAll(true);
 }
 
-// Peace: the last turns of this chat, so a bot with a brain knows what was said.
+// The last turns of this chat, so the model knows what was said before.
 function historyOf(chat) {
   const out = [];
   for (const t of chat.turns.slice(0, -2)) {  // everything before the message being sent now

@@ -95,7 +95,7 @@ export function renderRun(model, { onAction, cardCache }) {
 
   if (model.roots.length) body.append(renderList(model.roots, model, onAction, cardCache, true));
 
-  if (model.answer) body.append(h("div", { class: "answer" }, model.answer));
+  if (model.answer) body.append(h("div", { class: "answer md" }, markdown(model.answer)));
 
   if (model.status === "running" && !hasWaitingCard(model)) {
     body.append(h("div", { class: "pulse", "aria-label": "Mnx is working", html: ICONS.hex + ICONS.hex + ICONS.hex }));
@@ -339,4 +339,72 @@ function details(d) {
   const dl = h("dl", { class: "details" });
   for (const [k, v] of rows) dl.append(h("dt", {}, k), h("dd", {}, v));
   return dl;
+}
+
+// ---------- answers: a small Markdown subset, built as DOM nodes (text is never parsed as HTML) ----------
+export function markdown(text) {
+  const out = [];
+  const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
+  let para = [];
+  let list = null;
+  const flush = () => {
+    if (para.length) out.push(h("p", {}, inline(para.join("\n"))));
+    para = [];
+    list = null;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = line.match(/^\s*(```+|~~~+)\s*([\w+#.-]*)/);
+    if (fence) {
+      flush();
+      const code = [];
+      for (i++; i < lines.length && !lines[i].trim().startsWith(fence[1]); i++) code.push(lines[i]);
+      out.push(codeBlock(code.join("\n"), fence[2]));
+      continue;
+    }
+    const head = line.match(/^(#{1,4})\s+(.*)$/);
+    if (head) { flush(); out.push(h(`h${Math.min(head[1].length + 2, 6)}`, {}, inline(head[2]))); continue; }
+    const item = line.match(/^\s*(?:([-*+])|(\d+)[.)])\s+(.*)$/);
+    if (item) {
+      if (para.length) { out.push(h("p", {}, inline(para.join("\n")))); para = []; }
+      const tag = item[1] ? "ul" : "ol";
+      if (!list || list.tagName.toLowerCase() !== tag) { list = h(tag, {}); out.push(list); }
+      list.append(h("li", {}, inline(item[3])));
+      continue;
+    }
+    if (!line.trim()) { flush(); continue; }
+    if (list && /^\s{2,}\S/.test(line)) { list.lastChild.append(" ", ...inline(line.trim())); continue; }
+    list = null;
+    para.push(line);
+  }
+  flush();
+  return out;
+}
+
+function inline(text) {
+  const parts = [];
+  const re = /`([^`\n]+)`|\*\*([^*\n]+)\*\*|(?<![\w*])\*([^*\n]+)\*(?!\w)|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    if (m[1] != null) parts.push(h("code", {}, m[1]));
+    else if (m[2] != null) parts.push(h("strong", {}, m[2]));
+    else if (m[3] != null) parts.push(h("em", {}, m[3]));
+    else parts.push(h("a", { href: m[5], target: "_blank", rel: "noopener noreferrer" }, m[4]));
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+function codeBlock(code, lang) {
+  const btn = h("button", { class: "copy-code", type: "button" }, "Copy");
+  btn.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(code); btn.textContent = "Copied"; }
+    catch { btn.textContent = "Select and copy"; }
+    setTimeout(() => { btn.textContent = "Copy"; }, 1600);
+  });
+  return h("div", { class: "code-block" },
+    h("div", { class: "code-head" }, h("span", {}, lang || "code"), btn),
+    h("pre", {}, h("code", {}, code)));
 }

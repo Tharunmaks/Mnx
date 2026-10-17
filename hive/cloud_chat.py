@@ -22,6 +22,25 @@ BEE = "Cloud"
 ASK_TIMEOUT = 30 * 60  # stop waiting for an answer after 30 minutes
 
 TRAIN = re.compile(r"\b(train|retrain|fine[\s-]?tune|finetune|teach|customi[sz]e)\b", re.I)
+# A model is what these flows work on. Without one named ("teach me python", "create a brain teaser",
+# "add data validation to this form") the message is an ordinary request, and the model answers it.
+MODEL_NOUN = (r"(?:models?|llms?|ai|gpts?|transformers?|blueprints?|checkpoints?|weights|lora|qwen[\w.-]*|llama[\w.-]*|"
+              r"tinyllama[\w.-]*|gemma[\w.-]*|phi[\w.-]*|smollm[\w.-]*|mistral[\w.-]*|deepseek[\w.-]*|mnx[\w.-]*|"
+              r"[A-Za-z0-9][\w.-]*/[\w.-]+)")
+GAP = r"(?:(?!(?:me|us|that|which|who|for|with|to|using|uses|in|on|about)\b)[\w.,'-]+\s+){0,6}?"
+TRAIN_WHAT = re.compile(r"\b(?:train|retrain|fine[\s-]?tune|finetune|teach|customi[sz]e)\s+" + GAP + MODEL_NOUN + r"(?![\w-])"
+                        r"|\b(?:train|retrain|fine[\s-]?tune|finetune)\s+(?:it|this|that)\b", re.I)
+CREATE_WHAT = re.compile(r"\b(?:create|build|make|design|invent)\s+" + GAP + r"(?:models?|llms?|ai|transformers?)(?![\w-])"
+                         r"(?!\s+(?:chat)?bots?\b|\s+(?:app|apps|website|site|game|tool|agent|image|picture|art|video|song)\b)", re.I)
+DATA_WHAT = re.compile(r"\b(?:add|feed|give|load|put|upload)\b.*\b(?:to|into|in)\s+(?:my\s+|the\s+|our\s+)?"
+                       r"(?:[\w.-]+\s+){0,3}?" + MODEL_NOUN + r"(?![\w-])"
+                       r"|\b(?:feed|give|teach)\s+(?:my|the|our)\s+(?:[\w.-]+\s+){0,2}?" + MODEL_NOUN + r"\b"
+                       r"|\b(?:continue|keep|resume) training\b|\b(?:train|teach)\s+(?:it|my model|the model)\s+more\b", re.I)
+# Asking for code ("build a neural network in numpy", "make an AI chatbot in python") is for the model to write.
+CODE_ASK = re.compile(r"\b(?:in|using|with)\s+(?:python|numpy|pytorch|torch|tensorflow|keras|jax|javascript|js|typescript|ts|"
+                      r"java|kotlin|swift|c\+\+|c#|c|rust|go|golang|php|ruby|html|css|react|node(?:\.js)?|flask|django|sql|bash)\b"
+                      r"|\b(?:code|script|snippet|function|program|tutorial|explain)\b"
+                      r"|^(?:how\s+(?:do|does|can|should|would|to)|what(?:'s| is| are)|why|when should|tell me)\b", re.I)
 STATUS = re.compile(r"\b(status|progress|how(?:'s| is| are)|check)\b.*\b(train\w*|run|runs|fine[\s-]?tun\w*)\b", re.I)
 STOP = re.compile(r"\b(stop|cancel|kill|abort)\b.*\b(train\w*|run|fine[\s-]?tun\w*)\b", re.I)
 CREATE = re.compile(r"\b(create|build|make|design|generate|invent)\b.*\b(model|llm|ai|transformer|brain|network)\b"
@@ -94,12 +113,14 @@ def parse(text: str) -> Intent | None:
         return Intent("rent_stop")
     if STOP.search(t):
         return Intent("stop")
-    if ADD_DATA.search(t) and not CREATE.search(t):
+    code = bool(CODE_ASK.search(t))
+    if ADD_DATA.search(t) and DATA_WHAT.search(t) and not CREATE_WHAT.search(t) and not code:
         mq = re.search(r"\b(?:to|into)\s+(?:my\s+)?(.+?)(?:\s+(?:model|llm|ai))?(?:\s*[.!?]|$|\s+(?:about|with|from)\b)", t, re.I)
         pm = PURPOSE.search(t)
         return Intent("add_data", model_query=(mq.group(1) if mq else "").strip(), purpose=(pm.group(1) if pm else "").strip())
     n_params = architect.parse_size(t) if re.search(r"param|\bparams\b|\b\d+(?:\.\d+)?\s*[kmbt]\b", t, re.I) else None
-    if CREATE.search(t) and (n_params or re.search(r"from scratch|new (?:ai|model|llm)|\b(create|build|design|invent)\b", t, re.I)):
+    if CREATE.search(t) and CREATE_WHAT.search(t) and not code \
+            and (n_params or re.search(r"from scratch|new (?:ai|model|llm)|\b(create|build|design|invent)\b", t, re.I)):
         tm = re.search(r"test\w*\s+(?:it\s+)?(?:with|on)\s+(\d+(?:[.,]\d+)?)\s*(k|m|thousand|million)?\s*prompts?", t, re.I)
         n_test = None
         if tm:
@@ -112,7 +133,7 @@ def parse(text: str) -> Intent | None:
         return Intent("create", params=n_params, purpose=purpose[:120], test_prompts=int(n_test) if n_test else None)
     if STATUS.search(t) and not TRAIN.match(t):
         return Intent("status")
-    m = TRAIN.search(t)
+    m = TRAIN.search(t) if TRAIN_WHAT.search(t) and not code else None
     if m:
         rest = t[m.end():]
         dataset = ""
@@ -135,7 +156,7 @@ def parse(text: str) -> Intent | None:
             query = re.sub(r"[^\w.\s-]", " ", query)
             query = " ".join(query.split())
         return Intent("train", query, size, dataset)
-    if RUN.search(t):
+    if RUN.search(t) and not code:
         name = re.sub(r"^.*?\b(?:run|start|deploy|serve|launch|chat with|talk to)\b", "", t, flags=re.I)
         return Intent("run", " ".join(FILLER.sub(" ", name).split()))
     return None

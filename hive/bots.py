@@ -375,6 +375,9 @@ def parse(text: str) -> dict | None:
     m = MAKE.search(t)
     if not m:
         return None
+    from .cloud_chat import CODE_ASK
+    if CODE_ASK.search(t):  # "make an AI chatbot in python" asks for code, which the model writes
+        return None
     rest = t[m.end():]
     nm = NAMED.search(rest)
     wm = WHAT.search(rest[nm.end():] if nm else rest)
