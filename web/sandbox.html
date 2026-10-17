@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0f">
+  <title>Sandbox · Mnx Hive</title>
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/mnx.css">
+</head>
+<body>
+<div class="app">
+  <main class="main">
+    <header class="topbar">
+      <a class="icon-btn" href="index.html" aria-label="Back to the chat"><span data-icon="back"></span></a>
+      <h1>Sandbox</h1>
+      <a class="btn" href="studio.html">Mnx Studio</a>
+    </header>
+    <div class="scroll">
+      <div class="page wide">
+        <p class="hint">Everything your Bees made: games, websites and 3D models, each on its private link. They run here in a
+          locked-down sandbox that can't reach your account or anything else. Ask in the chat to make more.</p>
+        <div class="tabs" role="tablist" id="kinds">
+          <button class="tab active" data-kind="" type="button">All</button>
+          <button class="tab" data-kind="game" type="button">Games</button>
+          <button class="tab" data-kind="site" type="button">Websites</button>
+          <button class="tab" data-kind="model" type="button">3D models</button>
+        </div>
+        <div class="sandbox-grid" id="grid"></div>
+        <p class="hint" id="empty" hidden>Nothing yet. Try “create an open world game in 3d”, “build a website for my bakery” or “make a 3d model of a robot”.</p>
+      </div>
+    </div>
+  </main>
+</div>
+<script type="module">
+import { api, fillIcons, h, installTokenPrompt } from "./js/shared.js";
+import { openRunner } from "./js/runner.js";
+
+const NAMES = { game: "Game", site: "Website", model: "3D model" };
+let items = [], kind = "";
+
+function draw() {
+  const rows = items.filter((r) => !kind || r.kind === kind);
+  document.getElementById("empty").hidden = rows.length > 0;
+  document.getElementById("grid").replaceChildren(...rows.map((r) => {
+    const run = h("button", { class: "btn primary", type: "button" }, r.kind === "game" ? "Play" : r.kind === "model" ? "View" : "Open");
+    run.addEventListener("click", () => openRunner(r.url, r.name));
+    return h("div", { class: "sandbox-item" },
+      h("span", { class: "kind" }, NAMES[r.kind] || r.kind), h("b", {}, r.name),
+      h("small", {}, `${r.bee} · ${new Date(r.when * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`),
+      h("div", { class: "row" }, run,
+        r.studio ? h("a", { class: "btn", href: r.studio }, "Edit in Studio") : null,
+        h("a", { class: "btn", href: r.url, target: "_blank", rel: "noopener noreferrer" }, "New tab")));
+  }));
+}
+
+for (const b of document.querySelectorAll("#kinds .tab")) {
+  b.addEventListener("click", () => {
+    kind = b.dataset.kind;
+    for (const x of document.querySelectorAll("#kinds .tab")) x.classList.toggle("active", x === b);
+    draw();
+  });
+}
+
+async function load() {
+  try { items = (await api("/api/sandbox")).items; } catch { items = []; }
+  draw();
+}
+fillIcons();
+installTokenPrompt(load);
+load();
+</script>
+</body>
+</html>

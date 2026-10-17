@@ -245,7 +245,8 @@ class Chroma:
         """Make the project if it's new (another name if that one is taken), upload, set up the collections. Private:
         a preview deployment only, at an unguessable /d/<id>/ link, never the public /p/<name>/."""
         mine = {p["name"] for p in await self.projects(uid)}
-        base, n = slug(name) or "my-site", 2
+        name = base = slug(name) or "my-site"
+        n = 2
         while name not in mine:
             r = await self._call(uid, "POST", "/api/projects", {"name": name})
             if r.status_code < 300:
@@ -293,18 +294,19 @@ chroma = Chroma()
 
 
 # ---------------------------------------------------------------- the Bee's computer: ~/sites/<name>/
-async def save_to_bee(b: dict, name: str, files: dict[str, str], project: str, folder: str = "sites") -> str:
+async def save_to_bee(b: dict, name: str, files: dict[str, str | bytes], project: str, folder: str = "sites") -> str:
     from .cells import cells
     cell = cells.get(b["id"], b["name"], b["computer"])
     meta = {"name": project, "server": "Mnx Hive (Chroma)"}
     for path, body in {**files, "chroma.json": json.dumps(meta, indent=2)}.items():
         rel = f"{folder}/{name}/{path}"
+        data = body if isinstance(body, bytes) else body.encode()
         if cell.mode == "remote":
-            await cell.rwrite(rel, body.encode())
+            await cell.rwrite(rel, data)
         else:
             p = cell.safe_path(rel)
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(body)
+            p.write_bytes(data)
     return f"~/{folder}/{name}"
 
 
@@ -393,6 +395,8 @@ async def handle(task: Task, intent: dict) -> None:
         await task.answer(f"The site is written but didn't deploy: {exc}")
         return
     await task.finish_step(s, text=f"live at {d['url']}")
+    from . import sandbox
+    sandbox.record(task.user, "site", d["name"], bee, d["url"])
     details = [["Live", d["url"]], ["Files", ", ".join(list(files)[:8]) + (" …" if len(files) > 8 else "")],
                ["In Vortex OS", f"{bee}'s computer, {folder} (open its desktop to edit)"]]
     if cols:

@@ -127,6 +127,21 @@ function makeCar(body) {
 }
 const player = makeCar(0xff2d8a);
 scene.add(player);
+
+// A 3D model the user's Bee made (Mnx Studio, ~/models) drives instead of the box car, when the Bee put one in.
+const PLAYER_MODEL = null;
+if (PLAYER_MODEL) {
+  import("three/addons/loaders/GLTFLoader.js").then(({ GLTFLoader }) => new GLTFLoader().load(PLAYER_MODEL, (gltf) => {
+    const model = gltf.scene;
+    const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+    model.scale.setScalar(4.4 / Math.max(size.z, size.x, 0.01));  // as long as the box car
+    const box = new THREE.Box3().setFromObject(model);
+    model.position.y -= box.min.y;
+    model.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    player.clear();
+    player.add(model);
+  }));
+}
 const state = { speed: 0, heading: 0, money: 0, night: false, cam: 0 };
 function respawn() {
   player.position.set(-HALF + ROAD / 2, 0, -HALF + CELL * 3);

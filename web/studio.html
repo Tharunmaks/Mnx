@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0f">
+  <title>Studio · Mnx Hive</title>
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/mnx.css">
+  <link rel="stylesheet" href="css/studio.css">
+  <script type="importmap">
+  { "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three/addons/" } }
+  </script>
+</head>
+<body class="studio">
+<header class="topbar studio-top">
+  <a class="icon-btn" href="index.html" aria-label="Back to the chat"><span data-icon="back"></span></a>
+  <h1>Mnx Studio</h1>
+  <select id="bee" aria-label="Which Bee's computer"></select>
+  <select id="open" aria-label="Open a model"><option value="">Open…</option></select>
+  <input id="name" class="name" aria-label="Model name" value="new-model" spellcheck="false">
+  <button class="btn" id="new" type="button">New</button>
+  <button class="btn primary" id="save" type="button" title="Ctrl+S">Save</button>
+  <button class="btn" id="view" type="button">Private link</button>
+  <button class="btn" id="glb" type="button">.glb</button>
+</header>
+
+<div class="studio-body">
+  <aside class="panel left">
+    <div class="panel-title">Add</div>
+    <div class="adds" id="adds"></div>
+    <div class="panel-title">Parts <span id="count"></span></div>
+    <ul class="outliner" id="outliner"></ul>
+  </aside>
+
+  <main class="viewport">
+    <canvas id="canvas" aria-label="3D viewport"></canvas>
+    <div class="modes" id="modes">
+      <button type="button" data-mode="translate" class="on" title="Move (G)">Move</button>
+      <button type="button" data-mode="rotate" title="Rotate (R)">Rotate</button>
+      <button type="button" data-mode="scale" title="Scale (S)">Scale</button>
+      <button type="button" id="snap" title="Snap to 0.1 m / 15°">Snap</button>
+      <button type="button" id="undo" title="Undo (Ctrl+Z)">↶</button>
+      <button type="button" id="redo" title="Redo (Ctrl+Shift+Z)">↷</button>
+    </div>
+    <div class="keys">G move · R rotate · S scale · Shift+D duplicate · X delete · F focus · Ctrl+Z undo</div>
+    <form class="ask" id="ask">
+      <input id="askText" placeholder="Tell the Bee: “make a sports car”, “add a spoiler”, “make it blue”…" autocomplete="off">
+      <button class="btn primary" type="submit">Do it</button>
+    </form>
+  </main>
+
+  <aside class="panel right" id="props">
+    <div class="panel-title">Part</div>
+    <p class="hint" id="noSel">Click a part to edit it.</p>
+    <div id="propForm" class="props hidden">
+      <label>Name <input id="p-name"></label>
+      <label>Shape <select id="p-shape"></select></label>
+      <div class="vec"><span>Size (m)</span><input data-k="size" data-i="0"><input data-k="size" data-i="1"><input data-k="size" data-i="2"></div>
+      <div class="vec"><span>Place</span><input data-k="pos" data-i="0"><input data-k="pos" data-i="1"><input data-k="pos" data-i="2"></div>
+      <div class="vec"><span>Turn (°)</span><input data-k="rot" data-i="0"><input data-k="rot" data-i="1"><input data-k="rot" data-i="2"></div>
+      <label>Colour <input id="p-color" type="color"></label>
+      <label>Metal <input id="p-metal" type="range" min="0" max="1" step="0.05"></label>
+      <label>Rough <input id="p-rough" type="range" min="0" max="1" step="0.05"></label>
+      <label>Glow <input id="p-glow" type="range" min="0" max="3" step="0.1"></label>
+      <label>Opacity <input id="p-opacity" type="range" min="0.05" max="1" step="0.05"></label>
+      <div class="row"><button class="btn" id="dup" type="button">Duplicate</button><button class="btn danger" id="del" type="button">Delete</button></div>
+    </div>
+  </aside>
+</div>
+<div id="status" class="studio-status"></div>
+<script type="module" src="js/studio.js"></script>
+</body>
+</html>

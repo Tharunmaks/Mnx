@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{name}} · 3D model</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #14161d; color: #e9ecf2; font-family: system-ui, sans-serif; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #bar { position: fixed; left: 12px; bottom: 12px; right: 12px; display: flex; gap: 10px; align-items: center; font-size: 13px; pointer-events: none; }
+  #bar b { font-size: 16px; }
+  #bar span { opacity: .7; }
+  #bar a { pointer-events: auto; margin-left: auto; color: #e9ecf2; background: #2a2f3c; padding: 7px 12px; border-radius: 8px; text-decoration: none; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three/addons/" } }
+</script>
+<script type="module" src="viewer.js"></script>
+</head>
+<body>
+  <canvas id="view" aria-label="3D model"></canvas>
+  <div id="bar"><b>{{name}}</b><span id="info">Loading…</span><a href="model.glb" download>Download .glb</a></div>
+</body>
+</html>

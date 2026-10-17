@@ -75,8 +75,38 @@ def parse(text: str) -> dict | None:
     return {"goal": t, "styles": styles, "unity": bool(UNITY.search(t))}
 
 
-def template_files() -> dict[str, str]:
-    return {p.name: p.read_text() for p in sorted(TEMPLATE.iterdir()) if p.is_file()}
+def template_files(models: dict[str, bytes] | None = None) -> dict[str, str | bytes]:
+    files: dict[str, str | bytes] = {p.name: p.read_text() for p in sorted(TEMPLATE.iterdir()) if p.is_file()}
+    return with_models(files, models or {})
+
+
+def with_models(files: dict, models: dict[str, bytes]) -> dict:
+    """Put the Bee's .glb models in the game; the starter game drives the vehicle (or the only one) instead of its box car."""
+    files = {**files, **{f"models/{n}.glb": glb for n, glb in models.items()}}
+    ride = next((n for n in models if re.search(r"car|truck|bike|kart|vehicle|bus|jeep|taxi|van|ship|plane|tank", n)),
+                next(iter(models)) if len(models) == 1 else None)
+    js = files.get("game.js")
+    if ride and isinstance(js, str) and "const PLAYER_MODEL = null;" in js:
+        files["game.js"] = js.replace("const PLAYER_MODEL = null;", f'const PLAYER_MODEL = "models/{ride}.glb";')
+    return files
+
+
+async def models_for(b: dict, goal: str) -> dict[str, bytes]:
+    """The Bee's 3D models the request names ("with my sports-car model"), or all of them for "my models" (four at most)."""
+    from . import models3d
+    names = await models3d.names(b)
+    if not names or not re.search(r"\bmodels?\b|\.glb\b|\bstudio\b", goal, re.I):
+        return {}
+    low = sites.slug(goal)
+    picked = [n for n in names if n in low or n.replace("-", " ") in goal.lower()]
+    if not picked and re.search(r"\bmy\s+(?:3d\s+)?models\b|\ball\s+my\b", goal, re.I):
+        picked = names
+    out = {}
+    for n in picked[:4]:
+        glb = await models3d.glb_of(b, n)
+        if glb:
+            out[n] = glb
+    return out
 
 
 def _brief(task: Task, intent: dict) -> str:
@@ -90,6 +120,7 @@ def _brief(task: Task, intent: dict) -> str:
 
 
 def name_for(goal: str, styles: list[str]) -> str:
+    goal = re.sub(r"\b(?:with|using)\s+(?:my|the|these|those)\b.*$", "", goal, flags=re.I)  # "… with my car model"
     words = re.sub(r"\b(?:create|make|build|design|code|develop|generate|me|a|an|the|my|game|games|in|3d|2d|like|not|use|for|and|it|"
                    r"yourself|run|three\.?js|with|of|please)\b", " ", goal.lower())
     for st in styles:
@@ -99,8 +130,12 @@ def name_for(goal: str, styles: list[str]) -> str:
     return (name or "open-world") + "-game" if not name.endswith("game") else name
 
 
-async def write_game(task: Task, goal: str, current: dict[str, str], errors: list[str] | None = None) -> dict[str, str]:
-    listing = "\n".join(f"=== FILE: {p} ===\n{v}\n=== END ===" for p, v in current.items())
+async def write_game(task: Task, goal: str, current: dict, errors: list[str] | None = None) -> dict:
+    listing = "\n".join(f"=== FILE: {p} ===\n{v}\n=== END ===" for p, v in current.items() if isinstance(v, str))
+    glbs = [p for p, v in current.items() if isinstance(v, bytes) and p.endswith(".glb")]
+    if glbs:
+        listing += ("\n\n3D models the user made for this game (glTF, y up, front faces +z, real size in metres); load them with "
+                    "GLTFLoader from 'three/addons/loaders/GLTFLoader.js' and use them: " + ", ".join(glbs))
     if errors:
         ask = (f"The game was played in a browser and broke with these errors:\n" + "\n".join(f"- {e}" for e in errors[:8])
                + f"\n\nFix them. The game should still be: {goal}\nWrite every file again, fixed.")
@@ -112,7 +147,8 @@ async def write_game(task: Task, goal: str, current: dict[str, str], errors: lis
     files = {p: v for p, v in files.items() if p.endswith((".html", ".js", ".css", ".json"))}
     if "index.html" not in files or not any(p.endswith(".js") for p in files):
         raise sites.SiteError("the model didn't write a whole game")
-    return {**{p: v for p, v in current.items() if p.endswith(".css") and p not in files}, **files}
+    keep = {p: v for p, v in current.items() if (p.endswith(".css") or isinstance(v, bytes)) and p not in files}
+    return {**keep, **files}
 
 
 async def play(url: str) -> dict:
@@ -155,8 +191,11 @@ async def handle(task: Task, intent: dict) -> None:
     bee = b["name"]
     goal = _brief(task, intent)
     name = name_for(intent["goal"], intent["styles"])
-    files = template_files()
-    note = []
+    models = await models_for(b, goal)
+    files = template_files(models)
+    note, did = [], []
+    if models:
+        did.append(f"Put your 3D model{'s' if len(models) > 1 else ''} in it: " + ", ".join(models))
     if intent["unity"]:
         note.append("Unity can't run on the Hive's computers (it needs a desktop with a graphics card, a Unity account and about "
                     "10 GB), so I made it with three.js, which plays in any browser, phones included.")
@@ -168,11 +207,13 @@ async def handle(task: Task, intent: dict) -> None:
         try:
             files = await write_game(task, goal, files)
             await task.finish_step(s, text=f"{len(files)} files")
+            did.append(f"Wrote the game in three.js ({len(files)} files), starting from a working 3D city")
         except (sites.SiteError, brain.BrainNotConnected) as exc:
             await task.finish_step(s, status="error", text=str(exc)[:160])
             note.append("The model's own version didn't come out whole, so this is the starter open-world game; ask for changes and I'll make them.")
     else:
         note.append("No model is running on this Hive, so this is the starter open-world game as it is.")
+        did.append("Took the starter open-world game (a 3D city to drive around, traffic, delivery missions, minimap, day and night)")
 
     result: dict = {}
     d: dict = {}
@@ -187,6 +228,8 @@ async def handle(task: Task, intent: dict) -> None:
             await task.answer(f"The game is written and saved in {bee}'s computer at {folder}, but it didn't deploy: {exc}")
             return
         await task.finish_step(s, text="private link ready")
+        if attempt:
+            did.append(f"Fixed what broke ({attempt} round{'s' if attempt > 1 else ''}) and put it up again")
         s = await task.step("running", "Playing it to check it works", bee=bee)
         result = await play(d["url"])
         if result.get("skipped"):
@@ -198,7 +241,7 @@ async def handle(task: Task, intent: dict) -> None:
         problems = result["errors"] or ["the game never started (window.__game.ready stayed false)"]
         await task.finish_step(s, status="error", text=f"{len(problems)} problem{'s' if len(problems) != 1 else ''}: {problems[0][:120]}")
         if attempt == FIX_ROUNDS or not brain.is_connected():
-            files = template_files()  # still broken: the starter game, which is known to run
+            files = template_files(models)  # still broken: the starter game, which is known to run
             note.append("My changes kept breaking, so you got the starter open-world game; tell me what to change and I'll try again.")
             d = await sites.chroma.deploy(task.user, name, files, [], private=True)
             result = await play(d["url"])
@@ -209,9 +252,15 @@ async def handle(task: Task, intent: dict) -> None:
             await task.finish_step(s)
         except (sites.SiteError, brain.BrainNotConnected) as exc:
             await task.finish_step(s, status="error", text=str(exc)[:160])
-            files = template_files()
+            files = template_files(models)
 
     folder = await sites.save_to_bee(b, name, files, d.get("name", name), folder="games")
+    did.append(f"Saved it in {bee}'s Vortex OS computer at {folder}")
+    did.append("Put it on a private link (not listed or public) and in your Sandbox")
+    if result.get("ok"):
+        did.append("Played it in its own browser: it runs with no errors")
+    from . import sandbox
+    sandbox.record(task.user, "game", name, bee, d["url"])
     sid = _shot_id(task.user, result.get("shot") or b"", "image/jpeg")
     if sid:
         await task.emit("screen", bee=bee, title=f"{name} running in {bee}'s browser", shot=sid, live=d["url"])
@@ -221,5 +270,6 @@ async def handle(task: Task, intent: dict) -> None:
                     details=[["Play", d["url"]], ["Who can open it", "only people you give the link to: it isn't listed or public"],
                              ["Controls", "WASD or arrows to drive, Space to brake, C camera, N night, R reset; touch buttons on phones"],
                              ["Tested", tested], ["In Vortex OS", f"{bee}'s computer, {folder}: open its desktop to edit the code"]])
-    await task.answer(f"**[Play {name}]({d['url']})**: {bee} made it, played it and it {'runs' if result.get('ok') else 'is ready'}. "
-                      + " ".join(note) + " Say what to change (more cars, a different city, a story, police chases …) and I'll update it.")
+    lines = "\n".join(f"- {x}" for x in did)
+    await task.answer(f"**[Play {name}]({d['url']})**: {bee} made it and it {'runs' if result.get('ok') else 'is ready'}.\n\nWhat I did:\n{lines}\n\n"
+                      + (" ".join(note) + " " if note else "") + "Say what to change (more cars, a different city, a story, police chases …) and I'll update it.")

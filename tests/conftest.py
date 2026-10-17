@@ -18,7 +18,7 @@ def _own_plan(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _own_hive(tmp_path, monkeypatch):
-    from hive import billing as billing_mod, bots as bots_mod
+    from hive import billing as billing_mod, bots as bots_mod, sandbox
     from hive.bees import registry
     monkeypatch.setattr(registry, "state_file", tmp_path / "hive-isolated.json")
     monkeypatch.setattr(registry, "keys_file", tmp_path / "keys-isolated.json")
@@ -27,6 +27,7 @@ def _own_hive(tmp_path, monkeypatch):
     registry.bees.clear()  # in place: the gateway holds the same list
     monkeypatch.setattr(billing_mod.billing, "orders_file", tmp_path / "orders-isolated.json")
     monkeypatch.setattr(bots_mod, "store", bots_mod.Store(tmp_path / "bots-isolated"))
+    monkeypatch.setattr(sandbox, "FILE", tmp_path / "sandbox-isolated.json")
     yield
     registry.bees[:] = saved
 

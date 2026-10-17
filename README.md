@@ -48,6 +48,8 @@ For the Browser Bee, install Chromium once: `playwright install --with-deps chro
 | `/lab.html` | Cloud Bee · Model Lab: train models (here or on SSH servers), live charts, model registry, run models as APIs, try them |
 | `/browser.html` | Browser Bee: watch and drive the Hive's own Chromium (click on the picture, type, scroll, read the page) |
 | `/phone.html` | Phone Drone: live phone screen (tap, swipe, long-press, type), open apps, read the screen, device controls, notifications and SMS |
+| `/studio.html` | Mnx Studio: a Blender-style 3D editor for your Bees' models (`~/models`), with "tell the Bee" edits |
+| `/sandbox.html` | Sandbox: everything your Bees made (games, sites, 3D models), run in a locked-down frame |
 | `/dev/gallery.html` | Every card and step type with placeholder data, to check the design without a model |
 
 ## Layout
@@ -196,9 +198,37 @@ A game "like GTA" (or Minecraft, Mario …) is an original game in that style: i
 copied. Unity can't run on the Hive's computers (it needs a desktop GPU, a Unity account and ~10 GB), so the Bees use
 three.js. Code is in `hive/games.py`; tests in `tests/test_games.py`.
 
-When the model wrongly refuses ordinary creative or technical work ("As an AI, I'm unable to create video games"), the
-refusal is held back, never shown, and the model is asked once more with a note that the request is allowed
-(`hive/respond.py`).
+Name a 3D model the Bee made ("make a racing game with my car model") and it goes into the game: the starter game drives
+it instead of its box car, and the model's own code loads it with GLTFLoader.
+
+When the model wrongly refuses ordinary creative or technical work ("As an AI, I'm unable to create video games"), or
+answers "make X" with how *you* could make X ("Creating a 3D game is a complex task … Step 1: choose an engine"), that
+reply is held back, never shown, and the model is asked again to do it (twice on Maxxxx effort) (`hive/respond.py`).
+
+## 3D models, Mnx Studio and the Sandbox
+
+"make a 3d model of a sports car", "create a low poly house", "change my car model: add a spoiler". A Bee:
+
+1. designs the model as parts (box, sphere, cylinder, cone, torus, capsule, plane: size, place, turn, colour, metal,
+   roughness, glow, opacity); the design is a small JSON file
+2. builds a real **.glb** from it (glTF 2.0, pure Python, opens in Blender, Unity, Godot and three.js)
+3. saves both in its Vortex OS computer, `~/models/<name>.json` and `.glb`
+4. puts a 3D viewer on a private `/d/<id>/` link, opens it in its own browser, checks it loads, and says what it did
+
+With no model running it still makes a ready-made car, house, tree, robot or rocket.
+
+**Mnx Studio** (`/studio.html`) is a Blender-style editor for those models: add shapes, move / rotate / scale them with
+a gizmo (G, R, S like Blender), snap, duplicate (Shift+D), delete (X), undo, colour and finish, an outliner, and a box to
+tell the Bee what to change ("add a spoiler"). It saves into the Bee's computer, makes a private viewer link, or
+downloads the .glb.
+
+**The Sandbox** (`/sandbox.html`) lists everything the Bees made (games, websites, 3D models) and runs each in a
+locked-down frame: Chroma serves Bee-made pages with a CSP sandbox (their own opaque origin) and the frame adds its own
+`sandbox` attribute, so a page can't read the Hive's pages, your token or other sites. Result cards in the chat have a
+**Run here** button that opens the same player.
+
+Code: `hive/models3d.py`, `hive/sandbox.py`, `web/studio.html`, `web/js/studio.js`, `web/sandbox.html`,
+`web/js/runner.js`; tests in `tests/test_models3d.py`.
 
 ## Expert Stream and Expert Craft
 

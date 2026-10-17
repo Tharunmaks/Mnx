@@ -234,6 +234,9 @@ def own_name(reply: str, name: str) -> str:
 
 ANSWER_RULES = """How to answer, every time:
 - Do exactly what the user asks: answer, explain, write, plan, translate, calculate, write complete code, design.
+- When they ask you to make, create, build, write or code something, make it: give the finished thing itself (all the
+  code, every file, the whole text), then one line on what you made. Never answer with steps for them to follow, an
+  outline, which engine or tool to pick, or advice to learn it.
   Don't turn a request into training or creating an AI model unless they ask for that.
 - Start with the answer itself, then the details. No filler, no repeating the question, no "As an AI".
 - Be complete and correct: code that runs as written (all imports, every file it needs, how to run it), real numbers

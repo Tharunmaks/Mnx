@@ -4,6 +4,7 @@
 
 import { ICONS, gatewayBase, getSettings, h, logoSVG, toast, uploadFile } from "./shared.js";
 import { filesCard, modelCard, runCard } from "./labcard.js";
+import { RUNNABLE, openRunner } from "./runner.js";
 
 const STEP_TYPES = new Set([
   "step", "thinking", "planning", "searching", "reading", "web", "opening",
@@ -359,8 +360,20 @@ function details(d) {
   const rows = Array.isArray(d) ? d : Object.entries(d);
   if (!rows.length) return null;
   const dl = h("dl", { class: "details" });
-  for (const [k, v] of rows) dl.append(h("dt", {}, k), h("dd", {}, v));
+  for (const [k, v] of rows) dl.append(h("dt", {}, k), h("dd", {}, ...detailValue(k, v)));
   return dl;
+}
+
+// A Bee-made game, site or model link: open it, or run it here in the sandbox; a Studio link opens Studio.
+function detailValue(k, v) {
+  const s = String(v ?? "");
+  if (RUNNABLE.test(s)) {
+    const run = h("button", { class: "btn run-here", type: "button" }, "Run here");
+    run.addEventListener("click", () => openRunner(s, k));
+    return [h("a", { href: s, target: "_blank", rel: "noopener noreferrer" }, s), run];
+  }
+  if (/^\/(?:studio|sandbox)\.html(?:\?[\w=&.-]*)?$/.test(s)) return [h("a", { href: s }, s.startsWith("/studio") ? "Open Mnx Studio" : "Open the Sandbox")];
+  return [s];
 }
 
 // ---------- answers: a small Markdown subset, built as DOM nodes (text is never parsed as HTML) ----------
@@ -410,7 +423,7 @@ function inline(text) {
   for (const m of text.matchAll(re)) {
     if (m.index > last) parts.push(text.slice(last, m.index));
     if (m[1] != null) parts.push(h("code", {}, m[1]));
-    else if (m[2] != null) parts.push(h("strong", {}, m[2]));
+    else if (m[2] != null) parts.push(h("strong", {}, inline(m[2]))); // bold may hold a link: **[Play it](/d/…)**
     else if (m[3] != null) parts.push(h("em", {}, m[3]));
     else parts.push(h("a", { href: m[5], target: /^(https?:|\/p\/|\/d\/)/.test(m[5]) ? "_blank" : null, rel: "noopener noreferrer" }, m[4]));
     last = m.index + m[0].length;

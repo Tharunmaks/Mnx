@@ -2340,7 +2340,7 @@ def bee_gpu_job(job_id: str, request: Request):
 async def _chroma_pass(request: Request, path: str):
     from hive.sites import chroma
     if not await chroma.healthy():
-        if not request.url.path.startswith(("/p/", "/d/")):
+        if not request.url.path.startswith(("/p/", "/d/", "/vendor/three/")):  # three.js: Mnx Studio needs it too
             raise HTTPException(404, "Not found")
         try:
             await chroma.ensure()  # the first visit after a restart wakes it up
@@ -2371,6 +2371,104 @@ async def _chroma_pass(request: Request, path: str):
 for _prefix in ("/p", "/d", "/assets", "/vendor/three", "/vendor/pyre", "/api/db", "/api/fn", "/api/a"):
     app.add_api_route(_prefix + "/{path:path}", _chroma_pass, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
                       include_in_schema=False)
+
+
+# ---------- Mnx Studio (/studio.html): the Bees' 3D models, ~/models/<name>.json + .glb (hive/models3d.py) ----------
+class StudioAsk(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    spec: dict | None = None
+
+
+def _studio_name(name: str) -> str:
+    from hive.sites import slug
+    n = slug(name)
+    if not n:
+        raise HTTPException(400, "Give the model a name (letters, digits, dashes)")
+    return n
+
+
+@api.get("/studio/bees")
+def studio_bees():
+    return {"bees": [{"id": b["id"], "name": b["name"]} for b in registry.of(users.who())]}
+
+
+@api.get("/studio/{bee_id}/models")
+async def studio_models(bee_id: str):
+    from hive import models3d
+    return {"models": await models3d.names(_bee(bee_id))}
+
+
+@api.get("/studio/{bee_id}/models/{name}")
+async def studio_model(bee_id: str, name: str):
+    from hive import models3d
+    spec = await models3d.load(_bee(bee_id), _studio_name(name))
+    if not spec:
+        raise HTTPException(404, "No such model")
+    return spec
+
+
+@api.put("/studio/{bee_id}/models/{name}")
+async def studio_save(bee_id: str, name: str, spec: dict):
+    from hive import models3d
+    try:
+        where, glb = await models3d.save(_bee(bee_id), _studio_name(name), spec)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"saved": where, "bytes": len(glb)}
+
+
+@api.get("/studio/{bee_id}/models/{name}/glb")
+async def studio_glb(bee_id: str, name: str):
+    from hive import models3d
+    glb = await models3d.glb_of(_bee(bee_id), _studio_name(name))
+    if glb is None:
+        raise HTTPException(404, "No such model")
+    return Response(glb, media_type="model/gltf-binary", headers={"Content-Disposition": f'attachment; filename="{_studio_name(name)}.glb"'})
+
+
+@api.post("/studio/{bee_id}/ask")
+async def studio_ask(bee_id: str, body: StudioAsk):
+    """The Bee changes the design you have open ("add a spoiler"), or designs one from nothing."""
+    from hive import brain, models3d
+    _bee(bee_id)
+    if not brain.is_connected():
+        raise HTTPException(503, "No model is running on this Hive, so the Bee can't design yet")
+    events: list[dict] = []
+
+    async def emit(ev):
+        events.append(ev)
+    task = Task(uuid.uuid4().hex[:8], "studio", body.text, emit, user=users.who())
+    try:
+        current = models3d.clean(body.spec) if body.spec and body.spec.get("parts") else None
+        return await models3d.design(task, body.text, current)
+    except (ValueError, brain.BrainNotConnected) as exc:
+        raise HTTPException(502, f"The design didn't come out right: {exc}") from exc
+
+
+@api.post("/studio/{bee_id}/models/{name}/view")
+async def studio_view(bee_id: str, name: str):
+    """A private 3D viewer link for the saved model (also listed in the Sandbox)."""
+    from hive import models3d, sandbox
+    from hive.sites import chroma
+    b = _bee(bee_id)
+    n = _studio_name(name)
+    spec = await models3d.load(b, n)
+    if not spec:
+        raise HTTPException(404, "Save the model first")
+    try:
+        await chroma.ensure()
+        d = await chroma.deploy(users.who(), f"{n}-model", models3d.viewer_files(spec["name"], models3d.to_glb(spec)), [], private=True)
+    except Exception as exc:
+        raise HTTPException(503, f"The sites server didn't take it: {exc}") from exc
+    sandbox.record(users.who(), "model", n, b["name"], d["url"], studio=f"/studio.html?bee={b['id']}&model={n}")
+    return {"url": d["url"]}
+
+
+@api.get("/sandbox")
+def sandbox_list():
+    """What your Bees made (games, websites, 3D models), newest first, each on its private link."""
+    from hive import sandbox
+    return {"items": sandbox.of(users.who())}
 
 
 @app.get("/drone.py")
