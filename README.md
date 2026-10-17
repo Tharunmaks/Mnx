@@ -208,7 +208,14 @@ site named with "app" or "website", or by its address, is found first and then u
 known by its name.
 
 The Bee looks at the screen (its buttons, links, boxes and text), the model picks one step (tap, type, scroll,
-open a page), the Bee does it and looks again until it's done. The chat shows each step and screenshots, and
+open a page), the Bee does it and looks again until it's done. It then **tells you what happened**: a "What
+happened" card lists each thing it did (opened, tapped, typed, asked you, your OK to pay), the page it ended on and
+what that page says, and its answer says what it found or did. If a site doesn't open, it says why in words (no
+such website, no internet, blocked, too slow).
+
+Where no full browser can run (a phone in Termux has no Chromium), the Bee uses its **text-mode browser**
+(`hive/reader.py`): it opens pages over plain HTTP, reads them, follows links, fills in and sends forms and keeps the
+site's cookies. That covers reading, searching and simple sites; app-like sites that need JavaScript say so. The chat shows each step and screenshots, and
 **Watch live** opens the Bee's browser so you can take over (a captcha, say). It needs a model running.
 
 - **Logins, OTPs, passwords, API keys, addresses, UPI IDs**: a card with boxes to fill. Secret boxes are password

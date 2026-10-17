@@ -371,6 +371,8 @@ object and nothing else:
   {{"do": "confirm", "summary": "2 × KitKat, delivery to Home", "amount": "₹45", "methods": ["UPI", "Cash on delivery"]}}
       BEFORE anything that spends money, places an order, books, or sends something to someone. Wait for the answer.
   {{"do": "done", "summary": "…"}}   {{"do": "fail", "reason": "…"}}
+When you finish, the "summary" tells the user what you did and what you found: the facts, prices, headlines or
+results on the page, what's in the cart, and anything they still need to do.
 Rules: never guess a password or OTP; never pay or place an order without a confirm the user approved; if a
 captcha appears, ask the user to solve it in Watch live (do "ask" with no fields). Stop with done as soon as the
 goal is met (adding to the cart is done once it's in the cart). Values the user gave so far: {values}."""
@@ -444,6 +446,9 @@ async def run(task: Task, surface, intent: dict, bee_name: str, live_url: str | 
     place = "your phone" if surface.kind == "phone" else f"{bee_name}'s browser"
     limit = STEPS.get(task.effort, 25)
 
+    story: list[str] = []  # what the Bee did, for the "What happened" report at the end
+    last: dict = {}
+
     async def screen(title: str, parent: str | None = None) -> None:
         try:
             img, mime = await surface.shot()
@@ -460,6 +465,9 @@ async def run(task: Task, surface, intent: dict, bee_name: str, live_url: str | 
             except Exception as exc:
                 await task.answer(f"I couldn't see {where}: {str(exc)[:200]}")
                 return
+            if not last or obs["place"] != last.get("place"):
+                story.append(f"Opened “{vault.hide(obs['title'] or obs['place'])[:70]}”" + (f" ({_short(obs['place'])})" if obs["place"] else ""))
+            last.update(obs)
             msgs = [{"role": "system", "content": SYSTEM.format(where=f"{where} in {place}", goal=intent["goal"], values=vault.describe())},
                     {"role": "user", "content": ("Done so far:\n" + "\n".join(history[-14:]) + "\n\n" if history else "")
                      + "Screen now:\n" + _screen_text(obs, vault)}]
@@ -502,6 +510,7 @@ async def run(task: Task, surface, intent: dict, bee_name: str, live_url: str | 
                 for f in fields:
                     vault.put(f["name"], str((reply.get("values") or {}).get(f["name"]) or ""), bool(f.get("secret")))
                 history.append(f"{n}. asked the user; they gave: {vault.describe()}")
+                story.append("Asked you for " + ", ".join(str(f.get("label") or f["name"]) for f in fields))
                 continue
 
             if kind == "confirm":
@@ -523,6 +532,7 @@ async def run(task: Task, surface, intent: dict, bee_name: str, live_url: str | 
                 approved_amount = amount if amount else float("inf")
                 chosen = (reply.get("values") or {}).get("method")
                 history.append(f"{n}. the user approved paying" + (f" ₹{amount:,.2f}" if amount else "") + (f" with {chosen}" if chosen else ""))
+                story.append("You approved paying" + (f" ₹{amount:,.2f}" if amount else "") + (f" with {chosen}" if chosen else ""))
                 continue
 
             # actions on the screen
@@ -569,14 +579,51 @@ async def run(task: Task, surface, intent: dict, bee_name: str, live_url: str | 
             except Exception as exc:
                 await task.finish_step(s, status="error", text=vault.hide(str(exc))[:160])
                 history.append(f"{n}. {kind} failed: {vault.hide(str(exc))[:120]}")
+                story.append(f"{_did(_say(kind, act, vault.hide(label)), tried=True)}: didn't work ({_why(exc)})")
                 continue
             await task.finish_step(s)
             history.append(f"{n}. {_say(kind, act, vault.hide(label))}")
+            if kind not in ("scroll", "wait"):
+                story.append(_did(_say(kind, act, vault.hide(label))))
         await screen(f"Where I stopped on {where}")
         await task.answer(f"I used my {limit} steps and stopped. {where} is still open in {place}; ask again to carry on"
                           + (", or open Watch live." if live_url else "."))
     finally:
+        if story:
+            await report(task, bee_name, where, story, last, vault)
         vault.clear()
+
+
+async def report(task: Task, bee: str, where: str, story: list[str], last: dict, vault: "Vault | None" = None) -> None:
+    """The "What happened" card: each thing the Bee did, where it ended up, and what that page says."""
+    hide = vault.hide if vault else (lambda t: t)
+    details = [[f"{i}.", line] for i, line in enumerate(story[-20:], 1)]
+    if last.get("place"):
+        details.append(["Now on", f"{hide(last.get('title') or '')[:60]} · {_short(last['place'])}".strip(" ·")])
+    said = " ".join(hide(last.get("text") or "").split())[:280]
+    if said:
+        details.append(["It says", said + ("…" if len(last.get("text") or "") > 280 else "")])
+    await task.emit("result", bee=bee, service=where, title=f"What happened on {where}", badge="Report", details=details)
+
+
+def _did(step: str, tried: bool = False) -> str:
+    """ "Tapping “ADD”" → "Tapped “ADD”" (or "Tried to tap “ADD”"), for the report of what already happened."""
+    past = {"Tapping": ("Tapped", "Tried to tap"), "Typing": ("Typed", "Tried to type"), "Pressing": ("Pressed", "Tried to press"),
+            "Going back": ("Went back", "Tried to go back"), "Opening": ("Opened", "Tried to open"), "Scrolling": ("Scrolled", "Tried to scroll")}
+    for now, (done, attempt) in past.items():
+        if step.startswith(now):
+            return (attempt if tried else done) + step[len(now):]
+    return step
+
+
+def _short(url: str) -> str:
+    u = re.sub(r"^https?://(www\.)?", "", url or "")
+    return u if len(u) <= 60 else u[:57] + "…"
+
+
+def _why(exc: Exception) -> str:
+    from .reader import explain_browser
+    return explain_browser(str(exc))
 
 
 def _say(kind: str, act: dict, label: str) -> str:
@@ -629,20 +676,40 @@ async def handle(task: Task, intent: dict) -> None:
             surface, live = PhoneSurface(p), "phone.html"
             await surface.open(package)
         else:
+            from .browser import BrowserError
+            from .reader import ReaderSurface
             cell = cells.get(b["id"], b["name"], b["computer"])
             surface, live = WebSurface(cell.browser), f"browser.html?bee={b['id']}"
-            await surface.open(start_url(intent))
+            try:
+                await surface.open(start_url(intent))
+            except BrowserError as exc:
+                if "couldn't start" not in str(exc):
+                    raise
+                # no Chromium on this machine (a phone): the Bee reads the web in text mode instead
+                await task.finish_step(s, status="done", text="No full browser on this machine: reading it in text mode")
+                s = await task.step("opening", f"Opening {where} in {b['name']}'s text-mode browser", bee=name)
+                surface, live = ReaderSurface(), None
+                await surface.open(start_url(intent))
     except Exception as exc:
-        await task.finish_step(s, status="error", text=str(exc)[:200])
-        await task.answer(f"I couldn't open {where}: {exc}")
+        from .reader import explain_browser
+        why = explain_browser(str(exc))
+        await task.finish_step(s, status="error", text=why[:200])
+        await task.answer(f"I couldn't open {where}: {why}.")
         return
     await task.finish_step(s)
-    if not brain.is_connected():  # no model: show where it is and let the user finish it
+    if not brain.is_connected():  # no model: say what's on the page and let the user take it from there
         img, mime = await surface.shot()
         sid = _shot_id(task.user, img, mime)
         if sid:
             await task.emit("screen", bee=name, title=f"{where}" + (f": {intent['item']}" if intent.get("item") else ""), shot=sid, live=live)
-        await task.answer(f"I opened {where}" + (f" with “{intent['item']}”" if intent.get("item") else "")
-                          + ". No model is running on this Hive yet, so I can't tap through it by myself: open Watch live to finish it.")
+        try:
+            obs = await surface.observe()
+        except Exception:
+            obs = {}
+        await report(task, name, where, [f"Opened “{(obs.get('title') or where)[:70]}”"], obs)
+        await task.answer(f"I opened {where}" + (f" with “{intent['item']}”" if intent.get("item") else "") + ". "
+                          + ("Its page is summed up above. " if obs.get("text") else "")
+                          + "No model is running on this Hive yet, so I can't go further by myself"
+                          + (": open Watch live to finish it." if live else "."))
         return
     await run(task, surface, intent, name, live)

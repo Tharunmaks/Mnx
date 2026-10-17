@@ -116,6 +116,10 @@ def model(tmp_path, monkeypatch):
     return use
 
 
+def _answer(events):
+    return [e["text"] for e in events if e["type"] == "answer"][-1]
+
+
 def _task(answers):
     """A chat task that answers its cards from `answers` (a list of (action, values)), in order."""
     events = []
@@ -152,7 +156,11 @@ def test_a_bee_adds_to_cart_logs_in_with_a_secret_and_pays_only_after_ok(model):
     assert ask["fields"][0]["secret"] and ask["fields"][0]["input"] == "password" and ask["ask_anyway"]
     pay = next(e for e in events if e.get("title") == "Pay on Blinkit?")
     assert pay["actions"][0]["label"] == "Pay ₹45" and ["Total", "₹45.00"] in pay["details"]
-    assert events[-1]["type"] == "answer" and events[-1]["text"] == "Ordered 1 KitKat for ₹45."
+    assert _answer(events) == "Ordered 1 KitKat for ₹45."
+    told = next(e for e in events if e.get("badge") == "Report")
+    assert told["title"] == "What happened on Blinkit" and [d[1] for d in told["details"][:4]] == [
+        "Opened “Blinkit” (blinkit.com/s/?q=KitKat)", "Tapped “ADD”", "Opened “Login” (blinkit.com/login)", "Asked you for OTP"]
+    assert ["Now on", "Cart · blinkit.com/cart"] in told["details"] and any(d[0] == "It says" and "Grand total ₹45" in d[1] for d in told["details"])
     assert any(e["type"] == "screen" and e["live"] == "browser.html?bee=shopper" for e in events)
     # the OTP went into the page and nowhere else: not to the model, not into the chat
     everything = json.dumps(events) + "".join(m.seen)
@@ -168,7 +176,7 @@ def test_the_bee_never_presses_place_order_without_an_ok(model):
     asyncio.run(apps.run(t, shop, apps.parse("add KitKat in blinkit"), "Shopper", None))
     guard = next(e for e in events if e["type"] == "confirm")
     assert guard["title"] == "Press “Place order” on Blinkit?" and ["Total on the page", "₹45.00"] in guard["details"] and guard["ask_anyway"]
-    assert shop.clicked == [] and "didn't press it" in events[-1]["text"]
+    assert shop.clicked == [] and "didn't press it" in _answer(events)
 
 
 def test_a_bigger_total_than_you_approved_asks_again(model):
