@@ -69,12 +69,94 @@ APPS = {
                 "package": "com.google.android.youtube", "words": ["youtube"]},
     "gmail": {"name": "Gmail", "web": "https://mail.google.com", "search": None, "package": "com.google.android.gm", "words": ["gmail"]},
     "whatsapp": {"name": "WhatsApp", "web": "https://web.whatsapp.com", "search": None, "package": "com.whatsapp", "words": ["whatsapp"]},
+    "dunzo": {"name": "Dunzo", "web": "https://www.dunzo.com", "search": None, "package": "com.dunzo.user", "words": ["dunzo"]},
+    "dominos": {"name": "Domino's", "web": "https://pizzaonline.dominos.co.in", "search": None, "package": "com.Dominos", "words": ["dominos", "domino's", "dominoes"]},
+    "pizzahut": {"name": "Pizza Hut", "web": "https://www.pizzahut.co.in", "search": None, "package": "com.pizzahutindia", "words": ["pizza hut", "pizzahut"]},
+    "kfc": {"name": "KFC", "web": "https://online.kfc.co.in", "search": None, "package": "com.yum.kfc", "words": ["kfc"]},
+    "mcdonalds": {"name": "McDonald's", "web": "https://www.mcdelivery.co.in", "search": None, "package": "com.mcdonalds.mobileapp", "words": ["mcdonalds", "mcdonald's", "mcdelivery"]},
+    "ajio": {"name": "AJIO", "web": "https://www.ajio.com", "search": "https://www.ajio.com/search/?text={q}", "package": "com.ril.ajio", "words": ["ajio"]},
+    "tatacliq": {"name": "Tata CLiQ", "web": "https://www.tatacliq.com", "search": "https://www.tatacliq.com/search/?searchCategory=all&text={q}", "package": "com.tul.tatacliq", "words": ["tata cliq", "tatacliq"]},
+    "croma": {"name": "Croma", "web": "https://www.croma.com", "search": "https://www.croma.com/searchB?q={q}", "package": "com.croma.app", "words": ["croma"]},
+    "reliancedigital": {"name": "Reliance Digital", "web": "https://www.reliancedigital.in", "search": "https://www.reliancedigital.in/search?q={q}", "package": "com.ril.digital", "words": ["reliance digital"]},
+    "snapdeal": {"name": "Snapdeal", "web": "https://www.snapdeal.com", "search": "https://www.snapdeal.com/search?keyword={q}", "package": "com.snapdeal.main", "words": ["snapdeal"]},
+    "pharmeasy": {"name": "PharmEasy", "web": "https://pharmeasy.in", "search": "https://pharmeasy.in/search/all?name={q}", "package": "com.phonegap.rxpal", "words": ["pharmeasy"]},
+    "1mg": {"name": "Tata 1mg", "web": "https://www.1mg.com", "search": "https://www.1mg.com/search/all?name={q}", "package": "com.aranoah.healthkart.plus", "words": ["1mg", "tata 1mg"]},
+    "netmeds": {"name": "Netmeds", "web": "https://www.netmeds.com", "search": None, "package": "com.NetmedsMarketplace.Netmeds", "words": ["netmeds"]},
+    "lenskart": {"name": "Lenskart", "web": "https://www.lenskart.com", "search": "https://www.lenskart.com/search?q={q}", "package": "com.lenskart.app", "words": ["lenskart"]},
+    "urbancompany": {"name": "Urban Company", "web": "https://www.urbancompany.com", "search": None, "package": "com.urbanclap.urbanclap", "words": ["urban company", "urbanclap"]},
+    "goibibo": {"name": "Goibibo", "web": "https://www.goibibo.com", "search": None, "package": "com.goibibo", "words": ["goibibo"]},
+    "cleartrip": {"name": "Cleartrip", "web": "https://www.cleartrip.com", "search": None, "package": "com.cleartrip.android", "words": ["cleartrip"]},
+    "ixigo": {"name": "ixigo", "web": "https://www.ixigo.com", "search": None, "package": "com.ixigo", "words": ["ixigo"]},
+    "redbus": {"name": "redBus", "web": "https://www.redbus.in", "search": None, "package": "in.redbus.android", "words": ["redbus", "red bus"]},
+    "oyo": {"name": "OYO", "web": "https://www.oyorooms.com", "search": None, "package": "com.oyo.consumer", "words": ["oyo"]},
+    "airbnb": {"name": "Airbnb", "web": "https://www.airbnb.co.in", "search": None, "package": "com.airbnb.android", "words": ["airbnb"]},
+    "booking": {"name": "Booking.com", "web": "https://www.booking.com", "search": None, "package": "com.booking", "words": ["booking.com"]},
+    "agoda": {"name": "Agoda", "web": "https://www.agoda.com", "search": None, "package": "com.agoda.mobile.consumer", "words": ["agoda"]},
+    "indigo": {"name": "IndiGo", "web": "https://www.goindigo.in", "search": None, "package": "in.goindigo.android", "words": ["indigo"]},
+    "airindia": {"name": "Air India", "web": "https://www.airindia.com", "search": None, "package": "com.airindia.mobile", "words": ["air india"]},
+    "district": {"name": "District", "web": "https://www.district.in", "search": None, "package": "com.application.zomato.district", "words": ["district app"]},
+    "paytm": {"name": "Paytm", "web": "https://paytm.com", "search": None, "package": "net.one97.paytm", "words": ["paytm"]},
+    "phonepe": {"name": "PhonePe", "web": "https://www.phonepe.com", "search": None, "package": "com.phonepe.app", "words": ["phonepe", "phone pe"]},
+    "gpay": {"name": "Google Pay", "web": "https://pay.google.com", "search": None, "package": "com.google.android.apps.nbu.paisa.user", "words": ["gpay", "google pay"]},
+    "cred": {"name": "CRED", "web": "https://cred.club", "search": None, "package": "com.dreamplug.androidapp", "words": ["cred"]},
+    "zerodha": {"name": "Zerodha Kite", "web": "https://kite.zerodha.com", "search": None, "package": "com.zerodha.kite3", "words": ["zerodha", "kite app"]},
+    "groww": {"name": "Groww", "web": "https://groww.in", "search": None, "package": "com.nextbillion.groww", "words": ["groww"]},
+    "dineout": {"name": "Swiggy Dineout", "web": "https://www.swiggy.com/dineout", "search": None, "package": "in.swiggy.android", "words": ["dineout", "swiggy dineout"]},
+    "spotify": {"name": "Spotify", "web": "https://open.spotify.com", "search": "https://open.spotify.com/search/{q}", "package": "com.spotify.music", "words": ["spotify"]},
+    "jiosaavn": {"name": "JioSaavn", "web": "https://www.jiosaavn.com", "search": "https://www.jiosaavn.com/search/{q}", "package": "com.jio.media.jiobeats", "words": ["jiosaavn", "saavn"]},
+    "gaana": {"name": "Gaana", "web": "https://gaana.com", "search": "https://gaana.com/search/{q}", "package": "com.gaana", "words": ["gaana"]},
+    "netflix": {"name": "Netflix", "web": "https://www.netflix.com", "search": "https://www.netflix.com/search?q={q}", "package": "com.netflix.mediaclient", "words": ["netflix"]},
+    "primevideo": {"name": "Prime Video", "web": "https://www.primevideo.com", "search": None, "package": "com.amazon.avod.thirdpartyclient", "words": ["prime video", "amazon prime"]},
+    "hotstar": {"name": "JioHotstar", "web": "https://www.hotstar.com", "search": None, "package": "in.startv.hotstar", "words": ["hotstar", "jiohotstar", "jio hotstar"]},
+    "instagram": {"name": "Instagram", "web": "https://www.instagram.com", "search": None, "package": "com.instagram.android", "words": ["instagram"]},
+    "facebook": {"name": "Facebook", "web": "https://www.facebook.com", "search": None, "package": "com.facebook.katana", "words": ["facebook"]},
+    "x": {"name": "X (Twitter)", "web": "https://x.com", "search": "https://x.com/search?q={q}", "package": "com.twitter.android", "words": ["twitter"]},
+    "linkedin": {"name": "LinkedIn", "web": "https://www.linkedin.com", "search": "https://www.linkedin.com/search/results/all/?keywords={q}", "package": "com.linkedin.android", "words": ["linkedin"]},
+    "reddit": {"name": "Reddit", "web": "https://www.reddit.com", "search": "https://www.reddit.com/search/?q={q}", "package": "com.reddit.frontpage", "words": ["reddit"]},
+    "telegram": {"name": "Telegram", "web": "https://web.telegram.org", "search": None, "package": "org.telegram.messenger", "words": ["telegram"]},
+    "snapchat": {"name": "Snapchat", "web": "https://web.snapchat.com", "search": None, "package": "com.snapchat.android", "words": ["snapchat"]},
+    "pinterest": {"name": "Pinterest", "web": "https://in.pinterest.com", "search": "https://in.pinterest.com/search/pins/?q={q}", "package": "com.pinterest", "words": ["pinterest"]},
+    "outlook": {"name": "Outlook", "web": "https://outlook.live.com", "search": None, "package": "com.microsoft.office.outlook", "words": ["outlook mail", "outlook app", "hotmail"]},
+    "googledrive": {"name": "Google Drive", "web": "https://drive.google.com", "search": None, "package": "com.google.android.apps.docs", "words": ["google drive", "gdrive"]},
+    "googledocs": {"name": "Google Docs", "web": "https://docs.google.com", "search": None, "package": "com.google.android.apps.docs.editors.docs", "words": ["google docs"]},
+    "googlemaps": {"name": "Google Maps", "web": "https://www.google.com/maps", "search": "https://www.google.com/maps/search/{q}", "package": "com.google.android.apps.maps", "words": ["google maps"]},
+    "googlecalendar": {"name": "Google Calendar", "web": "https://calendar.google.com", "search": None, "package": "com.google.android.calendar", "words": ["google calendar"]},
+    "chatgpt": {"name": "ChatGPT", "web": "https://chatgpt.com", "search": None, "package": "com.openai.chatgpt", "words": ["chatgpt"]},
+    "github": {"name": "GitHub", "web": "https://github.com", "search": "https://github.com/search?q={q}", "package": "com.github.android", "words": ["github"]},
+    "notion": {"name": "Notion", "web": "https://www.notion.so", "search": None, "package": "notion.id", "words": ["notion"]},
+    "canva": {"name": "Canva", "web": "https://www.canva.com", "search": None, "package": "com.canva.editor", "words": ["canva"]},
+    "wikipedia": {"name": "Wikipedia", "web": "https://en.wikipedia.org", "search": "https://en.wikipedia.org/w/index.php?search={q}", "package": "org.wikipedia", "words": ["wikipedia"]},
+    "google": {"name": "Google", "web": "https://www.google.com", "search": "https://www.google.com/search?q={q}", "package": "com.google.android.googlequicksearchbox", "words": ["google"]},
+    "ebay": {"name": "eBay", "web": "https://www.ebay.com", "search": "https://www.ebay.com/sch/i.html?_nkw={q}", "package": "com.ebay.mobile", "words": ["ebay"]},
+    "aliexpress": {"name": "AliExpress", "web": "https://www.aliexpress.com", "search": "https://www.aliexpress.com/wholesale?SearchText={q}", "package": "com.alibaba.aliexpresshd", "words": ["aliexpress"]},
+    "walmart": {"name": "Walmart", "web": "https://www.walmart.com", "search": "https://www.walmart.com/search?q={q}", "package": "com.walmart.android", "words": ["walmart"]},
+    "doordash": {"name": "DoorDash", "web": "https://www.doordash.com", "search": None, "package": "com.dd.doordash", "words": ["doordash"]},
+    "ubereats": {"name": "Uber Eats", "web": "https://www.ubereats.com", "search": None, "package": "com.ubercab.eats", "words": ["uber eats", "ubereats"]},
+    "instacart": {"name": "Instacart", "web": "https://www.instacart.com", "search": None, "package": "com.instacart.client", "words": ["instacart"]},
+    "dmart": {"name": "DMart Ready", "web": "https://www.dmart.in", "search": None, "package": "in.dmart", "words": ["dmart", "d mart"]},
+    "licious": {"name": "Licious", "web": "https://www.licious.in", "search": None, "package": "com.licious", "words": ["licious"]},
+    "countrydelight": {"name": "Country Delight", "web": "https://www.countrydelight.in", "search": None, "package": "app.mobile.countrydelight", "words": ["country delight"]},
+    "practo": {"name": "Practo", "web": "https://www.practo.com", "search": None, "package": "com.practo.fabric", "words": ["practo"]},
+    "naukri": {"name": "Naukri", "web": "https://www.naukri.com", "search": None, "package": "naukriApp.appModules.login", "words": ["naukri"]},
+    "magicpin": {"name": "magicpin", "web": "https://magicpin.in", "search": None, "package": "com.magicpin.local", "words": ["magicpin"]},
+    "olx": {"name": "OLX", "web": "https://www.olx.in", "search": None, "package": "com.olx.southasia", "words": ["olx"]},
+    "99acres": {"name": "99acres", "web": "https://www.99acres.com", "search": None, "package": "com.nnacres.app", "words": ["99acres"]},
+    "magicbricks": {"name": "MagicBricks", "web": "https://www.magicbricks.com", "search": None, "package": "com.timesgroup.magicbricks", "words": ["magicbricks"]},
+    "myjio": {"name": "MyJio", "web": "https://www.jio.com", "search": None, "package": "com.jio.myjio", "words": ["myjio", "jio recharge"]},
+    "airtel": {"name": "Airtel Thanks", "web": "https://www.airtel.in", "search": None, "package": "com.myairtelapp", "words": ["airtel"]},
+    "digilocker": {"name": "DigiLocker", "web": "https://www.digilocker.gov.in", "search": None, "package": "com.digilocker.android", "words": ["digilocker"]},
 }
 VERB = (r"(?:add|put|order|buy|purchase|book|reserve|search(?:\s+for)?|find|look\s+up|get\s+me|get|check|track|cancel|reorder|"
         r"pay(?:\s+for)?|log\s*in|sign\s*in|open|play|send|message|post|subscribe|apply|remove|empty|show\s+me|compare)")
 VERB_RE = re.compile(rf"\b{VERB}\b", re.I)
 DOMAIN_RE = re.compile(r"\b((?:https?://)?(?:[a-z0-9-]+\.)+(?:com|in|co\.in|org|net|io|app|shop|store)(?:/[^\s]*)?)", re.I)
 PHONE_RE = re.compile(r"\b(?:on|using|with|from)\s+my\s+phone\b|\bphone'?s?\b.*\bapp\b|\bin\s+the\s+[\w ]{2,20}\s+app\b", re.I)
+# "order a cake on Bakingo app", "book a class on the cult.fit website": any app or site, by name
+NAMED_APP = re.compile(r"\b(?:on|in|from|using|via|at|through)\s+(?:the\s+|my\s+)?(?P<name>[A-Za-z0-9][\w.&'+-]*(?:\s+[A-Za-z0-9][\w.&'+-]*){0,2})"
+                       r"\s+(?:app|application|website|web\s*site|site)\b", re.I)
+NOT_APPS = {"settings", "this", "that", "my", "your", "the", "same", "our", "chat", "hive", "mnx", "an", "a", "new", "other", "web",
+            "mobile", "android", "ios", "phone", "test", "demo", "todo", "react", "flutter", "next", "next.js", "node", "django", "flask"}
+SEARCH = "https://html.duckduckgo.com/html/?q={q}"  # an app or site we don't know yet: the Bee finds it first
 ITEM_RE = re.compile(rf"\b{VERB}\s+(?:me\s+)?(?P<item>.+?)\s+(?:in|on|from|to|at|using|via)\s+(?:the\s+)?(?:my\s+)?(?P<where>[\w .-]+?)"
                      r"(?:\s+(?:app|cart|website|site|basket))?\s*[.!?]?$", re.I)
 
@@ -107,7 +189,11 @@ def parse(text: str) -> dict | None:
         return None
     app = _app_in(t)
     dm = DOMAIN_RE.search(t)
-    if not app and not dm:
+    named = NAMED_APP.search(t) if not app and not dm else None
+    if named and named.group("name").lower() in NOT_APPS:
+        named = None
+    phone_app = None if app or dm else _phone_app_in(t)
+    if not app and not dm and not named and not phone_app:
         return None
     if not app and re.search(r"@", t):  # an email address isn't a website
         return None
@@ -118,7 +204,24 @@ def parse(text: str) -> dict | None:
     url = None
     if dm and not app:
         url = dm.group(1) if dm.group(1).lower().startswith("http") else "https://" + dm.group(1)
-    return {"app": app, "item": item, "url": url, "phone": bool(PHONE_RE.search(t)), "goal": t}
+    name = named.group("name").strip() if named else (phone_app["label"] if phone_app else None)
+    if name and not url:
+        url = SEARCH.format(q=quote_plus(f"{name} official website"))
+    return {"app": app, "item": item, "url": url, "phone": bool(PHONE_RE.search(t)) or bool(phone_app and not named), "goal": t,
+            "name": name, "package": phone_app["package"] if phone_app else None}
+
+
+def _phone_app_in(text: str) -> dict | None:
+    """An app installed on the owner's paired phone, named in the request ("open Cult.fit and book a class")."""
+    from . import phone, users
+    if not users.is_owner():
+        return None
+    low = text.lower()
+    for a in phone.all_apps():
+        label = (a.get("label") or "").strip().lower()
+        if len(label) >= 4 and re.search(rf"\b{re.escape(label)}\b", low):
+            return a
+    return None
 
 
 def start_url(intent: dict) -> str:
@@ -337,7 +440,7 @@ async def run(task: Task, surface, intent: dict, bee_name: str, live_url: str | 
     vault = Vault()
     approved_amount: float | None = None  # the total you said yes to; a bigger one asks again
     history: list[str] = []
-    where = APPS[intent["app"]]["name"] if intent.get("app") else (intent.get("url") or "the web")
+    where = APPS[intent["app"]]["name"] if intent.get("app") else (intent.get("name") or intent.get("url") or "the web")
     place = "your phone" if surface.kind == "phone" else f"{bee_name}'s browser"
     limit = STEPS.get(task.effort, 25)
 
@@ -508,8 +611,9 @@ async def handle(task: Task, intent: dict) -> None:
     from .cells import cells
     from . import phone as phone_mod
     app = APPS.get(intent.get("app") or "")
-    where = app["name"] if app else (intent.get("url") or "that website")
-    use_phone = intent.get("phone") and task.user == "owner" and app and phone_mod.PHONES
+    where = app["name"] if app else (intent.get("name") or intent.get("url") or "that website")
+    package = (app or {}).get("package") or intent.get("package")
+    use_phone = intent.get("phone") and task.user == "owner" and package and phone_mod.PHONES
     b = _pick_bee(task)
     if not use_phone and not b:
         await task.answer(f"A Bee does this in its own browser. Make one first (New Bee in Peace, or “make a bee called Shopper that "
@@ -523,7 +627,7 @@ async def handle(task: Task, intent: dict) -> None:
             if "ui_tree" not in p.capabilities:
                 raise RuntimeError("the phone needs ADB (Wireless debugging) for the Bee to see and tap apps")
             surface, live = PhoneSurface(p), "phone.html"
-            await surface.open(app["package"])
+            await surface.open(package)
         else:
             cell = cells.get(b["id"], b["name"], b["computer"])
             surface, live = WebSurface(cell.browser), f"browser.html?bee={b['id']}"

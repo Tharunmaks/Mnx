@@ -204,6 +204,11 @@ class Models:
     def dir(self, model_id: str) -> Path:
         return self.root / model_id
 
+    def engine(self) -> str:
+        from .expert import es_serve_path
+        want = os.getenv("MNX_ENGINE", "auto").strip().lower()
+        return "Expert Stream" if es_serve_path() and want != "llama" else "llama.cpp"
+
     def view(self, owner: bool = False) -> list[dict]:
         from .brain import brain
         self._sync()
@@ -415,6 +420,15 @@ class Models:
 
     def _server_argv(self, path: str, port: int | None = None) -> list[str]:
         port = port or PORT
+        # Expert Stream (hive/expert.py) when it's built: the same OpenAI API, with prefix reuse, a prompt cache on disk
+        # and Turbo decoding. MNX_ENGINE=llama keeps llama.cpp; MNX_ENGINE=expertstream insists on Expert Stream.
+        want = os.getenv("MNX_ENGINE", "auto").strip().lower()
+        from .expert import es_serve_path
+        es = es_serve_path() if want in ("auto", "expertstream", "expert-stream", "es") else None
+        if es:
+            return [es, "-g", path, "-p", str(port), "-c", "4096"]
+        if want in ("expertstream", "expert-stream", "es"):
+            raise ModelError("Expert Stream isn't built yet: python3 -m hive.admin install-expertstream")
         exe = shutil.which("llama-server") or next((str(p) for p in [Path.home() / "llama.cpp/build/bin/llama-server"] if p.exists()), None)
         threads = str(max(1, (os.cpu_count() or 2) - 1))
         if exe:

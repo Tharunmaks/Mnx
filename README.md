@@ -148,14 +148,48 @@ Grok bot: a name and **its responsibility** (`hive/bees.py`, `hive/bots.py`, the
 user's Bee answers 404, and so do its computer, files, terminal and memory. Two users can each have a Scout.
 Limits: Free 5 Bees, Pro 20 (children included), 4 generations, 12 children per Bee.
 
+## Bees build full-stack websites with Chroma, kept in their Vortex OS computer
+
+Say **"build a website for my bakery where people can order cakes"**, **"create a landing page for my app with a
+waitlist"** or **"make a portfolio site for my photos"** (`hive/sites.py`). A Bee writes the whole site: pages,
+styles, a script that uses a realtime database, server functions (`api/*.js`) and the database collections with
+who may read and write them. Then it:
+- puts the files in its own computer at `~/sites/<name>/`, so you can open and edit them in its **Vortex OS**
+  desktop (files, editor, terminal),
+- deploys them with **[Chroma](https://github.com/Tharunmaks/Chroma-node)**, which the Hive runs on its own
+  machine (downloaded and started the first time; Node.js 22.5+), each user with their own Chroma account,
+- answers with the live link: `<your Hive>/p/<name>/`, with its database, functions and analytics.
+
+**"update my bakery site: add a contact page"** rewrites and redeploys it (Chroma keeps every deployment), and
+**"list my sites"** lists yours. Sites run in Chroma's sandbox, so a site's scripts can't touch the Hive's own
+pages or your token. Asking for code in a framework ("make a todo app in react") still gets you the code.
+
+## Expert Stream and Expert Craft
+
+From **[Stream-](https://github.com/Tharunmaks/Stream-)** (`hive/expert.py`):
+
+- **Expert Stream** is the engine for your Mnx models when it's built: `es_serve` speaks the same OpenAI API as
+  llama.cpp, with prefix reuse, a prompt cache on disk, faster prompt reading and Turbo decoding, so answers start
+  faster. Build it once with `python3 -m hive.admin install-expertstream` (the phone script does it by itself), or
+  say **"set up expert stream"** as the owner. `MNX_ENGINE=llama` keeps llama.cpp.
+- **Expert Craft** trains a model with up to 70 billion parameters on a small machine (a dense model in RAM, millions
+  of page-sized experts in a sparse file). A Bee runs it on its own computer:
+  **"expert craft plan 70B for 2 hours"**, **"train a 70B model with expert craft called stories for 3 hours"**
+  (it shows the honest plan and asks first, since it rewrites disk pages; the writes are capped),
+  **"train a 1B model with expert craft on my notes.txt"**, **"expert craft status stories"**,
+  **"ask my expert craft model stories: Once upon a time"**.
+
 ## Bees use any website (and the owner's phone apps)
 
 Ask a Bee to do something in an app and it does it like a person, in its own browser (`hive/apps.py`):
 **"add KitKat in blinkit"**, **"order 2 milk from zepto"**, **"search for running shoes on amazon"**,
-**"book a movie on bookmyshow"**, or any site: **"find cheap flights on skyscanner.co.in"**. Blinkit, Zepto,
-Instamart, Swiggy, Zomato, BigBasket, Amazon, Flipkart, Myntra, JioMart, Nykaa, Meesho, BookMyShow,
-MakeMyTrip, IRCTC, Uber, Ola, Rapido, YouTube, Gmail and WhatsApp are known by name. The Hive's owner can say
-**"… on my phone"** to use the real app on the paired phone (Phone Drone with ADB).
+**"book a movie on bookmyshow"**, or any site: **"find cheap flights on skyscanner.co.in"**,
+**"order a cake on Bakingo app"**, **"pay my electricity bill on the BESCOM website"**. About 100 apps are known by
+name (Blinkit, Zepto, Swiggy, Zomato, Amazon, Flipkart, Myntra, Domino's, PharmEasy, redBus, IRCTC, Uber, Ola,
+Spotify, Netflix, Instagram, LinkedIn, Gmail, WhatsApp, Paytm, PhonePe, Zerodha, DigiLocker …); any other app or
+site named with "app" or "website", or by its address, is found first and then used. The Hive's owner can say
+**"… on my phone"** to use the real app on the paired phone (Phone Drone with ADB), and any app installed there is
+known by its name.
 
 The Bee looks at the screen (its buttons, links, boxes and text), the model picks one step (tap, type, scroll,
 open a page), the Bee does it and looks again until it's done. The chat shows each step and screenshots, and

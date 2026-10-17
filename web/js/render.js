@@ -405,14 +405,14 @@ export function markdown(text) {
 
 function inline(text) {
   const parts = [];
-  const re = /`([^`\n]+)`|\*\*([^*\n]+)\*\*|(?<![\w*])\*([^*\n]+)\*(?!\w)|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  const re = /`([^`\n]+)`|\*\*([^*\n]+)\*\*|(?<![\w*])\*([^*\n]+)\*(?!\w)|\[([^\]\n]+)\]\(((?:https?:\/\/|\/(?!\/)|[\w-]+\.html\b)[^\s)]*)\)/g;
   let last = 0;
   for (const m of text.matchAll(re)) {
     if (m.index > last) parts.push(text.slice(last, m.index));
     if (m[1] != null) parts.push(h("code", {}, m[1]));
     else if (m[2] != null) parts.push(h("strong", {}, m[2]));
     else if (m[3] != null) parts.push(h("em", {}, m[3]));
-    else parts.push(h("a", { href: m[5], target: "_blank", rel: "noopener noreferrer" }, m[4]));
+    else parts.push(h("a", { href: m[5], target: m[5].startsWith("http") || m[5].startsWith("/p/") ? "_blank" : null, rel: "noopener noreferrer" }, m[4]));
     last = m.index + m[0].length;
   }
   if (last < text.length) parts.push(text.slice(last));

@@ -11,6 +11,7 @@ never by users, and they never go into the code or git: they live in data/ (owne
   python3 -m hive.admin install-models id=link id=link ...   download, join and check models now (no clicking), e.g.
         mnx-1.5-max-coder=<Drive folder link>   mnx-1-lite=<link>   mnx-1=<link>   mnx-lonjer=<link>
   python3 -m hive.admin models                          your models and whether they're installed
+  python3 -m hive.admin install-expertstream          build Expert Stream (es_serve), the faster engine for the models
   python3 -m hive.admin price 499                       what Pro costs, in ₹ per 30 days (Razorpay)
   python3 -m hive.admin pro <user token> [days]         give a user Pro without paying (default 30 days)
   python3 -m hive.admin pro-off <user token>            end a user's Pro now
@@ -59,6 +60,15 @@ def main(argv: list[str]) -> int:
         have = lab.secret_names()
         for n in sorted(set(KNOWN) | set(have)):
             print(f"{'✓' if n in have else '·'} {n}")
+        return 0
+    if cmd == "install-expertstream":
+        from hive.expert import ExpertError, build_server
+        print("Downloading github.com/Tharunmaks/Stream- and building es_serve (a minute or two)…")
+        try:
+            print(f"Built {build_server()}. Your models now run on Expert Stream (restart the Hive if it's running).")
+        except ExpertError as exc:
+            print(exc)
+            return 1
         return 0
     if cmd == "price" and rest:
         from hive.plan import plan

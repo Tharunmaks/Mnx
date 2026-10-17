@@ -8,6 +8,9 @@ python3 -c "import fastapi, uvicorn, httpx" 2>/dev/null || pip install fastapi "
 python3 -c "import websockets" 2>/dev/null || pip install websockets   # live terminals and the phone drone
 python3 -c "import gdown" 2>/dev/null || pip install gdown
 command -v llama-server >/dev/null || pkg install -y llama-cpp || true
+command -v node >/dev/null || pkg install -y nodejs || true                      # Chroma: the sites Bees build
+command -v clang >/dev/null && command -v make >/dev/null || pkg install -y clang make || true
+[ -x data/expertstream/es_serve ] || python3 -m hive.admin install-expertstream || true  # Expert Stream: the faster engine
 mkdir -p data
 echo "The Hive is starting. Open http://localhost:8000 in your browser; the access token is printed below."
 while true; do

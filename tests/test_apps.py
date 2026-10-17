@@ -212,3 +212,29 @@ def test_without_a_bee_it_says_to_make_one(monkeypatch):
 def test_the_browser_never_reads_back_a_password_box():
     src = Path(apps.__file__).with_name("browser.py").read_text()
     assert "el.type === 'password' ? '' : el.value" in src
+
+
+@pytest.mark.parametrize("text,name", [("order a cake on Bakingo app", "Bakingo"), ("book a yoga class on the cult.fit website", "cult.fit"),
+                                       ("pay my electricity bill on the BESCOM website", "BESCOM")])
+def test_any_app_or_site_by_name(text, name):
+    got = apps.parse(text)
+    assert got["app"] is None and got["name"] == name and got["url"].startswith("https://html.duckduckgo.com/html/?q=")
+
+
+@pytest.mark.parametrize("text,app", [("order a pizza from dominos", "dominos"), ("search for bus tickets on redbus", "redbus"),
+                                      ("play arijit songs on spotify", "spotify"), ("book a hotel on airbnb", "airbnb")])
+def test_more_apps_by_name(text, app):
+    assert apps.parse(text)["app"] == app
+
+
+@pytest.mark.parametrize("text", ["check the outlook for tomorrow", "buy a kite", "add dark mode in the settings app",
+                                  "make a todo app in react"])
+def test_ordinary_words_are_not_apps(text):
+    assert apps.parse(text) is None
+
+
+def test_apps_on_the_owners_phone_by_their_label(monkeypatch):
+    from hive import phone
+    monkeypatch.setattr(phone, "all_apps", lambda: [{"package": "fit.cure.android", "label": "Cult.fit"}])
+    got = apps.parse("book a yoga class in Cult.fit")
+    assert got["package"] == "fit.cure.android" and got["phone"]

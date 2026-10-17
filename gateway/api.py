@@ -174,6 +174,8 @@ async def lifespan(app: FastAPI):
     plans_loop = asyncio.create_task(_plan_loop())
     yield
     plans_loop.cancel()
+    from hive.sites import chroma as _chroma
+    await _chroma.stop()
     await _mnx_models.stop_all()
     calls.stop_loop()
     health.cancel()
@@ -318,7 +320,8 @@ def ping():
 @api.get("/health")
 def health():
     from hive import brain
-    return {"ok": True, "brain": brain.is_connected(), "phones": len(phone.PHONES), "cells": cells.mode}
+    from hive.models import models as _m
+    return {"ok": True, "brain": brain.is_connected(), "phones": len(phone.PHONES), "cells": cells.mode, "engine": _m.engine()}
 
 
 @api.get("/system")
@@ -2331,6 +2334,43 @@ def bee_gpu_job(job_id: str, request: Request):
     if not job or job["bee"] != b["id"]:
         raise HTTPException(404, "No such job")
     return job
+
+
+# ---------- sites the Bees build with Chroma (hive/sites.py): Chroma's own paths, passed through to it ----------
+async def _chroma_pass(request: Request, path: str):
+    from hive.sites import chroma
+    if not await chroma.healthy():
+        if not request.url.path.startswith(("/p/", "/d/")):
+            raise HTTPException(404, "Not found")
+        try:
+            await chroma.ensure()  # the first visit after a restart wakes it up
+        except Exception as exc:
+            raise HTTPException(503, f"The sites server isn't running: {exc}") from exc
+    url = chroma.url + request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    headers = {k: v for k, v in request.headers.items() if k.lower() in ("content-type", "accept", "last-event-id", "if-none-match", "range")}
+    headers["X-Forwarded-For"] = request.client.host if request.client else ""
+    client = httpx.AsyncClient(timeout=None, transport=chroma.transport)
+    req = client.build_request(request.method, url, headers=headers, content=await request.body())
+    try:
+        r = await client.send(req, stream=True)
+    except httpx.HTTPError as exc:
+        await client.aclose()
+        raise HTTPException(502, f"The sites server didn't answer: {exc}") from exc
+    keep = {k: v for k, v in r.headers.items() if k.lower() not in ("content-length", "transfer-encoding", "connection", "content-encoding")}
+
+    async def body():
+        try:
+            async for chunk in r.aiter_bytes():  # decoded: Chroma may gzip, and the Hive compresses again itself
+                yield chunk
+        finally:
+            await r.aclose()
+            await client.aclose()
+    return StreamingResponse(body(), status_code=r.status_code, headers=keep)
+
+
+for _prefix in ("/p", "/d", "/assets", "/vendor/three", "/vendor/pyre", "/api/db", "/api/fn", "/api/a"):
+    app.add_api_route(_prefix + "/{path:path}", _chroma_pass, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+                      include_in_schema=False)
 
 
 @app.get("/drone.py")

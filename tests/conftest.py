@@ -33,5 +33,6 @@ def _own_hive(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _own_models(tmp_path, monkeypatch):
-    from hive import models as models_mod
+    from hive import expert, models as models_mod
+    monkeypatch.setattr(expert, "es_serve_path", lambda: None)  # not whatever engine this machine has built
     monkeypatch.setattr(models_mod, "models", models_mod.Models(tmp_path / "models-isolated"))
