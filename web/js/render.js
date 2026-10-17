@@ -2,7 +2,7 @@
 // Bee chips, an L-shaped step tree, interactive cards and the final answer.
 // The renderer is a pure function of the event list, so saved chats re-render exactly.
 
-import { ICONS, h, logoSVG, toast, uploadFile } from "./shared.js";
+import { ICONS, gatewayBase, getSettings, h, logoSVG, toast, uploadFile } from "./shared.js";
 import { filesCard, modelCard, runCard } from "./labcard.js";
 
 const STEP_TYPES = new Set([
@@ -46,7 +46,7 @@ export function buildModel(events) {
       const item = { kind: "card", id, card: ev, children: [] };
       items.set(id, item);
       place(item, ev.parent);
-    } else if (t === "output" || t === "rush") {
+    } else if (t === "output" || t === "rush" || t === "screen") {
       const item = { kind: t, id: ev.id || `o${auto++}`, ev, children: [] };
       items.set(item.id, item);
       place(item, ev.parent);
@@ -143,6 +143,7 @@ function renderList(list, model, onAction, cardCache, top) {
     }
     if (it.kind === "output") { box.append(renderOutput(it.ev)); continue; }
     if (it.kind === "rush") { box.append(renderRush(it.ev)); continue; }
+    if (it.kind === "screen") { box.append(renderScreen(it.ev)); continue; }
     if (it.kind === "bee" && !isBee(it.bee)) {  // a function, not a Bee: just its work
       if (it.children.length) box.append(renderList(it.children, model, onAction, cardCache, false));
       continue;
@@ -161,6 +162,18 @@ function renderOutput(ev) {
     h("div", { class: "term-head" }, h("b", {}, ev.bee || "Bee"), h("code", {}, `$ ${ev.command || ""}`),
       h("span", { class: "exit" }, `exit ${ev.code ?? "?"}`)),
     h("pre", {}, ev.text || ""));
+}
+
+// What a Bee sees while it uses a website or app for you; Watch live opens its browser (or the phone) to take over.
+function renderScreen(ev) {
+  const src = `${gatewayBase()}/api/apps/shot/${encodeURIComponent(ev.shot)}?token=${encodeURIComponent(getSettings().token || "")}`;
+  const img = h("img", { class: "screen-shot", src, alt: ev.title || "Screen", loading: "lazy" });
+  img.addEventListener("error", () => img.replaceWith(h("div", { class: "hint" }, "Screenshot no longer kept")));
+  img.addEventListener("click", () => window.open(src, "_blank", "noopener"));
+  return h("div", { class: "screen-card" },
+    h("div", { class: "screen-head" }, h("b", {}, ev.title || "Screen"),
+      ev.live ? h("a", { href: ev.live, target: "_blank", rel: "noopener" }, "Watch live") : ""),
+    img);
 }
 
 // Rush: who joined.
@@ -273,6 +286,7 @@ function clarifyCard(c, act) {
       input = h("input", { name: f.name, type: f.input || "text", placeholder: f.placeholder || "", value: f.value ?? "" });
     }
     if (f.required) input.required = true;
+    if (f.secret) { input.type = "password"; input.autocomplete = "off"; input.dataset.secret = "1"; }
     inputs.push(input);
     const long = f.input === "file" || String(f.value ?? "").length > 28
       || (f.options || []).some((o) => String(typeof o === "object" ? o.label : o).length > 28);

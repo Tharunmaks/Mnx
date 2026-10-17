@@ -148,7 +148,28 @@ Grok bot: a name and **its responsibility** (`hive/bees.py`, `hive/bots.py`, the
 user's Bee answers 404, and so do its computer, files, terminal and memory. Two users can each have a Scout.
 Limits: Free 5 Bees, Pro 20 (children included), 4 generations, 12 children per Bee.
 
-## Rush and Peace
+## Bees use any website (and the owner's phone apps)
+
+Ask a Bee to do something in an app and it does it like a person, in its own browser (`hive/apps.py`):
+**"add KitKat in blinkit"**, **"order 2 milk from zepto"**, **"search for running shoes on amazon"**,
+**"book a movie on bookmyshow"**, or any site: **"find cheap flights on skyscanner.co.in"**. Blinkit, Zepto,
+Instamart, Swiggy, Zomato, BigBasket, Amazon, Flipkart, Myntra, JioMart, Nykaa, Meesho, BookMyShow,
+MakeMyTrip, IRCTC, Uber, Ola, Rapido, YouTube, Gmail and WhatsApp are known by name. The Hive's owner can say
+**"… on my phone"** to use the real app on the paired phone (Phone Drone with ADB).
+
+The Bee looks at the screen (its buttons, links, boxes and text), the model picks one step (tap, type, scroll,
+open a page), the Bee does it and looks again until it's done. The chat shows each step and screenshots, and
+**Watch live** opens the Bee's browser so you can take over (a captcha, say). It needs a model running.
+
+- **Logins, OTPs, passwords, API keys, addresses, UPI IDs**: a card with boxes to fill. Secret boxes are password
+  fields; the value goes straight into the website and is never saved, never shown to the model (it only sees
+  `{{otp}}`), never put into a web address and never kept in the chat on your device. The Bee's browser stays
+  signed in, so you rarely log in twice.
+- **Paying**: before anything that spends money, places an order, books or sends, a card shows the total and
+  the payment methods the site offers, with a **Pay ₹45** button. The Bee never presses a pay / place order /
+  book / send button without that OK; this is checked by the Hive, not left to the model, and a total bigger
+  than the one you approved asks again. UPI requests are approved in your UPI app.
+
 
 The chat has a **Rush · Peace** switch at the top (`hive/modes.py`).
 

@@ -170,7 +170,8 @@ class BrowserSession:
           for (const el of document.querySelectorAll(sel)) {
             const r = el.getBoundingClientRect();
             if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.top > innerHeight) continue;
-            const label = (el.innerText || el.value || el.placeholder || el.getAttribute('aria-label') || el.title || '').trim().slice(0, 80);
+            const value = el.type === 'password' ? '' : el.value;  // what's typed in a password box is never read back
+            const label = (el.innerText || value || el.placeholder || el.getAttribute('aria-label') || el.title || '').trim().slice(0, 80);
             out.push({tag: el.tagName.toLowerCase(), type: el.type || null, label,
                       x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)});
             if (out.length >= 150) break;

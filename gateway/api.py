@@ -1864,6 +1864,16 @@ async def _deliver_gpu_output(bee_id: str, rel: str, data: bytes) -> None:
     p.write_bytes(data)
 
 
+@api.get("/apps/shot/{sid}")
+def app_screenshot(sid: str):
+    """A screenshot a Bee took while using a website or app for you (only yours; kept in memory, newest 300)."""
+    from hive.apps import shot_for
+    hit = shot_for(sid, users.who())
+    if not hit:
+        raise HTTPException(404, "That screenshot is gone")
+    return Response(hit[0], media_type=hit[1], headers={"Cache-Control": "private, max-age=86400"})
+
+
 @api.get("/gpu")
 def gpu_status():
     v = gpu.view()

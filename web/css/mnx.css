@@ -814,6 +814,12 @@ dialog.wide-dlg { width: min(640px, calc(100vw - 24px)); }
 .starters button:hover { border-color: var(--honey); }
 .peace-head .greet { color: var(--text); max-width: 460px; }
 
+/* ---------- a Bee using a website or app: what it sees ---------- */
+.screen-card { border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface); padding: 10px; display: flex; flex-direction: column; gap: 8px; max-width: 520px; }
+.screen-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13.5px; }
+.screen-head a { color: var(--honey-2); white-space: nowrap; }
+.screen-shot { width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); cursor: zoom-in; display: block; }
+
 /* ---------- Plans: Free / Pro (Razorpay) ---------- */
 .pro-page { max-width: 760px; }
 .pro-now { font-size: 15px; color: var(--text); margin: 4px 0 14px; }

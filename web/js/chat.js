@@ -157,9 +157,17 @@ function titleFrom(text) {
   return t.length > 42 ? t.slice(0, 40) + "…" : t;
 }
 
+// Answers to secret boxes (passwords, OTPs, keys) go to the Hive once and are never kept in the chat on this device.
+function maskSecrets(turn, ref, values) {
+  const card = turn.events.find((e) => e.id === ref);
+  const secret = new Set(((card && card.fields) || []).filter((f) => f.secret).map((f) => f.name));
+  if (!values || !secret.size) return values;
+  return Object.fromEntries(Object.entries(values).map(([k, v]) => [k, secret.has(k) ? "••••" : v]));
+}
+
 function onAction(turn) {
   return (ref, action, values, label) => {
-    turn.events.push({ task: turn.task, type: "_action", ref, action, label, values });
+    turn.events.push({ task: turn.task, type: "_action", ref, action, label, values: maskSecrets(turn, ref, values) });
     saveChats();
     rerenderTurn(turn);
     const ok = client.send({ type: "action", task: turn.task, ref, action, values: values || {} });

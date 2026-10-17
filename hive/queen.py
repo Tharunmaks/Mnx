@@ -6,7 +6,7 @@ reports that honestly instead of inventing an answer.
 
 from __future__ import annotations
 
-from . import bots, brain, calls, cloud_chat, gpu_pool, modes, plans
+from . import apps, bots, brain, calls, cloud_chat, gpu_pool, modes, plans
 from .gpu_chat import gpu_chat
 from .bees import registry
 from .core import Task
@@ -30,6 +30,9 @@ async def handle(task: Task) -> None:
         return
     if gpu_pool.parse(task.text):  # "run train.py on the gpu", "gpu status"
         await gpu_chat(task, gpu_pool.parse(task.text))
+        return
+    if apps.parse(task.text):  # "add KitKat in blinkit": a Bee uses the website (or the owner's phone) for you
+        await apps.handle(task, apps.parse(task.text))
         return
     if task.bee and await modes.peace(task):
         return
