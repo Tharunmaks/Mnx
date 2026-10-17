@@ -273,6 +273,9 @@ async def _playwright():
             try:
                 from playwright.async_api import async_playwright
             except ImportError as exc:
+                if os.getenv("TERMUX_VERSION") or "com.termux" in os.getenv("PREFIX", ""):
+                    raise BrowserError("a phone can't run a Bee's website browser. Say “open blinkit on my phone and add drinks to the cart” "
+                                       "to use the real app (Phone Drone), or run the Hive on a computer") from exc
                 raise BrowserError("Playwright isn't installed: pip install playwright && playwright install chromium") from exc
             _pw = await async_playwright().start()
         return _pw
