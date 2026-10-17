@@ -209,18 +209,41 @@ class BrowserSession:
     async def _elements(self) -> list[dict]:
         """Visible clickable / typeable elements with their centre point — what a Bee 'sees'."""
         return await self.page.evaluate("""() => {
-          const sel = 'a,button,input,textarea,select,[role=button],[role=link],[onclick],[contenteditable=true]';
-          const out = [];
-          for (const el of document.querySelectorAll(sel)) {
+          const sel = 'a,button,input,textarea,select,summary,[role=button],[role=link],[role=option],[role=menuitem],[role=tab],[onclick],[contenteditable=true]';
+          const items = [], seen = new Set();
+          const add = (el) => {
+            if (seen.has(el)) return;
             const r = el.getBoundingClientRect();
-            if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.top > innerHeight) continue;
+            if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) return;
+            seen.add(el);
             const value = el.type === 'password' ? '' : el.value;  // what's typed in a password box is never read back
-            const label = (el.innerText || value || el.placeholder || el.getAttribute('aria-label') || el.title || '').trim().slice(0, 80);
-            out.push({tag: el.tagName.toLowerCase(), type: el.type || null, label,
-                      x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)});
-            if (out.length >= 150) break;
+            let label;
+            if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && !/^(button|submit|reset)$/.test(el.type)) {
+              // a box keeps its own name (placeholder), and shows what's typed in it after an "=", so it can still be recognised once filled
+              const name = (el.placeholder || el.getAttribute('aria-label') || el.title || el.name || '').trim();
+              label = name + (value ? (name ? ' = ' : '') + value : '');
+            } else {
+              label = (el.innerText || value || el.getAttribute('aria-label') || el.title || '').trim();
+            }
+            label = label.replace(/\\s+/g, ' ').trim().slice(0, 80);
+            items.push({el, tag: el.tagName.toLowerCase(), type: el.type || null, label,
+                        x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)});
+          };
+          const done = () => {            // in the order they are on the page, so "the button after this box" means something
+            items.sort((a, b) => (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+            return items.map(({el, ...rest}) => rest);
+          };
+          for (const el of document.querySelectorAll(sel)) { add(el); if (items.length >= 150) return done(); }
+          // Apps built with React or Vue make buttons out of plain divs and spans (no role, no onclick attribute): they show a hand cursor.
+          const hand = (el) => getComputedStyle(el).cursor === 'pointer';
+          for (const el of document.body.querySelectorAll('div,span,li,p,label,img,svg')) {
+            if (items.length >= 150) break;
+            if (seen.has(el) || !hand(el)) continue;
+            const text = (el.innerText || el.getAttribute('aria-label') || '').trim();
+            const top = !el.parentElement || !hand(el.parentElement);                // the element that carries the click
+            if ((top && text.length <= 80) || (text && text.length <= 24 && !el.querySelector(sel))) add(el);
           }
-          return out;
+          return done();
         }""")
 
     async def _close(self) -> None:

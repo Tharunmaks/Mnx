@@ -5,7 +5,7 @@ which answers with web research when the question needs today's facts (hive/resp
 
 from __future__ import annotations
 
-from . import apps, bots, brain, calls, cloud_chat, expert, games, gpu_pool, models3d, modes, plans, respond, sites
+from . import apps, bots, brain, calls, cloud_chat, connections, expert, games, gpu_pool, models3d, modes, plans, respond, sites
 from .gpu_chat import gpu_chat
 from .bees import registry
 from .core import Task
@@ -47,6 +47,9 @@ async def _handle(task: Task) -> None:
         return
     if sites.parse(task.text):  # "build a website for my bakery": a Bee writes it, Chroma runs it, the files sit in its Vortex OS
         await sites.handle(task, sites.parse(task.text))
+        return
+    if connections.parse(task.text):  # "connect blinkit", "is blinkit ready?": set up the delivery place and sign-in, or say what's missing
+        await connections.handle(task, connections.parse(task.text))
         return
     if apps.parse(task.text):  # "add KitKat in blinkit": a Bee uses the website (or the owner's phone) for you
         await apps.handle(task, apps.parse(task.text))

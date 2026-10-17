@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d0f">
+  <title>Apps · Mnx Hive</title>
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/mnx.css">
+  <link rel="stylesheet" href="css/polish.css">
+</head>
+<body>
+<div class="app">
+  <main class="main">
+    <header class="topbar">
+      <a class="icon-btn" href="index.html" aria-label="Back to chat"><span data-icon="back"></span></a>
+      <h1>Apps</h1>
+      <span class="conn" id="conn"><i></i><span>Connecting</span></span>
+    </header>
+    <div class="scroll">
+      <div class="page">
+        <section class="page-hero fade-in">
+          <span class="eyebrow">Shopping, food and more</span>
+          <h2>Let your Bees <em>shop for you</em>.</h2>
+          <p>Blinkit, Zepto, Instamart and the rest need to know where to deliver before they show anything. Connect one here once:
+            the Bee asks you in the chat, then “add KitKat in blinkit” just works.</p>
+          <div class="chiprow" id="verdict"></div>
+        </section>
+
+        <div class="section-title"><h2>What a Bee needs</h2><span class="hint">to shop on its own</span></div>
+        <div class="checks" id="checks"></div>
+
+        <div class="section-title"><h2>Delivery apps</h2><span class="hint">tap Connect to set one up in the chat</span></div>
+        <div class="app-grid" id="apps"></div>
+
+        <p class="hint" style="margin-top:22px">Your phone number and OTP are typed straight into the app's own site by your Bee. They aren't saved, shown to any
+          AI model or kept in the chat. Only “set up, delivers to …” is remembered. Paying always waits for your OK.</p>
+      </div>
+    </div>
+  </main>
+</div>
+<script type="module">
+import { api, connLabel, fillIcons, h, installTokenPrompt, toast } from "./js/shared.js";
+
+const $ = (id) => document.getElementById(id);
+const when = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+const tick = '<svg viewBox="0 0 20 20" width="18" height="18"><path d="M5.5 10.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const cross = '<svg viewBox="0 0 20 20" width="18" height="18"><path d="M6.5 6.5l7 7M13.5 6.5l-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+
+function go(text) { location.href = `index.html?say=${encodeURIComponent(text)}`; }
+
+async function load() {
+  let st;
+  try { st = await api("/api/apps/status"); connLabel($("conn"), "online"); } catch (e) { connLabel($("conn"), "offline"); $("verdict").replaceChildren(h("span", { class: "pill bad" }, h("i"), `Couldn't reach the Hive: ${e.message}`)); return; }
+  const missing = st.checks.filter((c) => !c.ok);
+  $("verdict").replaceChildren(missing.length
+    ? h("span", { class: "pill bad" }, h("i"), `Not ready yet: needs ${missing.map((c) => c.label.replace(/^An? /, (m) => m.toLowerCase())).join(", ")}`)
+    : h("span", { class: "pill ok" }, h("i"), "Ready to shop"));
+  $("checks").replaceChildren(...st.checks.map((c) => h("div", { class: `check ${c.ok ? "ok" : "no"}` },
+    h("span", { class: "ic", html: c.ok ? tick : cross }), h("div", {}, h("b", {}, c.label), h("small", {}, c.detail)))));
+  $("apps").replaceChildren(...st.apps.map((a) => {
+    const connect = h("button", { class: `btn${a.connected ? "" : " primary"}`, type: "button" }, a.connected ? "Change place" : "Connect");
+    connect.addEventListener("click", () => go(`connect ${a.name.toLowerCase()}`));
+    const test = h("button", { class: "btn", type: "button" }, "Check");
+    test.addEventListener("click", () => go(`is ${a.name.toLowerCase()} ready?`));
+    const off = h("button", { class: "btn", type: "button", "aria-label": `Forget ${a.name}` }, "Forget");
+    off.addEventListener("click", async () => { await api(`/api/apps/${a.key}`, { method: "DELETE" }); toast(`${a.name} forgotten`); load(); });
+    return h("div", { class: "app-card" },
+      h("div", { class: "top" }, h("b", {}, a.name), h("span", { class: `pill ${a.connected ? "ok" : ""}` }, a.connected ? h("i") : null, a.connected ? "Set up" : "Not set up")),
+      h("small", {}, a.connected ? `${a.location ? `Delivers to ${a.location}` : "Ready"}${a.signed_in ? " · signed in" : ""} · ${when(a.at)}` : "Needs a delivery place before it shows products."),
+      h("div", { class: "row" }, connect, a.connected ? test : null, a.connected ? off : null));
+  }));
+}
+fillIcons();
+installTokenPrompt(load);
+load();
+</script>
+</body>
+</html>

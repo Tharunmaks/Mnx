@@ -48,6 +48,7 @@ For the Browser Bee, install Chromium once: `playwright install --with-deps chro
 | `/lab.html` | Cloud Bee · Model Lab: train models (here or on SSH servers), live charts, model registry, run models as APIs, try them |
 | `/browser.html` | Browser Bee: watch and drive the Hive's own Chromium (click on the picture, type, scroll, read the page) |
 | `/phone.html` | Phone Drone: live phone screen (tap, swipe, long-press, type), open apps, read the screen, device controls, notifications and SMS |
+| `/apps.html` | Apps: Blinkit and other delivery apps, what each needs, and a checklist of what a Bee needs to shop |
 | `/studio.html` | Mnx Studio: a Blender-style 3D editor for your Bees' models (`~/models`), with "tell the Bee" edits |
 | `/sandbox.html` | Sandbox: everything your Bees made (games, sites, 3D models), run in a locked-down frame |
 | `/dev/gallery.html` | Every card and step type with placeholder data, to check the design without a model |
@@ -290,6 +291,32 @@ running, your message is split between the Bees by their responsibilities and th
 answer; a message none of them is responsible for is answered directly.
 - **"everyone run pip install numpy"**: the same command on every Bee's computer (8 at a time), after a confirmation.
 - **"roll call"**: each Bee reports in.
+
+## Connected apps: getting Blinkit ready
+
+Blinkit, Zepto, Instamart, BigBasket, Swiggy, Zomato, JioMart and the other delivery apps show nothing until they know
+where to deliver. So a Bee now checks first, and asks you for what's missing, in the chat:
+
+- **"connect blinkit"** (or "add KitKat in blinkit", which does the same check first): the Bee opens the site in its own
+  browser, asks for your **area or pincode** in a box, picks the right suggestion, and offers to **sign you in** (your phone
+  number, then the **OTP** in a secret box). Say "later, at checkout" to skip the sign-in.
+- **"is blinkit ready?"** checks and says what's wrong, with a screenshot.
+- **"disconnect blinkit"** forgets that it was set up.
+- **Apps** in the left menu (`/apps.html`) lists every app with its status, and a checklist of what a Bee needs to shop on its
+  own: a Bee, a browser (Chromium), an AI model and a delivery place, each with what to do if it's missing.
+
+The setup itself needs no AI model: the Bee reads the page's boxes and buttons and fills them. Your phone number and OTP go
+straight into the site; they are never saved, shown to a model or kept in the chat. Only "set up, delivers to …, when" is
+remembered (`data/connections.json`).
+
+What it can't do for you, and says so instead of looping: a site that refuses the browser (a captcha or "access denied",
+common from a data-centre address; run the Hive from a home connection or use Watch live), or a machine with no Chromium
+(Blinkit is a modern web app and doesn't work as plain text).
+
+To make this work on modern sites, the Bee's browser now sees buttons that are plain clickable `div`s (React and Vue apps),
+lists elements in page order, and keeps a box's own name (placeholder) after something is typed in it. Code:
+`hive/connections.py`, `web/apps.html`; tests in `tests/test_connections.py` run the real flow in Chromium against a stand-in
+site built the same way.
 
 ## Plans: Free and Pro (Razorpay)
 

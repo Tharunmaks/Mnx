@@ -169,3 +169,18 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--h
   .tier { padding: 22px; } .tier .amount b { font-size: 44px; }
   .subnav { top: 54px; margin-inline: -16px; padding-inline: 16px; }
 }
+
+/* ----- Apps page ----- */
+.checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.check { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--grad-card), var(--surface); box-shadow: var(--shadow-1); }
+.check .ic { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; }
+.check.ok .ic { color: var(--ok); background: rgba(62, 207, 142, .14); }
+.check.no .ic { color: var(--failed); background: rgba(255, 93, 93, .13); }
+.check b { display: block; font-size: 14px; } .check small { display: block; color: var(--text-2); font-size: 12.5px; margin-top: 3px; line-height: 1.4; }
+.check.no { border-color: rgba(255, 93, 93, .3); }
+.app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.app-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--grad-card), var(--surface); box-shadow: var(--shadow-1); transition: transform .2s var(--ease), border-color .2s; }
+.app-card:hover { transform: translateY(-2px); border-color: var(--line); }
+.app-card .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.app-card .top b { font-size: 16px; } .app-card small { color: var(--text-2); font-size: 12.5px; min-height: 2.6em; }
+.app-card .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 4px; } .app-card .btn { padding: 6px 12px; font-size: 13px; }

@@ -654,6 +654,27 @@ def _pick_bee(task: Task) -> dict | None:
     return next((b for b in mine if words.search(b["skill"]) or words.search(b["name"])), mine[0] if mine else None)
 
 
+async def open_web(task: Task, b: dict, url: str, where: str, name: str, step=None):
+    """The Bee's own Chromium on `url`; with no Chromium on this machine (a phone), its text-mode browser instead.
+    Returns (surface, "where to watch it live", the current step)."""
+    from .browser import BrowserError
+    from .cells import cells
+    from .reader import ReaderSurface
+    cell = cells.get(b["id"], b["name"], b["computer"])
+    surface, live = WebSurface(cell.browser), f"browser.html?bee={b['id']}"
+    try:
+        await surface.open(url)
+    except BrowserError as exc:
+        if "couldn't start" not in str(exc):
+            raise
+        if step is not None:
+            await task.finish_step(step, status="done", text="No full browser on this machine: reading it in text mode")
+        step = await task.step("opening", f"Opening {where} in {b['name']}'s text-mode browser", bee=name)
+        surface, live = ReaderSurface(), None
+        await surface.open(url)
+    return surface, live, step
+
+
 async def handle(task: Task, intent: dict) -> None:
     from .cells import cells
     from . import phone as phone_mod
@@ -676,20 +697,7 @@ async def handle(task: Task, intent: dict) -> None:
             surface, live = PhoneSurface(p), "phone.html"
             await surface.open(package)
         else:
-            from .browser import BrowserError
-            from .reader import ReaderSurface
-            cell = cells.get(b["id"], b["name"], b["computer"])
-            surface, live = WebSurface(cell.browser), f"browser.html?bee={b['id']}"
-            try:
-                await surface.open(start_url(intent))
-            except BrowserError as exc:
-                if "couldn't start" not in str(exc):
-                    raise
-                # no Chromium on this machine (a phone): the Bee reads the web in text mode instead
-                await task.finish_step(s, status="done", text="No full browser on this machine: reading it in text mode")
-                s = await task.step("opening", f"Opening {where} in {b['name']}'s text-mode browser", bee=name)
-                surface, live = ReaderSurface(), None
-                await surface.open(start_url(intent))
+            surface, live, s = await open_web(task, b, start_url(intent), where, name, s)
     except Exception as exc:
         from .reader import explain_browser
         why = explain_browser(str(exc))
@@ -697,6 +705,15 @@ async def handle(task: Task, intent: dict) -> None:
         await task.answer(f"I couldn't open {where}: {why}.")
         return
     await task.finish_step(s)
+    if not use_phone and intent.get("app"):                    # Blinkit and the like: a delivery place first (and a sign-in, if you want)
+        from . import connections
+        if intent["app"] in connections.SETUP:
+            if not await connections.ensure_ready(task, surface, intent["app"], name, live, b["id"]):
+                return
+            try:
+                await surface.open(start_url(intent))          # back to the search for what was asked
+            except Exception:
+                pass
     if not brain.is_connected():  # no model: say what's on the page and let the user take it from there
         img, mime = await surface.shot()
         sid = _shot_id(task.user, img, mime)

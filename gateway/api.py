@@ -2464,6 +2464,21 @@ async def studio_view(bee_id: str, name: str):
     return {"url": d["url"]}
 
 
+@api.get("/apps/status")
+def apps_status():
+    """The Apps page: what Blinkit and the other delivery apps need (a Bee, a browser, a model, a delivery place) and what's set up."""
+    from hive import connections
+    return connections.status(users.who(), registry.of(users.who()))
+
+
+@api.delete("/apps/{key}")
+def apps_forget(key: str):
+    from hive import connections
+    if key not in connections.SETUP:
+        raise HTTPException(404, "Not an app that has a connection")
+    return {"forgot": connections.forget(users.who(), key)}
+
+
 @api.get("/sandbox")
 def sandbox_list():
     """What your Bees made (games, websites, 3D models), newest first, each on its private link."""

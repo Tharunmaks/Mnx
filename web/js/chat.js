@@ -77,8 +77,16 @@ const client = new HiveClient();
 
 client.addEventListener("state", (e) => {
   connLabel($("conn"), e.detail);
-  if (e.detail === "online") { loadTools(); loadBees(); }
+  if (e.detail === "online") { loadTools(); loadBees(); sayFromLink(); }
 });
+
+// index.html?say=connect%20blinkit (from the Apps page): send that message once, as if typed
+function sayFromLink() {
+  const say = new URLSearchParams(location.search).get("say");
+  if (!say) return;
+  history.replaceState(null, "", location.pathname);
+  setTimeout(() => send(say), 400);
+}
 installTokenPrompt(() => client.reconnectNow());
 
 client.addEventListener("event", (e) => {
