@@ -300,6 +300,7 @@ where to deliver. So a Bee now checks first, and asks you for what's missing, in
 - **"connect blinkit"** (or "add KitKat in blinkit", which does the same check first): the Bee opens the site in its own
   browser, asks for your **area or pincode** in a box, picks the right suggestion, and offers to **sign you in** (your phone
   number, then the **OTP** in a secret box). Say "later, at checkout" to skip the sign-in.
+- **"connect all"** goes through Blinkit, Zepto, Instamart, BigBasket, Swiggy, Amazon, Flipkart, Meesho and Myntra one by one (each skippable); any of the ~100 known apps can be connected by name ("connect spotify").
 - **"is blinkit ready?"** checks and says what's wrong, with a screenshot.
 - **"disconnect blinkit"** forgets that it was set up.
 - **Apps** in the left menu (`/apps.html`) lists every app with its status, and a checklist of what a Bee needs to shop on its

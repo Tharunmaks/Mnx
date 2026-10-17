@@ -55,7 +55,7 @@ APPS = {
     "nykaa": {"name": "Nykaa", "web": "https://www.nykaa.com", "search": "https://www.nykaa.com/search/result/?q={q}",
               "package": "com.fsn.nykaa", "words": ["nykaa"]},
     "meesho": {"name": "Meesho", "web": "https://www.meesho.com", "search": "https://www.meesho.com/search?q={q}",
-               "package": "com.meesho.supply", "words": ["meesho"]},
+               "package": "com.meesho.supply", "words": ["meesho", "mesho"]},
     "bookmyshow": {"name": "BookMyShow", "web": "https://in.bookmyshow.com", "search": None, "package": "com.bt.bms",
                    "words": ["bookmyshow", "book my show", "bms"]},
     "makemytrip": {"name": "MakeMyTrip", "web": "https://www.makemytrip.com", "search": None, "package": "com.makemytrip",

@@ -2474,8 +2474,9 @@ def apps_status():
 @api.delete("/apps/{key}")
 def apps_forget(key: str):
     from hive import connections
-    if key not in connections.SETUP:
-        raise HTTPException(404, "Not an app that has a connection")
+    from hive.apps import APPS
+    if key not in APPS:
+        raise HTTPException(404, "Not a known app")
     return {"forgot": connections.forget(users.who(), key)}
 
 

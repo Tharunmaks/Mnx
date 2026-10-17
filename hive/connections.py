@@ -33,7 +33,8 @@ FILE = ROOT / "data" / "connections.json"
 # Apps that show nothing (or can't be ordered from) until a delivery place is set.
 SETUP = ("blinkit", "zepto", "instamart", "bigbasket", "jiomart", "swiggy", "zomato", "dmart", "licious", "countrydelight",
          "dominos", "pizzahut", "kfc", "mcdonalds")
-FIRST = ("blinkit", "zepto", "instamart", "bigbasket", "swiggy", "zomato", "jiomart")   # shown first on the Apps page
+POPULAR = ("blinkit", "zepto", "instamart", "bigbasket", "swiggy", "amazon", "flipkart", "meesho", "myntra")   # "connect all" does these
+FIRST = POPULAR + ("zomato", "jiomart", "nykaa", "ajio", "dmart")   # shown first on the Apps page
 
 BLOCKED = re.compile(r"access denied|you don'?t have permission to access|request blocked|unusual traffic|are you a (?:robot|human)|"
                      r"verify you are (?:a )?human|captcha|attention required|error 403|403 forbidden|temporarily blocked|"
@@ -202,14 +203,15 @@ async def _shot(task: Task, surface, bee: str, title: str, live: str | None) -> 
         await task.emit("screen", bee=bee, title=title, shot=sid, live=live)
 
 
-async def ensure_ready(task: Task, surface, key: str, bee: str, live: str | None, bee_id: str = "", interactive: bool = True) -> bool:
+async def ensure_ready(task: Task, surface, key: str, bee: str, live: str | None, bee_id: str = "", interactive: bool = True, notify=None) -> bool:
     """Check the app's page; set the delivery place (and sign in, if you want) when it's asking. False = it can't go on, and why was said."""
     from .apps import APPS
     from .cloud_chat import ask
     app = APPS[key]
+    say = notify or task.answer
     name = app["name"]
     if getattr(surface, "kind", "") != "web" or type(surface).__name__ == "ReaderSurface":
-        await task.answer(f"{name} is a modern web app that only works in a full browser (Chromium), and this machine has none (the Bee "
+        await say(f"{name} is a modern web app that only works in a full browser (Chromium), and this machine has none (the Bee "
                           f"can only read it as plain text). Install it with `playwright install --with-deps chromium`, or run the Hive "
                           f"on a computer that has it. Until then {name} can't be used from here.")
         return False
@@ -223,11 +225,11 @@ async def ensure_ready(task: Task, surface, key: str, bee: str, live: str | None
                                     "blocked": "blocked by the site", "empty": "the page didn't draw"}[state])
     if state in ADVICE:
         await _shot(task, surface, bee, f"{name} didn't open properly", live)
-        await task.answer(f"{name} isn't ready: {ADVICE[state]}" + (" Open Watch live to look." if live else ""))
+        await say(f"{name} isn't ready: {ADVICE[state]}" + (" Open Watch live to look." if live else ""))
         return False
     if state == "location":
         if not interactive:
-            await task.answer(f"{name} needs a delivery place. Say “connect {name.lower()}” and tell the Bee where to deliver.")
+            await say(f"{name} needs a delivery place. Say “connect {name.lower()}” and tell the Bee where to deliver.")
             return False
         for attempt in range(2):
             await _shot(task, surface, bee, f"{name} is asking where to deliver", live)
@@ -238,7 +240,7 @@ async def ensure_ready(task: Task, surface, key: str, bee: str, live: str | None
                               actions=[{"id": "go", "label": "Set location"}, {"id": "stop", "label": "Not now", "style": "danger"}])
             place = str((reply.get("values") or {}).get("place") or "").strip()
             if reply["action"] != "go" or not place:
-                await task.answer(f"Okay. {name} still needs a delivery place before it can show anything.")
+                await say(f"Okay. {name} still needs a delivery place before it can show anything.")
                 return False
             s = await task.step("running", f"Setting {name}'s delivery place", bee=bee)
             result = await set_location(surface, place)
@@ -250,7 +252,7 @@ async def ensure_ready(task: Task, surface, key: str, bee: str, live: str | None
                 break
         else:
             await _shot(task, surface, bee, f"{name} still asks for the place", live)
-            await task.answer(f"I couldn't set the delivery place on {name}. Open Watch live to pick it yourself, then say “add … in {name.lower()}” again.")
+            await say(f"I couldn't set the delivery place on {name}. Open Watch live to pick it yourself, then say “add … in {name.lower()}” again.")
             return False
     if state == "signed_out" and interactive and not get(task.user).get(key, {}).get("skip_login"):
         reply = await ask(task, "confirm", title=f"Sign in to {name}?", service=name, ask_anyway=True,
@@ -293,8 +295,9 @@ async def ensure_ready(task: Task, surface, key: str, bee: str, live: str | None
 # ---------------------------------------------------------------- the chat: "connect blinkit"
 def _app_key(text: str) -> str | None:
     from .apps import _app_in
+    from .apps import APPS
     k = _app_in(text)
-    return k if k in SETUP else None
+    return k if k in APPS else None
 
 
 CONNECT = re.compile(r"\b(?:connect|set\s*up|setup|link|sign\s*in\s+to|log\s*in\s+to|login\s+to|set\s+(?:my\s+)?(?:delivery\s+)?(?:location|address)|"
@@ -302,11 +305,14 @@ CONNECT = re.compile(r"\b(?:connect|set\s*up|setup|link|sign\s*in\s+to|log\s*in\
 STATUS = re.compile(r"\b(?:is|are)\s+(?:\w+\s+){0,3}(?:ready|connected|working|set\s*up)\b|\bstatus\b|\b(?:check|test)\s+(?:the\s+)?(?:\w+\s+)?connection\b|"
                     r"\bconnection\s+(?:status|ready)\b", re.I)
 SHOP = re.compile(r"\b(?:add|put|order|buy|purchase|search|find|look\s+up|get\s+me|remove|reorder|track|cancel)\b", re.I)
+ALL = re.compile(r"\bconnect\s+(?:all|everything|my\s+apps|all\s+(?:my\s+|the\s+)?apps|them\s+all)\b|\bset\s*up\s+(?:all|everything|my\s+apps)\b", re.I)
 DISCONNECT = re.compile(r"\b(?:disconnect|unlink|forget|remove\s+(?:my\s+)?(?:connection|account|login))\b", re.I)
 
 
 def parse(text: str) -> dict | None:
     t = " ".join((text or "").split())
+    if ALL.search(t):
+        return {"app": None, "action": "connect_all"}
     key = _app_key(t)
     if not key:
         return None
@@ -321,8 +327,46 @@ def parse(text: str) -> dict | None:
     return None
 
 
+async def connect_all(task: Task) -> None:
+    """One go through the popular apps: each opens in the Bee's browser and asks for what it needs (place, sign-in), all skippable."""
+    from . import apps
+    from .reader import explain_browser
+    b = apps._pick_bee(task)
+    if not b:
+        await task.answer("A Bee does this in its own browser. Make one first (New Bee in Peace, or “make a bee called Shopper that orders my "
+                          "groceries”), then say “connect all”.")
+        return
+    done, notes = [], []
+
+    async def note(text: str) -> None:
+        notes.append(text)
+    for key in POPULAR:
+        name = apps.APPS[key]["name"]
+        s = await task.step("opening", f"Opening {name} in {b['name']}'s browser", bee=b["name"])
+        try:
+            surface, live, s = await apps.open_web(task, b, apps.APPS[key]["web"], name, b["name"], s)
+        except Exception as exc:
+            await task.finish_step(s, status="error", text=explain_browser(str(exc))[:160])
+            notes.append(f"{name}: couldn't open it ({explain_browser(str(exc))})")
+            continue
+        await task.finish_step(s)
+        before = len(notes)
+        if await ensure_ready(task, surface, key, b["name"], live, b["id"], interactive=True, notify=note):
+            rec = get(task.user).get(key, {})
+            done.append(name + (f" (delivers to {rec['location']})" if rec.get("location") else "") + (", signed in" if rec.get("signed_in") else ""))
+        elif len(notes) == before:
+            notes.append(f"{name}: skipped")
+    lines = (["**Connected:** " + "; ".join(done)] if done else []) + (["**Not connected:**\n" + "\n".join(f"- {n}" for n in notes)] if notes else [])
+    await task.emit("result", bee=b["name"], service="Apps", title=f"{len(done)} of {len(POPULAR)} apps connected", badge="Connected" if done else "Report",
+                    details=[["Connected", ", ".join(d.split(" (")[0] for d in done) or "none"]] + [["Not connected", n[:140]] for n in notes[:6]])
+    await task.answer("\n\n".join(lines) or "Nothing was connected.")
+
+
 async def handle(task: Task, intent: dict) -> None:
     from . import apps
+    if intent["action"] == "connect_all":
+        await connect_all(task)
+        return
     key, action = intent["app"], intent["action"]
     name = apps.APPS[key]["name"]
     if action == "disconnect":
@@ -361,12 +405,12 @@ def status(uid: str, bees: list[dict]) -> dict:
     from .apps import APPS
     from .browser import find_chromium
     have = get(uid)
-    order = [k for k in FIRST if k in APPS] + [k for k in SETUP if k not in FIRST and k in APPS]
+    order = [k for k in FIRST if k in APPS] + sorted((k for k in APPS if k not in FIRST), key=lambda k: APPS[k]["name"].lower())
     apps = []
     for key in order:
         rec = have.get(key) or {}
         apps.append({"key": key, "name": APPS[key]["name"], "web": APPS[key]["web"], "connected": bool(rec), "location": rec.get("location") or "",
-                     "signed_in": bool(rec.get("signed_in")), "at": rec.get("at") or 0, "bee": rec.get("bee") or ""})
+                     "signed_in": bool(rec.get("signed_in")), "at": rec.get("at") or 0, "bee": rec.get("bee") or "", "popular": key in FIRST})
     chrome = find_chromium()
     return {"checks": [
         {"id": "bee", "ok": bool(bees), "label": "A Bee", "detail": bees[0]["name"] if bees else "Make a Bee first: it does the shopping in its own browser."},

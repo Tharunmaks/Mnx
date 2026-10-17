@@ -33,8 +33,12 @@
         <div class="section-title"><h2>What a Bee needs</h2><span class="hint">to shop on its own</span></div>
         <div class="checks" id="checks"></div>
 
-        <div class="section-title"><h2>Delivery apps</h2><span class="hint">tap Connect to set one up in the chat</span></div>
+        <div class="section-title"><h2>Popular</h2><button class="btn primary" id="all" type="button">Connect all</button></div>
         <div class="app-grid" id="apps"></div>
+
+        <div class="section-title"><h2>More apps and websites</h2>
+          <input id="find" type="search" placeholder="Find an app…" style="max-width:240px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px;color:var(--text)"></div>
+        <div class="app-grid" id="more"></div>
 
         <p class="hint" style="margin-top:22px">Your phone number and OTP are typed straight into the app's own site by your Bee. They aren't saved, shown to any
           AI model or kept in the chat. Only “set up, delivers to …” is remembered. Paying always waits for your OK.</p>
@@ -61,7 +65,7 @@ async function load() {
     : h("span", { class: "pill ok" }, h("i"), "Ready to shop"));
   $("checks").replaceChildren(...st.checks.map((c) => h("div", { class: `check ${c.ok ? "ok" : "no"}` },
     h("span", { class: "ic", html: c.ok ? tick : cross }), h("div", {}, h("b", {}, c.label), h("small", {}, c.detail)))));
-  $("apps").replaceChildren(...st.apps.map((a) => {
+  const card = (a) => {
     const connect = h("button", { class: `btn${a.connected ? "" : " primary"}`, type: "button" }, a.connected ? "Change place" : "Connect");
     connect.addEventListener("click", () => go(`connect ${a.name.toLowerCase()}`));
     const test = h("button", { class: "btn", type: "button" }, "Check");
@@ -70,10 +74,15 @@ async function load() {
     off.addEventListener("click", async () => { await api(`/api/apps/${a.key}`, { method: "DELETE" }); toast(`${a.name} forgotten`); load(); });
     return h("div", { class: "app-card" },
       h("div", { class: "top" }, h("b", {}, a.name), h("span", { class: `pill ${a.connected ? "ok" : ""}` }, a.connected ? h("i") : null, a.connected ? "Set up" : "Not set up")),
-      h("small", {}, a.connected ? `${a.location ? `Delivers to ${a.location}` : "Ready"}${a.signed_in ? " · signed in" : ""} · ${when(a.at)}` : "Needs a delivery place before it shows products."),
+      h("small", {}, a.connected ? `${a.location ? `Delivers to ${a.location}` : "Ready"}${a.signed_in ? " · signed in" : ""} · ${when(a.at)}` : "Opens in your Bee's browser; sign in once and it stays signed in."),
       h("div", { class: "row" }, connect, a.connected ? test : null, a.connected ? off : null));
-  }));
+  };
+  $("apps").replaceChildren(...st.apps.filter((a) => a.popular).map(card));
+  const rest = st.apps.filter((a) => !a.popular);
+  const draw = () => { const q = $("find").value.trim().toLowerCase(); $("more").replaceChildren(...rest.filter((a) => !q || a.name.toLowerCase().includes(q)).map(card)); };
+  $("find").oninput = draw; draw();
 }
+$("all").addEventListener("click", () => go("connect all"));
 fillIcons();
 installTokenPrompt(load);
 load();

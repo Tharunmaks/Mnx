@@ -329,3 +329,61 @@ def test_each_person_sees_only_their_own_connections(client):
     assert client.delete("/api/apps/blinkit", headers=a).json() == {"forgot": True}
     assert client.get("/api/apps/status", headers={"Authorization": "Bearer nope"}).status_code == 401
     assert client.get("/apps.html").status_code == 200
+
+
+# ---------------------------------------------------------------- "connect all"
+@pytest.mark.parametrize("text,app", [("connect amazon", "amazon"), ("connect flipkart", "flipkart"), ("sign in to myntra", "myntra"),
+                                      ("connect mesho", "meesho"), ("connect swiggy", "swiggy"), ("connect instamart", "instamart"),
+                                      ("connect bigbasket", "bigbasket"), ("connect zepto", "zepto"), ("connect spotify", "spotify")])
+def test_every_known_app_can_be_connected(text, app):
+    assert connections.parse(text) == {"app": app, "action": "connect"}
+    assert connections.parse("connect all my apps") == {"app": None, "action": "connect_all"}
+
+
+def test_connect_all_goes_through_the_popular_apps_and_reports_each(tmp_path, monkeypatch):
+    from hive import bees, cells as cells_mod
+    monkeypatch.setattr(connections, "FILE", tmp_path / "c.json")
+    monkeypatch.setattr(cells_mod, "CELLS", tmp_path / "cells")
+    monkeypatch.setattr(cells_mod.cells, "cells", {})
+    monkeypatch.setattr(cells_mod.cells, "mode", "local")
+    r = bees.Registry(tmp_path / "hive.json", tmp_path / "keys.json")
+
+    async def nothing(*a):
+        return None
+    r.on_created = r.on_deleted = r.on_computer = nothing
+    monkeypatch.setattr(bees, "registry", r)
+    opened = []
+
+    async def open_web(task, b, url, where, name, step=None):
+        opened.append(where)
+        if where == "Zepto":
+            raise RuntimeError("net::ERR_NAME_NOT_RESOLVED")
+        return apps.WebSurface(None), "browser.html?bee=shopper", step
+
+    async def ensure(task, surface, key, bee, live, bee_id="", interactive=True, notify=None):
+        if key == "swiggy":
+            await notify("Swiggy isn't ready: The site refused this browser.")
+            return False
+        if key == "blinkit":
+            connections.mark(task.user, key, bee=bee_id, location="Anna Nagar", signed_in=True)
+        else:
+            connections.mark(task.user, key, bee=bee_id, signed_in=False)
+        return True
+    monkeypatch.setattr(apps, "open_web", open_web)
+    monkeypatch.setattr(connections, "ensure_ready", ensure)
+    events = []
+
+    async def emit(ev):
+        events.append(ev)
+
+    async def go():
+        await r.create("Shopper", "orders my groceries", owner="u_shopper00001")
+        t = Task("t1", "c1", "connect all", emit, user="u_shopper00001")
+        await connections.handle(t, connections.parse("connect all"))
+    run(go())
+    assert opened == [apps.APPS[k]["name"] for k in connections.POPULAR]                  # every one was tried, one failing didn't stop the rest
+    answer = [e["text"] for e in events if e["type"] == "answer"][-1]
+    assert "Blinkit (delivers to Anna Nagar), signed in" in answer and "Amazon" in answer and "Myntra" in answer
+    assert "Swiggy isn't ready" in answer and "Zepto: couldn't open it" in answer
+    card = next(e for e in events if e["type"] == "result")
+    assert card["title"] == "7 of 9 apps connected"
