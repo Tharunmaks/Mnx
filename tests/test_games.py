@@ -333,3 +333,19 @@ def test_the_phone_runs_the_model_on_its_fast_cores_only(monkeypatch):
 
 def test_the_game_prompt_is_short_and_asks_only_for_the_game_code():
     assert len(games.SPEC) < 2200 and "ONE ```js code block" in games.SPEC and "<!doctype" not in games.SPEC
+
+
+def test_speed_flags_are_only_the_ones_this_llama_server_has(tmp_path, monkeypatch):
+    from hive import models
+    monkeypatch.delenv("MNX_SPEED", raising=False)
+
+    def fake(name, text):
+        f = tmp_path / name
+        f.write_text(f"#!/bin/sh\necho '{text}'\n")
+        f.chmod(0o755)
+        return str(f)
+    assert models.speed_flags(fake("new", "--parallel N\n-fa, --flash-attn [on|off|auto]\n--cache-type-k T")) == \
+        ["--parallel", "1", "--flash-attn", "on", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]
+    assert models.speed_flags(fake("old", "--threads N")) == [] and models.speed_flags("/no/such/server") == []
+    monkeypatch.setenv("MNX_SPEED", "off")
+    assert models.speed_flags(fake("off", "--parallel N")) == []

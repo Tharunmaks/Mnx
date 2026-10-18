@@ -65,6 +65,26 @@ selected: contextvars.ContextVar[str | None] = contextvars.ContextVar("mnx_selec
 DRIVE_FOLDER = re.compile(r"(?:folders/|[?&]id=)([A-Za-z0-9_-]{20,})")
 
 
+def speed_flags(exe: str) -> list[str]:
+    """Settings that make llama-server faster for one user, added only if this build of it has them (asked with --help, so a
+    flag it doesn't know can never stop the model starting): one request at a time (no memory split across slots), flash
+    attention, and a smaller memory for the conversation so less is read for every word."""
+    import subprocess
+    try:
+        h = subprocess.run([exe, "--help"], capture_output=True, text=True, timeout=20)
+        h = h.stdout + h.stderr
+    except (OSError, subprocess.SubprocessError):
+        return []
+    out = []
+    if "--parallel" in h:
+        out += ["--parallel", "1"]
+    if "--flash-attn" in h:
+        out += ["--flash-attn", "on"] if re.search(r"--flash-attn\s+\[on\|off", h) else ["--flash-attn"]
+        if "--cache-type-k" in h:
+            out += ["--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]   # needs flash attention
+    return out if os.getenv("MNX_SPEED", "on").lower() not in ("off", "0", "no") else []
+
+
 def threads_for() -> str:
     """Threads for the model server. All cores is slower on a phone: its small efficiency cores make every step wait for the
     slowest thread, so a phone gets 4 (its fast cores). MNX_THREADS overrides."""
@@ -443,7 +463,7 @@ class Models:
         exe = shutil.which("llama-server") or next((str(p) for p in [Path.home() / "llama.cpp/build/bin/llama-server"] if p.exists()), None)
         threads = threads_for()
         if exe:
-            return [exe, "-m", path, "--host", "127.0.0.1", "--port", str(port), "-c", CTX, "-t", threads]
+            return [exe, "-m", path, "--host", "127.0.0.1", "--port", str(port), "-c", CTX, "-t", threads, *speed_flags(exe)]
         if shutil.which("docker"):
             from .lab import LLAMA_IMAGE
             d = str(Path(path).parent)

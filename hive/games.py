@@ -192,7 +192,7 @@ async def _stream(task: Task, msgs: list[dict], step: str | None, temperature: f
         now = time.monotonic()
         if step and now - last[0] > 3:
             last[0] = now
-            await task.emit("step", id=step, text=f"Writing the game: {written[0]} lines so far ({written[1] / (now - t0):.1f} words a second)")
+            await task.emit("step", id=step, text=f"Writing the game: {written[0]} lines so far ({written[1] / (now - t0):.1f} tokens a second)")
     return await brain.brain.chat(msgs, task.effort, max_tokens=3500, temperature=temperature, on_text=progress)
 
 
