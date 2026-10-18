@@ -30,6 +30,11 @@ PRESETS = [
 ]
 
 
+# Seconds to wait for the model (between streamed pieces when streaming). A small model on a phone can take minutes to read a
+# long prompt before its first word.
+TIMEOUT = float(os.getenv("MNX_MODEL_TIMEOUT", "600"))
+
+
 class BrainNotConnected(RuntimeError):
     pass
 
@@ -113,14 +118,14 @@ class Brain:
         headers = {"Authorization": f"Bearer {key}"} if key else {}
         if guard:
             return await self._stream(base, body, headers, guard)
-        async with httpx.AsyncClient(timeout=180, transport=self.transport) as c:
+        async with httpx.AsyncClient(timeout=TIMEOUT, transport=self.transport) as c:
             r = await c.post(self.endpoint(base), json=body, headers=headers)
         return self._reply(r)
 
     async def _stream(self, base: str, body: dict, headers: dict, guard: "NameGuard") -> str:
         """The OpenAI streaming format (data: {...} lines); a server that answers in one piece works too."""
         parts: list[str] = []
-        async with httpx.AsyncClient(timeout=httpx.Timeout(180, read=180), transport=self.transport) as c:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT, read=TIMEOUT), transport=self.transport) as c:
             async with c.stream("POST", self.endpoint(base), json={**body, "stream": True}, headers=headers) as r:
                 if r.status_code >= 400 or "text/event-stream" not in r.headers.get("content-type", ""):
                     await r.aread()

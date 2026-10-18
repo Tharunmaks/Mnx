@@ -255,3 +255,28 @@ def test_a_small_model_that_refuses_is_asked_once_more_for_just_the_code(hive, m
     game = hive["deployed"][-1][2]
     assert game["index.html"] == games.BASE_HTML and game["game.js"].startswith("// CONTROLS: W go") and "window.__game" in game["game.js"]
     assert "wrote it from scratch" in events[-1]["text"]
+
+
+def test_a_slow_model_that_times_out_is_explained_never_a_blank_error(hive, monkeypatch, tmp_path):
+    def slow(r):
+        raise httpx.ReadTimeout("")
+    b = brain_mod.Brain(tmp_path / "brain.json")
+    b.update({"url": "http://127.0.0.1:11434"})
+    b.transport = httpx.MockTransport(slow)
+    monkeypatch.setattr(brain_mod, "brain", b)
+    answer = [e["text"] for e in _run("make a train game") if e["type"] == "answer"][-1]
+    assert "couldn't make the game: ." not in answer and "too long" in answer and not hive["deployed"]
+
+
+def test_the_game_streams_so_a_slow_phone_model_keeps_going(hive, monkeypatch, tmp_path):
+    b = brain_mod.Brain(tmp_path / "brain.json")
+    b.update({"url": "http://127.0.0.1:11434"})
+    sent = []
+    b.transport = httpx.MockTransport(lambda r: sent.append(json.loads(r.content)) or _sse([TRAIN[:200], TRAIN[200:]]))
+    monkeypatch.setattr(brain_mod, "brain", b)
+
+    async def play(url):
+        return {"ok": None, "errors": [], "shot": b"", "skipped": "no browser"}
+    monkeypatch.setattr(games, "play", play)
+    _run("make a train game")
+    assert sent[0]["stream"] is True and "const train = 1;" in hive["deployed"][-1][2]["game.js"]

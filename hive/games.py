@@ -171,7 +171,7 @@ def name_for(goal: str, styles: list[str]) -> str:
     return (name or "open-world") + "-game" if not name.endswith("game") else name
 
 
-async def write_game(task: Task, goal: str, current: dict, errors: list[str] | None = None) -> dict:
+async def write_game(task: Task, goal: str, current: dict, errors: list[str] | None = None, step: str | None = None) -> dict:
     glbs = [p for p, v in current.items() if isinstance(v, bytes) and p.endswith(".glb")]
     models = ("\n\n3D models the user made for this game (glTF, y up, front faces +z, real size in metres); load them with "
               "GLTFLoader from 'three/addons/loaders/GLTFLoader.js' and use them: " + ", ".join(glbs)) if glbs else ""
@@ -183,18 +183,32 @@ async def write_game(task: Task, goal: str, current: dict, errors: list[str] | N
     else:
         ask = f"Make this game, from scratch: {goal}{models}"
     msgs = [{"role": "system", "content": SPEC}, {"role": "user", "content": ask}]
-    raw = await brain.brain.chat(msgs, task.effort, max_tokens=7000, temperature=0.5)
+    raw = await _stream(task, msgs, step, temperature=0.5)
     files = salvage(raw)
     if not files:   # a small model refused, rambled or lost the format: ask once more, for one file only
         s = await task.step("writing", "Asking the model again, for just the game code")
-        raw = await brain.brain.chat(msgs + [{"role": "assistant", "content": (raw or "")[:1500]}, {"role": "user", "content": AGAIN}],
-                                     task.effort, max_tokens=7000, temperature=0.3)
+        raw = await _stream(task, msgs + [{"role": "assistant", "content": (raw or "")[:1500]}, {"role": "user", "content": AGAIN}],
+                            s, temperature=0.3)
         files = salvage(raw)
         await task.finish_step(s, "done" if files else "failed")
     if not files:
         raise sites.SiteError("the model didn't write the game's code (it answered without a game.js)")
     keep = {p: v for p, v in current.items() if (isinstance(v, bytes) or p in KIT) and p not in files}
     return {**keep, **files}
+
+
+async def _stream(task: Task, msgs: list[dict], step: str | None, temperature: float) -> str:
+    """The model writes the game piece by piece (a slow model on a phone takes minutes, and a streamed answer doesn't time out
+    while it's still writing); the step shows how far it has got."""
+    import time
+    written, last = [0], [0.0]
+
+    async def progress(piece: str) -> None:
+        written[0] += piece.count("\n")
+        if step and time.monotonic() - last[0] > 3:
+            last[0] = time.monotonic()
+            await task.emit("step", id=step, text=f"Writing the game: {written[0]} lines so far")
+    return await brain.brain.chat(msgs, task.effort, max_tokens=7000, temperature=temperature, on_text=progress)
 
 
 AGAIN = """You can make this game: you write code, and the Hive runs it. Don't explain, don't refuse, don't describe steps.
@@ -236,7 +250,15 @@ def salvage(raw: str) -> dict:
 
 def _why(exc: Exception) -> str:
     """The model's error, in words."""
+    import httpx
     msg = str(exc)
+    if isinstance(exc, httpx.TimeoutException) or "timed out" in msg.lower():
+        return ("the model went quiet for too long (no new words for 10 minutes), so I stopped waiting. A model on a phone "
+                "is slow: make sure nothing else heavy is running, or set MNX_MODEL_TIMEOUT higher, or use a faster model")
+    if isinstance(exc, httpx.ConnectError):
+        return "I couldn't reach the model's server (is it still running?)"
+    if not msg.strip():
+        return f"the model's server failed ({type(exc).__name__})"
     if "longer than the context" in msg or "context length" in msg or "exceeds the context" in msg:
         return ("the model's memory (its context window) is too small for a whole game. Restart the Hive so the model starts "
                 "with a bigger window (MNX_CTX, 16384 by default), or pick a bigger model")
@@ -311,7 +333,7 @@ async def handle(task: Task, intent: dict) -> None:
 
     s = await task.step("writing", f"Writing {name} from scratch (three.js)", bee=bee)
     try:
-        files = await write_game(task, goal, files)
+        files = await write_game(task, goal, files, step=s)
     except (sites.SiteError, brain.BrainNotConnected) as exc:
         await task.finish_step(s, status="error", text=_why(exc)[:160])
         await task.answer(f"I couldn't make the game: {_why(exc)}. Nothing was made; ask again and I'll write it from scratch.")
@@ -353,7 +375,7 @@ async def handle(task: Task, intent: dict) -> None:
             break
         s = await task.step("writing", "Fixing what broke", bee=bee)
         try:
-            files = await write_game(task, goal, files, problems)
+            files = await write_game(task, goal, files, problems, step=s)
             await task.finish_step(s)
         except Exception as exc:  # keep the last version rather than swapping in anything else
             await task.finish_step(s, status="error", text=_why(exc)[:160])
