@@ -42,11 +42,15 @@ def test_names_and_the_starter_game():
     assert "/vendor/three/three.module.js" in files["index.html"] and "window.__game" in files["game.js"]
 
 
+LOOP = 'const stage = createStage(document.getElementById("game")); (function f() { stage.render(0.016); requestAnimationFrame(f); })();'
+
 GAME_OUT = """=== FILE: index.html ===
 <!doctype html><script type="importmap">{"imports":{"three":"/vendor/three/three.module.js"}}</script><script type="module" src="game.js"></script>
 === END ===
 === FILE: game.js ===
+import { createStage } from "./gfx.js";
 %s
+""" + LOOP + """
 window.__game = { ready: true };
 === END ==="""
 
@@ -150,6 +154,7 @@ TRAIN = """=== FILE: index.html ===
 // CONTROLS: W speed up, S slow down, Space horn, tap the arrows on phones
 import { createStage } from "./gfx.js";
 const train = 1;
+""" + LOOP + """
 window.__game = { ready: true };
 === END ==="""
 
@@ -229,6 +234,7 @@ import { createStage } from "./gfx.js";
 const stage = createStage(document.getElementById("game"), { time: 9 });
 const train = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 6), new THREE.MeshStandardMaterial({ color: 0xcc2222 }));
 stage.scene.add(train);
+(function f() { stage.render(0.016); requestAnimationFrame(f); })();
 ```
 Have fun!"""
 
@@ -253,7 +259,7 @@ def test_a_small_model_that_refuses_is_asked_once_more_for_just_the_code(hive, m
     events = _run("make a train game")
     assert len(asked) == 2 and "one ```js code block" in asked[1]["messages"][-1]["content"]
     game = hive["deployed"][-1][2]
-    assert game["index.html"] == games.BASE_HTML and game["game.js"].startswith("// CONTROLS: W go") and "window.__game" in game["game.js"]
+    assert game["index.html"] == games.shown({"index.html": games.BASE_HTML})["index.html"] and game["game.js"].startswith("// CONTROLS: W go") and "window.__game" in game["game.js"]
     assert "wrote it from scratch" in events[-1]["text"]
 
 
@@ -280,3 +286,33 @@ def test_the_game_streams_so_a_slow_phone_model_keeps_going(hive, monkeypatch, t
     monkeypatch.setattr(games, "play", play)
     _run("make a train game")
     assert sent[0]["stream"] is True and "const train = 1;" in hive["deployed"][-1][2]["game.js"]
+
+
+@pytest.mark.parametrize("js,word", [
+    ('import { createStage, makeTrain } from "./gfx.js";\nconst s = createStage(c); requestAnimationFrame(() => s.render(0));', "makeTrain"),
+    ('import { createStage } from "./gfx.js";\nconst s = createStage(c); s.render(0)', None),
+    ('import { createStage } from "./gfx.js";\nconst s = createStage(c); requestAnimationFrame(() => { s.render(0)', "syntax"),
+    ('const a = 1; requestAnimationFrame(f);', "never creates a scene"),
+    ('import { createStage } from "./gfx.js";\nconst s = createStage(c); (function f(){ s.render(0); requestAnimationFrame(f); })();', "ok"),
+])
+def test_a_game_that_would_be_blank_is_caught_before_anyone_opens_it(js, word):
+    got = " | ".join(games.check({"game.js": js}))
+    if word == "ok":
+        assert got == ""
+    elif word is None:
+        assert "never draws" not in got   # stage.render( counts as drawing
+    else:
+        assert word in got
+
+
+def test_a_broken_first_try_is_fixed_before_deploying_and_errors_show_on_the_page(hive, monkeypatch, tmp_path):
+    bad = TRAIN.replace('import { createStage } from "./gfx.js";', 'import { createStage, makeTrain } from "./gfx.js";')
+    asked = _model(monkeypatch, tmp_path, [bad, TRAIN])
+
+    async def play(url):
+        return {"ok": None, "errors": [], "shot": b"", "skipped": "no browser"}
+    monkeypatch.setattr(games, "play", play)
+    _run("make a train game")
+    assert len(asked) == 2 and "no export called makeTrain" in asked[1]["messages"][1]["content"]
+    assert len(hive["deployed"]) == 1 and "makeTrain" not in hive["deployed"][0][2]["game.js"]
+    assert "__err" in hive["deployed"][0][2]["index.html"]   # an error panel, so a broken game is never just blank

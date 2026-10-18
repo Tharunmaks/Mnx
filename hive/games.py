@@ -248,6 +248,50 @@ def salvage(raw: str) -> dict:
     return files
 
 
+OVERLAY = """<script>(function(){function show(m){var d=document.getElementById("__err");if(!d){d=document.createElement("pre");
+d.id="__err";d.style.cssText="position:fixed;left:0;right:0;bottom:0;max-height:45%;overflow:auto;margin:0;padding:10px;z-index:99;background:#300d;color:#fcc;font:12px monospace;white-space:pre-wrap";
+document.body.appendChild(d)}d.textContent+=m+"\\n"}addEventListener("error",function(e){show("Error: "+e.message+(e.filename?" ("+e.filename.split("/").pop()+":"+e.lineno+")":""))});
+addEventListener("unhandledrejection",function(e){show("Error: "+(e.reason&&e.reason.message||e.reason))})})()</script>"""
+
+
+def shown(files: dict) -> dict:
+    """What's deployed: the game, with a panel that prints any error on the page (a game that breaks is never just blank)."""
+    page = files.get("index.html")
+    if isinstance(page, str) and "__err" not in page:
+        files = {**files, "index.html": page.replace("<head>", "<head>\n" + OVERLAY, 1) if "<head>" in page else OVERLAY + page}
+    return files
+
+
+def check(files: dict) -> list[str]:
+    """Problems found without running the game: broken syntax, names imported from the kit that it doesn't have, no draw loop."""
+    import subprocess, tempfile
+    js = files.get("game.js")
+    if not isinstance(js, str):
+        return []
+    problems = []
+    kit = (TEMPLATE / "gfx.js").read_text()
+    have = set(re.findall(r"export\s+(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)", kit))
+    for m in re.finditer(r"import\s*\{([^}]*)\}\s*from\s*[\"']\./gfx\.js[\"']", js):
+        for n in (x.split(" as ")[0].strip() for x in m.group(1).split(",")):
+            if n and n not in have:
+                problems.append(f"gfx.js has no export called {n} (it has: {', '.join(sorted(have))})")
+    if not re.search(r"requestAnimationFrame|setAnimationLoop|\.render\(", js):
+        problems.append("the game never draws: add a loop with requestAnimationFrame that calls stage.update(dt) and stage.render(dt)")
+    if "createStage" not in js and "WebGLRenderer" not in js:
+        problems.append("the game never creates a scene: use createStage(document.getElementById('game')) from './gfx.js'")
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "game.mjs"
+            f.write_text(js)
+            r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True, timeout=20)
+            if r.returncode:
+                line = next((x for x in r.stderr.splitlines() if "Error" in x), r.stderr.strip()[:200])
+                problems.append(f"syntax error in game.js: {line[:200]}")
+    except (OSError, subprocess.SubprocessError):
+        pass   # no node on this machine: the other checks still ran
+    return problems
+
+
 def _why(exc: Exception) -> str:
     """The model's error, in words."""
     import httpx
@@ -345,13 +389,28 @@ async def handle(task: Task, intent: dict) -> None:
     await task.finish_step(s, text=f"{len(files)} files")
     did.append(f"Wrote {name} from scratch in three.js, for what you asked")
 
+    for _ in range(FIX_ROUNDS):   # fix what can be seen without running it, before anyone opens a blank page
+        found = check(files)
+        if not found:
+            break
+        s = await task.step("writing", "Fixing problems found before running it", bee=bee)
+        try:
+            files = await write_game(task, goal, files, found, step=s)
+            await task.finish_step(s)
+        except Exception as exc:
+            await task.finish_step(s, status="error", text=_why(exc)[:160])
+            break
+    stuck = check(files)
+    if stuck:
+        note.append(f"It may still show a blank page ({stuck[0][:140]}); tell me what you see and I'll fix it.")
+
     result: dict = {}
     d: dict = {}
     for attempt in range(FIX_ROUNDS + 1):
         s = await task.step("running", "Deploying it privately" if attempt == 0 else f"Deploying fix {attempt}", bee=bee)
         try:
             await sites.chroma.ensure()
-            d = await sites.chroma.deploy(task.user, name, files, [], private=True)
+            d = await sites.chroma.deploy(task.user, name, shown(files), [], private=True)
         except Exception as exc:  # the sites server: say what went wrong, keep the files
             await task.finish_step(s, status="error", text=str(exc)[:200])
             folder = await sites.save_to_bee(b, name, files, name, folder="games")
