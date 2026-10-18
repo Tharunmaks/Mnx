@@ -42,6 +42,8 @@ async def _handle(task: Task) -> None:
     if models3d.parse(task.text):  # "make a 3d model of a car": a Bee designs it, builds the .glb, checks it; Mnx Studio edits it
         await models3d.handle(task, models3d.parse(task.text))
         return
+    if (edit := games.parse_edit(task.text, getattr(task, "history", None))) and await games.handle_edit(task, edit):
+        return  # a pasted error or "make it faster": the game made before is changed, not replaced
     if games.parse(task.text):  # "create an open world game in 3d": a Bee writes it, play-tests it, fixes it, gives a private link
         await games.handle(task, games.parse(task.text))
         return

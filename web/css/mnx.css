@@ -958,3 +958,16 @@ dialog { overscroll-behavior: contain; }
 .sandbox-item small { color: var(--text-3); }
 .sandbox-item .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
 .sandbox-item .row .btn { text-decoration: none; font-size: 12px; padding: 6px 10px; }
+
+/* Artifact view: Play / Code tabs and the "change it" box (web/js/runner.js) */
+.runner-bar .btn.on { background: var(--honey); color: #1a1205; border-color: transparent; }
+.runner iframe[hidden], .runner-code[hidden] { display: none; }
+.runner-code { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+.runner-codebar { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); }
+.runner-codebar small { color: var(--text-3); margin-left: auto; }
+.runner-file { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: 13px; }
+.runner-pre { flex: 1; margin: 0; padding: 12px 14px; overflow: auto; font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; tab-size: 2; color: var(--text); }
+.runner-note { padding: 18px; color: var(--text-3); }
+.runner-ask { display: flex; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--line-soft); }
+.runner-say { flex: 1; min-width: 0; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font-size: 14px; }
+.runner-say:focus { outline: 2px solid var(--honey); outline-offset: 1px; }

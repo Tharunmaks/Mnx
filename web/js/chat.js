@@ -97,6 +97,9 @@ function sayFromLink() {
 }
 installTokenPrompt(() => client.reconnectNow());
 
+// The artifact view (runner.js): "change something" / a pasted error goes into this chat as a message about that game
+addEventListener("mnx-say", (e) => { e.preventDefault(); send(String(e.detail || "")); });
+
 client.addEventListener("event", (e) => {
   const ev = e.detail;
   if (ev.type === "bee_status" || ev.type === "bees_changed") { loadBees(); return; }

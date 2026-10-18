@@ -154,12 +154,17 @@ def name_for(goal: str, styles: list[str]) -> str:
     return (name or "open-world") + "-game" if not name.endswith("game") else name
 
 
-async def write_game(task: Task, goal: str, current: dict, errors: list[str] | None = None, step: str | None = None) -> dict:
+async def write_game(task: Task, goal: str, current: dict, errors: list[str] | None = None, step: str | None = None,
+                     change: str | None = None) -> dict:
     glbs = [p for p, v in current.items() if isinstance(v, bytes) and p.endswith(".glb")]
     models = ("\n\n3D models the user made for this game (glTF, y up, front faces +z, real size in metres); load them with "
               "GLTFLoader from 'three/addons/loaders/GLTFLoader.js' and use them: " + ", ".join(glbs)) if glbs else ""
     own = {p: v for p, v in current.items() if isinstance(v, str) and p not in KIT}
-    if errors and own:
+    if change and own:
+        listing = "\n".join(f"=== FILE: {p} ===\n{v}\n=== END ===" for p, v in own.items())
+        ask = (f"Here is the game, as it is now. Change it like this: {change}\nKeep everything else exactly as it is and keep it working; "
+               f"it is still: {goal}\nWrite every file again with the change made.{models}\n\n{listing}")
+    elif errors and own:
         listing = "\n".join(f"=== FILE: {p} ===\n{v}\n=== END ===" for p, v in own.items())
         ask = (f"The game below was played in a browser and broke with these errors:\n" + "\n".join(f"- {e}" for e in errors[:8])
                + f"\n\nFix them. The game should still be: {goal}\nWrite every file again, fixed.{models}\n\n{listing}")
@@ -298,6 +303,51 @@ def shown(files: dict) -> dict:
     return files
 
 
+KIT_EXPORTS = re.compile(r"export\s+(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)")
+
+
+def autofix(files: dict) -> tuple[dict, list[str]]:
+    """Repairs that need no model: a kit function used without being imported (`buildCar is not defined`), or THREE used
+    without its import. Returns the files and what was repaired."""
+    js = files.get("game.js")
+    if not isinstance(js, str):
+        return files, []
+    kit = set(KIT_EXPORTS.findall((TEMPLATE / "gfx.js").read_text()))
+    code = re.sub(r"//[^\n]*|/\*.*?\*/", "", js, flags=re.S)
+    imported: set[str] = set()
+    gfx_import = None
+    for m in re.finditer(r"import\s*\{([^}]*)\}\s*from\s*[\"']([^\"']+)[\"'];?", code):
+        names = {x.split(" as ")[-1].strip() for x in m.group(1).split(",") if x.strip()}
+        imported |= names
+        if m.group(2) == "./gfx.js":
+            gfx_import = m
+    imported |= set(re.findall(r"import\s+(?:\*\s+as\s+)?(\w+)\s+(?:,|from)", code))
+    declared = set(re.findall(r"\b(?:const|let|var|function|class)\s+(\w+)", code)) | imported
+    need = sorted(n for n in kit if n not in declared and re.search(rf"(?<![\w.$]){n}\s*\(", code))
+    fixed = []
+    if need:
+        if gfx_import:
+            old = gfx_import.group(0)
+            names = [x.strip() for x in gfx_import.group(1).split(",") if x.strip()]
+            js = js.replace(old, "import { " + ", ".join(names + need) + ' } from "./gfx.js";', 1)
+        else:
+            line = "import { " + ", ".join(need) + ' } from "./gfx.js";\n'
+            lines = js.split("\n", 1)
+            js = lines[0] + "\n" + line + (lines[1] if len(lines) > 1 else "") if lines[0].startswith("//") else line + js
+        fixed.append("added the missing import" + ("s" if len(need) > 1 else "") + " " + ", ".join(need))
+    if re.search(r"\bTHREE\.", code) and "THREE" not in declared:
+        js = 'import * as THREE from "three";\n' + js
+        fixed.append("added the missing import of THREE")
+    return ({**files, "game.js": js} if fixed else files), fixed
+
+
+def _repair(files: dict, did: list) -> dict:
+    files, fixed = autofix(files)
+    if fixed:
+        did.append("Repaired the code before running it: " + "; ".join(fixed))
+    return files
+
+
 def check(files: dict) -> list[str]:
     """Problems found without running the game: broken syntax, names imported from the kit that it doesn't have, no draw loop."""
     import subprocess, tempfile
@@ -387,6 +437,94 @@ def _pick_bee(task: Task) -> dict | None:
     return next((b for b in mine if words.search(b["skill"]) or words.search(b["name"])), mine[0] if mine else None)
 
 
+ERROR_PASTE = re.compile(r"\b(?:Uncaught\s+)?(?:Reference|Type|Syntax|Range|Eval)Error\b|\bis not (?:defined|a function|a constructor)\b|"
+                         r"\bCannot read propert(?:y|ies)\b|\(game\.js:\d+\)|\bUnexpected (?:token|end of input|identifier)\b|"
+                         r"\bFailed to (?:resolve module|fetch dynamically)", re.I)
+EDIT_WORDS = re.compile(r"^\s*(?:please\s+)?(?:change|update|fix|edit|improve|make|add|remove|replace|put|use|increase|decrease|speed|slow)\b", re.I)
+
+
+def parse_edit(text: str, history: list | None = None) -> dict | None:
+    """An error pasted from the game, or "make it faster": a change to the game made earlier in this chat (or the newest one)."""
+    t = " ".join((text or "").split())
+    if not t or len(t) > 1500:
+        return None
+    named = re.search(r"\b(?:my|the)\s+([\w -]{2,40}?)\s+game\b", t, re.I)
+    if ERROR_PASTE.search(t) and not re.match(r"\s*(?:what|why|how|explain|tell me|can you|define)\b", t, re.I):
+        return {"change": f"it broke in the browser with this error: {t}. Fix the cause in the code.", "error": t, "name": None}
+    recent = any(h.get("role") == "bot" and "wrote it from scratch" in (h.get("text") or "") for h in (history or [])[-6:])
+    if recent and EDIT_WORDS.search(t) and not re.search(r"\b(?:new|another|different)\b.*\bgame\b", t, re.I):
+        return {"change": t, "error": None, "name": slug_of(named.group(1)) if named else None}
+    return None
+
+
+def slug_of(words: str) -> str:
+    return sites.slug(words)
+
+
+def bee_of(row: dict, uid: str) -> dict | None:
+    """The Bee that made a Sandbox item (by id; older items by name), if it is this user's."""
+    from .bees import registry
+    return (registry.mine(row["bee_id"], uid) if row.get("bee_id") else None) or registry.find(row.get("bee", ""), uid)
+
+
+def _find(task: Task, name: str | None) -> tuple[dict, dict] | None:
+    """The game to change: the one named, else the newest made for this user, with the Bee that made it."""
+    from . import sandbox
+    for r in sandbox.of(task.user):
+        if r["kind"] == "game" and (not name or name in r["name"]):
+            b = bee_of(r, task.user)
+            return (r, b) if b else None
+    return None
+
+
+async def load(b: dict, name: str) -> dict:
+    """The saved game's files from the Bee's computer (text as text, 3D models as bytes)."""
+    from .cells import cells
+    cell = cells.get(b["id"], b["name"], b["computer"])
+    if cell.mode == "remote":
+        return {}
+    root = cell.safe_path(f"games/{name}")
+    out: dict = {}
+    for f in sorted(root.rglob("*")) if root.is_dir() else []:
+        if not f.is_file() or f.name == "chroma.json" or f.stat().st_size > 3_000_000:
+            continue
+        rel = str(f.relative_to(root))
+        out[rel] = f.read_bytes() if f.suffix == ".glb" else f.read_text(errors="replace")
+    return out
+
+
+async def handle_edit(task: Task, edit: dict) -> bool:
+    """Changes the game made before instead of writing a new one: the same files, the change made in them, checked, put up
+    again at the same name. False when there is no game to change (the message then goes on as usual)."""
+    found = _find(task, edit["name"])
+    if not found or not brain.is_connected():
+        return False
+    rec, b = found
+    files = await load(b, rec["name"])
+    if "game.js" not in files:
+        return False
+    goal = rec.get("goal") or rec["name"].replace("-", " ")
+    kit = kit_files()
+    files = {**kit, **{p: v for p, v in files.items() if p not in KIT}}
+    bee = b["name"]
+    s = await task.step("writing", f"Changing {rec['name']}" if not edit["error"] else f"Fixing {rec['name']}: {edit['error'][:90]}", bee=bee)
+    did = [f"Opened the saved game {rec['name']} and changed it (not a new game)"]
+    repaired = _repair(files, did)
+    if repaired is not files and edit["error"] and "is not defined" in edit["error"] and not check(repaired):
+        files = repaired   # the missing import was the whole problem: no need to ask the model
+        await task.finish_step(s, text="Repaired the code without the model")
+    else:
+        try:
+            files = _repair(await write_game(task, goal, repaired, change=edit["change"], step=s), did)
+            await task.finish_step(s)
+        except Exception as exc:
+            await task.finish_step(s, status="error", text=_why(exc)[:160])
+            await task.answer(f"I couldn't change it: {_why(exc)}. The game is unchanged: {rec['url']}")
+            return True
+    await ship(task, b, rec["name"], goal, files, [], did)
+    return True
+
+
 async def handle(task: Task, intent: dict) -> None:
     from .apps import _shot_id
     b = _pick_bee(task)
@@ -425,13 +563,22 @@ async def handle(task: Task, intent: dict) -> None:
     await task.finish_step(s, text=f"{len(files)} files")
     did.append(f"Wrote {name} from scratch in three.js, for what you asked")
 
+    await ship(task, b, name, goal, files, note, did)
+
+
+async def ship(task: Task, b: dict, name: str, goal: str, files: dict, note: list, did: list) -> None:
+    """Everything after the model has written the code: repair what can be repaired, check it, put it up privately, play it,
+    fix what broke, save it and tell the user. The answer comes last, after the checks."""
+    from .apps import _shot_id
+    bee = b["name"]
+    files = _repair(files, did)
     for _ in range(FIX_ROUNDS):   # fix what can be seen without running it, before anyone opens a blank page
         found = check(files)
         if not found:
             break
         s = await task.step("writing", "Fixing problems found before running it", bee=bee)
         try:
-            files = await write_game(task, goal, files, found, step=s)
+            files = _repair(await write_game(task, goal, files, found, step=s), did)
             await task.finish_step(s)
         except Exception as exc:
             await task.finish_step(s, status="error", text=_why(exc)[:160])
@@ -470,7 +617,7 @@ async def handle(task: Task, intent: dict) -> None:
             break
         s = await task.step("writing", "Fixing what broke", bee=bee)
         try:
-            files = await write_game(task, goal, files, problems, step=s)
+            files = _repair(await write_game(task, goal, files, problems, step=s), did)
             await task.finish_step(s)
         except Exception as exc:  # keep the last version rather than swapping in anything else
             await task.finish_step(s, status="error", text=_why(exc)[:160])
@@ -483,7 +630,7 @@ async def handle(task: Task, intent: dict) -> None:
     if result.get("ok"):
         did.append("Played it in its own browser: it runs with no errors")
     from . import sandbox
-    sandbox.record(task.user, "game", name, bee, d["url"])
+    sandbox.record(task.user, "game", name, bee, d["url"], goal=goal[:400], bee_id=b["id"])
     sid = _shot_id(task.user, result.get("shot") or b"", "image/jpeg")
     if sid:
         await task.emit("screen", bee=bee, title=f"{name} running in {bee}'s browser", shot=sid, live=d["url"])

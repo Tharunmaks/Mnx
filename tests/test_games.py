@@ -374,3 +374,77 @@ def test_a_model_that_stops_after_a_few_lines_is_told_to_carry_on(hive, monkeypa
     assert len(asked) == 2 and asked[1]["messages"][-1]["content"] == games.CONTINUE and asked[1]["messages"][-2]["role"] == "assistant"
     js = hive["deployed"][-1][2]["game.js"]
     assert "requestAnimationFrame(f)" in js and js.rstrip().endswith("window.__game = { ready: true };")
+
+
+@pytest.mark.parametrize("text,got", [
+    ("Error: Uncaught ReferenceError: buildCar is not defined (game.js:19)", True),
+    ("TypeError: Cannot read properties of undefined (reading 'position')", True),
+    ("Create a indian railway game in 3d", False), ("what is a ReferenceError?" + "x" * 1600, False), ("hello", False),
+])
+def test_a_pasted_error_is_a_change_to_the_game_made_before(text, got):
+    assert bool(games.parse_edit(text)) is got
+
+
+def test_a_change_request_after_a_game_is_an_edit_but_only_right_after_one():
+    after = [{"role": "bot", "text": "**[Play x](/d/1/)**: Gamer wrote it from scratch and it runs."}]
+    assert games.parse_edit("make the train faster", after) and not games.parse_edit("make the train faster", [])
+    assert not games.parse_edit("make another game with planes", after) and not games.parse_edit("hello there", after)
+
+
+def test_a_missing_import_is_repaired_without_the_model():
+    js = "// CONTROLS: W\nimport { createStage } from './gfx.js';\nconst s = createStage(c);\nconst car = buildCar(s, {});\nconst v = new THREE.Vector3();\n"
+    files, fixed = games.autofix({"game.js": js})
+    assert 'import { createStage, buildCar } from "./gfx.js";' in files["game.js"] and 'import * as THREE from "three";' in files["game.js"]
+    assert len(fixed) == 2 and games.autofix(files)[1] == []                                  # and only once
+    own = "const buildCar = () => 1; buildCar();"
+    assert games.autofix({"game.js": own})[1] == []                                          # its own function is left alone
+
+
+def test_the_error_the_user_pasted_changes_the_saved_game_not_a_new_one(hive, monkeypatch, tmp_path):
+    from hive import sandbox
+    monkeypatch.setattr(sandbox, "FILE", tmp_path / "sandbox.json")
+    broken = ("// CONTROLS: W go\nimport { createStage } from './gfx.js';\nconst stage = createStage(document.getElementById('game'));\n"
+              "const car = buildCar(stage, {});\n(function f() { stage.render(0.016); requestAnimationFrame(f); })();\nwindow.__game = { ready: true };\n")
+    from hive.bees import registry
+    b = registry.of("u_gamer0000001")[0]
+    saved = asyncio.run(games.sites.save_to_bee(b, "indian-railway-game", {**games.kit_files(), "index.html": games.BASE_HTML, "game.js": broken},
+                                                "x", folder="games"))
+    sandbox.record("u_gamer0000001", "game", "indian-railway-game", b["name"], "/d/old/", goal="Create a indian railway game in 3d", bee_id=b["id"])
+    asked = _model(monkeypatch, tmp_path, [])        # the model is never asked: the Hive repairs the import itself
+
+    async def play(url):
+        return {"ok": True, "ready": True, "errors": [], "shot": b"\xff\xd8jpeg"}
+    monkeypatch.setattr(games, "play", play)
+    events = []
+
+    async def emit(ev):
+        events.append(ev)
+    t = Task("t1", "c1", "Error: Uncaught ReferenceError: buildCar is not defined (game.js:19)", emit, user="u_gamer0000001")
+    assert asyncio.run(games.handle_edit(t, games.parse_edit(t.text)))
+    assert not asked and hive["deployed"] and "buildCar" in hive["deployed"][-1][2]["game.js"]
+    assert 'import { createStage, buildCar } from "./gfx.js";' in hive["deployed"][-1][2]["game.js"]
+    saved_js = (hive["cells"] / "gamer" / "work" / "games" / "indian-railway-game" / "game.js").read_text()
+    assert "buildCar }" in saved_js and "const car = buildCar" in saved_js                      # the same game, fixed, saved again
+    assert "Repaired the code before running it" in events[-1]["text"] and "not a new game" in events[-1]["text"]
+
+
+def test_the_artifact_view_lists_the_code_of_your_own_game_only(hive, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    import gateway.api as gw
+    from gateway import auth
+    from hive import sandbox, users
+    from hive.bees import registry
+    monkeypatch.setattr(sandbox, "FILE", tmp_path / "sandbox.json")
+    monkeypatch.setattr(auth, "USER_TOKENS_FILE", tmp_path / "u.txt")
+    (tmp_path / "u.txt").write_text("tok-a\ntok-b\n")
+    mine = users.id_for_token("tok-a")
+    asyncio.run(registry.create("Maker", "makes games", owner=mine))
+    b = registry.of(mine)[0]
+    asyncio.run(games.sites.save_to_bee(b, "train-game", {**games.kit_files(), "index.html": "<p>hi</p>", "game.js": "const a = 1;"}, "x", folder="games"))
+    sandbox.record(mine, "game", "train-game", b["name"], "/d/dpl_1/", goal="train", bee_id=b["id"])
+    c = TestClient(gw.app)
+    got = c.get("/api/artifact", params={"url": "/d/dpl_1/"}, headers={"Authorization": "Bearer tok-a"})
+    assert got.status_code == 200, got.text
+    assert got.json()["files"] == {"index.html": "<p>hi</p>", "game.js": "const a = 1;"}
+    assert got.json()["change"].startswith("Change my train game: ")
+    assert c.get("/api/artifact", params={"url": "/d/dpl_1/"}, headers={"Authorization": "Bearer tok-b"}).status_code == 404

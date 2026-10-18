@@ -2524,6 +2524,24 @@ def apps_forget(key: str):
     return {"forgot": connections.forget(users.who(), key)}
 
 
+@api.get("/artifact")
+async def artifact_files(url: str):
+    """One thing your Bee made, with its files (the code), for the player's Code tab. Only yours, found by its private link."""
+    from hive import games, sandbox, sites
+    row = next((r for r in sandbox.of(users.who()) if r["url"] == url), None)
+    b = games.bee_of(row, users.who()) if row else None
+    if not row or not b:
+        raise HTTPException(404, "Not one of yours")
+    files = await (games.load(b, row["name"]) if row["kind"] == "game" else sites.read_from_bee(b, row["name"]) if row["kind"] == "site" else _none())
+    shown = {p: v for p, v in files.items() if isinstance(v, str) and p != "gfx.js"}      # the graphics kit is the Hive's, not theirs
+    return {"kind": row["kind"], "name": row["name"], "bee": row["bee"], "url": row["url"], "files": shown,
+            "change": f"Change my {row['name'].removesuffix('-game').replace('-', ' ')} {row['kind']}: "}
+
+
+async def _none() -> dict:
+    return {}
+
+
 @api.get("/sandbox")
 def sandbox_list():
     """What your Bees made (games, websites, 3D models), newest first, each on its private link."""
