@@ -419,6 +419,7 @@ class Models:
         return PORT + next((i for i, m in enumerate(CATALOG) if m["id"] == model_id), 0)
 
     def _server_argv(self, path: str, port: int | None = None) -> list[str]:
+        CTX = os.getenv("MNX_CTX", "16384")  # tokens the model can hold at once: a whole game or site needs more than 4096
         port = port or PORT
         # Expert Stream (hive/expert.py) when it's built: the same OpenAI API, with prefix reuse, a prompt cache on disk
         # and Turbo decoding. MNX_ENGINE=llama keeps llama.cpp; MNX_ENGINE=expertstream insists on Expert Stream.
@@ -426,18 +427,18 @@ class Models:
         from .expert import es_serve_path
         es = es_serve_path() if want in ("auto", "expertstream", "expert-stream", "es") else None
         if es:
-            return [es, "-g", path, "-p", str(port), "-c", "4096"]
+            return [es, "-g", path, "-p", str(port), "-c", CTX]
         if want in ("expertstream", "expert-stream", "es"):
             raise ModelError("Expert Stream isn't built yet: python3 -m hive.admin install-expertstream")
         exe = shutil.which("llama-server") or next((str(p) for p in [Path.home() / "llama.cpp/build/bin/llama-server"] if p.exists()), None)
         threads = str(max(1, (os.cpu_count() or 2) - 1))
         if exe:
-            return [exe, "-m", path, "--host", "127.0.0.1", "--port", str(port), "-c", "4096", "-t", threads]
+            return [exe, "-m", path, "--host", "127.0.0.1", "--port", str(port), "-c", CTX, "-t", threads]
         if shutil.which("docker"):
             from .lab import LLAMA_IMAGE
             d = str(Path(path).parent)
             return ["docker", "run", "--rm", "--name", f"mnx-model-{port}", "-p", f"127.0.0.1:{port}:8080", "-v", f"{d}:/models:ro",
-                    LLAMA_IMAGE, "-m", f"/models/{Path(path).name}", "--host", "0.0.0.0", "--port", "8080", "-c", "4096"]
+                    LLAMA_IMAGE, "-m", f"/models/{Path(path).name}", "--host", "0.0.0.0", "--port", "8080", "-c", CTX]
         raise ModelError("llama.cpp isn't installed. On the phone: pkg install llama-cpp · on a server: install llama.cpp "
                          "(llama-server) or Docker")
 

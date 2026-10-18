@@ -104,7 +104,8 @@ def test_a_bee_writes_plays_fixes_and_hands_over_a_private_game(hive, monkeypatc
     assert "ORIGINAL game in that style" in first["messages"][0]["content"] and "copy nothing" in first["messages"][1]["content"]
     assert "brokn is not defined" in fix["messages"][1]["content"]
     assert all(d[3] is True for d in hive["deployed"]) and len(hive["deployed"]) == 2  # private every time
-    assert "brokn" not in hive["deployed"][-1][2]["game.js"] and "style.css" in hive["deployed"][-1][2]  # the fix, with the kept CSS
+    assert "brokn" not in hive["deployed"][-1][2]["game.js"] and "gfx.js" in hive["deployed"][-1][2]  # the fix, with the kit kept
+    assert "from scratch" in first["messages"][1]["content"] and "Neon Bay" not in json.dumps(first)   # no premade game sent or used
     card = next(e for e in events if e["type"] == "result")
     assert card["badge"] == "Private" and ["Play", "/d/dpl_test2/"] in card["details"]
     assert any(e["type"] == "screen" for e in events)
@@ -113,17 +114,73 @@ def test_a_bee_writes_plays_fixes_and_hands_over_a_private_game(hive, monkeypatc
     assert (hive["cells"] / "gamer" / "work" / "games" / "open-world-game" / "game.js").exists()
 
 
-def test_still_broken_means_the_starter_game_and_no_model_is_fine(hive, monkeypatch):
+def _model(monkeypatch, tmp_path, replies):
+    b = brain_mod.Brain(tmp_path / "brain.json")
+    b.update({"url": "http://127.0.0.1:11434"})
+    asked = []
+
+    def reply(r):
+        asked.append(json.loads(r.content))
+        out = replies.pop(0)
+        return out if isinstance(out, httpx.Response) else httpx.Response(200, json={"choices": [{"message": {"content": out}}]})
+    b.transport = httpx.MockTransport(reply)
+    monkeypatch.setattr(brain_mod, "brain", b)
+    return asked
+
+
+def test_no_model_means_no_game_never_a_premade_one(hive, monkeypatch):
     monkeypatch.setattr(brain_mod, "is_connected", lambda: False)
+    events = _run("create a 3d high graphics train game")
+    assert not hive["deployed"] and "no model is running" in events[-1]["text"]
+
+
+def test_a_model_that_cant_fit_a_game_is_explained_and_nothing_premade_is_given(hive, monkeypatch, tmp_path):
+    too_long = httpx.Response(400, json={"error": {"message": "the last message alone is longer than the context; start the server with a larger -c",
+                                                   "type": "invalid_request_error"}})
+    _model(monkeypatch, tmp_path, [too_long])
+    events = _run("create a 3d high graphics train game")
+    answer = [e["text"] for e in events if e["type"] == "answer"][-1]
+    assert not hive["deployed"] and "context window" in answer and "Nothing was made" in answer
+
+
+TRAIN = """=== FILE: index.html ===
+<!doctype html><script type="importmap">{"imports":{"three":"/vendor/three/three.module.js"}}</script><script type="module" src="game.js"></script>
+=== END ===
+=== FILE: game.js ===
+// CONTROLS: W speed up, S slow down, Space horn, tap the arrows on phones
+import { createStage } from "./gfx.js";
+const train = 1;
+window.__game = { ready: true };
+=== END ==="""
+
+
+def test_a_train_game_is_written_for_trains_and_a_phone_just_isnt_play_tested(hive, monkeypatch, tmp_path):
+    asked = _model(monkeypatch, tmp_path, [TRAIN])
 
     async def play(url):
-        return {"ok": None, "errors": [], "shot": b"", "skipped": "this machine has no Chromium to play-test it"}
+        return {"ok": None, "errors": [], "shot": b"", "skipped": "this machine has no browser to play-test it"}
     monkeypatch.setattr(games, "play", play)
-    events = _run("make a minecraft game in unity")
-    assert hive["deployed"][0][2] == games.template_files()
-    answer = [e["text"] for e in events if e["type"] == "answer"][-1]
-    assert "Unity can't run" in answer and "No model is running" in answer
-    assert ["Tested", "not play-tested (no Chromium here)"] in next(e for e in events if e["type"] == "result")["details"]
+    events = _run("Create a 3d high graphics train game")
+    system, user = asked[0]["messages"][0]["content"], asked[0]["messages"][1]["content"]
+    assert "train game" in user and "never turn the request into a different game" in " ".join(system.split()) and len(asked) == 1   # no fix rounds
+    deployed = hive["deployed"][-1][2]
+    assert deployed["game.js"].startswith("// CONTROLS: W speed up") and "gfx.js" in deployed and "style.css" not in deployed
+    card = next(e for e in events if e["type"] == "result")
+    assert ["Controls", "W speed up, S slow down, Space horn, tap the arrows on phones"] in card["details"]
+    assert ["Tested", "not play-tested (this machine has no browser to play-test it)"] in card["details"]
+    assert "wrote it from scratch" in events[-1]["text"] and "cars" not in events[-1]["text"]
+
+
+def test_still_broken_keeps_the_bees_own_game_never_a_premade_one(hive, monkeypatch, tmp_path):
+    _model(monkeypatch, tmp_path, [TRAIN, TRAIN.replace("const train = 1;", "const train = 2;"), TRAIN.replace("const train = 1;", "const train = 3;")])
+
+    async def play(url):
+        return {"ok": False, "ready": False, "errors": ["TypeError: x is undefined"], "shot": b""}
+    monkeypatch.setattr(games, "play", play)
+    events = _run("make a train game")
+    assert all("Neon Bay" not in json.dumps(d[2].get("index.html", "")) for d in hive["deployed"])
+    assert "const train = 3;" in hive["deployed"][-1][2]["game.js"]
+    assert "still has a problem" in events[-1]["text"]
 
 
 def test_no_bee_yet_says_how(hive):

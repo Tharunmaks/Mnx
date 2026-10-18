@@ -171,21 +171,27 @@ def test_no_model_running_means_a_ready_made_design_or_studio(hive, monkeypatch)
     assert "/studio.html" in _run(models3d, "open studio")[-1]["text"]
 
 
-def test_games_use_the_bees_models(hive, monkeypatch):
+def test_games_use_the_bees_models(hive, monkeypatch, tmp_path):
     monkeypatch.setattr(brain_mod, "is_connected", lambda: False)
-    _run(models3d, "make a low poly car")  # → ~/models/car
+    _run(models3d, "make a low poly car")  # → ~/models/car (a ready-made design: no model needed for that)
+    monkeypatch.setattr(brain_mod, "is_connected", lambda: True)
+    b = brain_mod.Brain(tmp_path / "brain2.json")
+    b.update({"url": "http://127.0.0.1:11434"})
+    sent = []
+    out = "=== FILE: index.html ===\n<html></html>\n=== END ===\n=== FILE: game.js ===\n// CONTROLS: arrows\nwindow.__game={ready:true}\n=== END ==="
+    b.transport = httpx.MockTransport(lambda r: sent.append(json.loads(r.content)) or
+                                      httpx.Response(200, json={"choices": [{"message": {"content": out}}]}))
+    monkeypatch.setattr(brain_mod, "brain", b)
     events = _run(games, "make a racing game with my car model")
     files = hive["deployed"][-1][2]
-    assert files["models/car.glb"][:4] == b"glTF" and 'const PLAYER_MODEL = "models/car.glb";' in files["game.js"]
+    assert files["models/car.glb"][:4] == b"glTF" and "models/car.glb" in sent[0]["messages"][1]["content"]
     assert "Put your 3D model in it: car" in events[-1]["text"]
     assert (hive["cells"] / "maker" / "work" / "games" / "racing-game" / "models" / "car.glb").exists()
     assert [r["kind"] for r in sandbox.of("u_maker0000001")] == ["game", "model"]
-    plain = games.template_files()
-    assert "const PLAYER_MODEL = null;" in plain["game.js"] and not any(p.startswith("models/") for p in plain)
 
 
 def test_the_model_writing_a_game_is_told_about_the_models(hive, monkeypatch, tmp_path):
-    files = games.with_models(games.template_files(), {"car": b"glTFxxxx"})
+    files = games.kit_files({"car": b"glTFxxxx"})
     b = brain_mod.Brain(tmp_path / "brain.json")
     b.update({"url": "http://127.0.0.1:11434"})
     sent = []
@@ -196,7 +202,7 @@ def test_the_model_writing_a_game_is_told_about_the_models(hive, monkeypatch, tm
     new = asyncio.run(games.write_game(Task("t", "c", "x", None), "a racing game", files))
     prompt = sent[0]["messages"][1]["content"]
     assert "models/car.glb" in prompt and "GLTFLoader" in prompt and "glTFxxxx" not in prompt
-    assert new["models/car.glb"] == b"glTFxxxx" and "style.css" in new
+    assert new["models/car.glb"] == b"glTFxxxx" and "gfx.js" in new
 
 
 @pytest.fixture

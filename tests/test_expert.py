@@ -36,7 +36,7 @@ def test_models_run_on_expert_stream_when_it_is_built(tmp_path, monkeypatch):
     m = models_mod.Models(tmp_path / "models")
     monkeypatch.setattr(expert, "es_serve_path", lambda: "/opt/es/es_serve")
     monkeypatch.delenv("MNX_ENGINE", raising=False)
-    assert m._server_argv("/m/mnx.gguf", 8081) == ["/opt/es/es_serve", "-g", "/m/mnx.gguf", "-p", "8081", "-c", "4096"]
+    assert m._server_argv("/m/mnx.gguf", 8081) == ["/opt/es/es_serve", "-g", "/m/mnx.gguf", "-p", "8081", "-c", "16384"]
     assert m.engine() == "Expert Stream"
     monkeypatch.setenv("MNX_ENGINE", "llama")  # the owner can keep llama.cpp
     try:

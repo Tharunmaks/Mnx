@@ -41,8 +41,24 @@ READY_WAIT = 25   # seconds a game gets to say window.__game.ready
 
 KIT = ("gfx.js",)   # the graphics kit: the model uses it, never rewrites it, and isn't sent its code (only its API, below)
 
-SPEC = """You make complete, fun browser games with three.js. You get a working 3D game to start from; change and extend it
-into the game the user asked for. Write every file of the game in this exact format, nothing before or after:
+BASE_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>GAME TITLE</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#000}canvas{display:block;width:100%;height:100%}</style>
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three/addons/" } }
+</script>
+<script type="module" src="game.js"></script>
+</head>
+<body><canvas id="game"></canvas></body>
+</html>"""
+
+SPEC = """You make complete, fun browser games with three.js, written from scratch for exactly what the user asked. A train game
+is about trains (tracks, stations, signals, passengers), a racing game about racing, a space game about space: never turn the
+request into a different game. Write every file in this exact format, nothing before or after:
 
 === FILE: index.html ===
 (full content)
@@ -52,28 +68,27 @@ into the game the user asked for. Write every file of the game in this exact for
 === END ===
 
 Rules
-- Keep the importmap in index.html exactly as it is ("three" → /vendor/three/three.module.js, "three/addons/" →
-  /vendor/three/addons/). No other libraries, no npm, no build step, no files you don't write.
-- The game must run as written: every variable defined, no placeholders, no "TODO". Keep window.__game = {..., ready: true}
-  at the end of game.js.
-- Keep keyboard and touch controls (phones), a HUD with the goal and score, and a way to win or progress.
-- If the user names a famous game (GTA, Minecraft …), make an ORIGINAL game in that style: your own title, city or world,
-  characters, missions and art made from shapes and colours. Never copy names, logos, characters, maps, music or text from it.
+- Start index.html from this page and keep its importmap exactly (add your HUD and buttons to the body):
+""" + BASE_HTML + """
+- No other libraries, no npm, no build step, no files you don't write. Add a style.css file only if you need one.
+- The game must run as written: every variable defined, no placeholders, no "TODO", no "..." in the code.
+- The first line of game.js is a comment listing the controls: // CONTROLS: <keys and taps, in one line>
+- Keyboard controls and on-screen touch buttons (phones), a HUD with the goal and score, and a way to win or progress.
+- End game.js with: window.__game = { ready: true };
+- If the user names a famous game (GTA, Minecraft …), make an ORIGINAL game in that style: your own title, world, characters
+  and art made from shapes and colours. Never copy names, logos, characters, maps, music or text from it.
 - Keep it light enough for a phone: instanced meshes for many objects, few lights, modest shadows.
 
-The game already has a graphics kit, gfx.js (not shown, never rewrite it, import from it: `from "./gfx.js"`). Use it so the game
-looks great: real sky with a sun, moon and stars, soft shadows, bloom, tone mapping, rain, fog, detailed cars, textures.
-  const stage = createStage(canvas, { time: 17.3 })   → { renderer, scene, camera, setTime(hours 0-24), setRain(bool), night (0-1),
-        wetAmount, follow(vec3: keeps the shadow box around the player), update(dt), render(dt, speed01), glow(material, dayI, nightI) (a
-        material that lights up at night), wet(material) (shinier in rain), onQuality(fn), level (0-2, set by the device) }
-        per frame: stage.update(dt); stage.follow(player.position); stage.render(dt, speed01). Use stage.scene and stage.camera.
-  buildCar(stage, { kind: "coupe"|"sedan"|"hatch"|"van", color, detail: 0|1, player: bool }) → Group facing +z on y = 0;
-        animateCar(car, dt, speed, steer, braking) spins and steers its wheels and lights the brake lamps.
-  facadeTextures(seed) (building fronts with lit windows), asphaltTextures(), concreteTextures(), makeWater(size, y) (call
-        water.userData.update(dt)), Particles(scene, max, {additive}) with .spawn(pos, vel, {life,size,grow,color,alpha,gravity}) and
-        .update(dt), makeAudio() (an engine sound: .start(), .update(speed01, throttle, slip, rain)), rng(seed), lerp.
-Prefer MeshStandardMaterial / MeshPhysicalMaterial (real light and reflections), not Basic or Lambert. Everything the game needs
-besides gfx.js you write in game.js.
+A graphics kit, gfx.js, is next to game.js (never write it, import from it: `import { createStage } from "./gfx.js";`). Use it so
+the game looks great:
+  const stage = createStage(document.getElementById("game"), { time: 15 })  → { renderer, scene, camera, setTime(hours 0-24),
+        setRain(bool), night (0-1), follow(vec3: keeps the shadows around the player), update(dt), render(dt, speed01),
+        glow(material, dayI, nightI) (lights up at night) }. Each frame: stage.update(dt); stage.follow(target); stage.render(dt).
+        It already has the sky, sun, moon, stars, fog, shadows, bloom and tone mapping: don't add your own sky or renderer.
+  Also: Particles(scene, max, {additive}) .spawn(pos, vel, {life,size,grow,color,alpha,gravity}) .update(dt);
+        makeWater(size, y) (call water.userData.update(dt)); asphaltTextures(), concreteTextures(), facadeTextures(seed);
+        buildCar(stage, {kind, color}) only if the game has cars; makeAudio(); rng(seed); lerp.
+Prefer MeshStandardMaterial / MeshPhysicalMaterial (real light and reflections), not Basic or Lambert.
 """
 
 
@@ -93,8 +108,15 @@ def parse(text: str) -> dict | None:
 
 
 def template_files(models: dict[str, bytes] | None = None) -> dict[str, str | bytes]:
+    """The starter city game (hive/templates/game_city): an example of the kit in use. Never handed to anyone as their game."""
     files: dict[str, str | bytes] = {p.name: p.read_text() for p in sorted(TEMPLATE.iterdir()) if p.is_file()}
     return with_models(files, models or {})
+
+
+def kit_files(models: dict[str, bytes] | None = None) -> dict[str, str | bytes]:
+    """What every new game starts with: the graphics kit, and the user's own 3D models if they named any. No game code."""
+    files: dict[str, str | bytes] = {k: (TEMPLATE / k).read_text() for k in KIT}
+    return {**files, **{f"models/{n}.glb": glb for n, glb in (models or {}).items()}}
 
 
 def with_models(files: dict, models: dict[str, bytes]) -> dict:
@@ -148,24 +170,39 @@ def name_for(goal: str, styles: list[str]) -> str:
 
 
 async def write_game(task: Task, goal: str, current: dict, errors: list[str] | None = None) -> dict:
-    listing = "\n".join(f"=== FILE: {p} ===\n{v}\n=== END ===" for p, v in current.items() if isinstance(v, str) and p not in KIT)
     glbs = [p for p, v in current.items() if isinstance(v, bytes) and p.endswith(".glb")]
-    if glbs:
-        listing += ("\n\n3D models the user made for this game (glTF, y up, front faces +z, real size in metres); load them with "
-                    "GLTFLoader from 'three/addons/loaders/GLTFLoader.js' and use them: " + ", ".join(glbs))
-    if errors:
-        ask = (f"The game was played in a browser and broke with these errors:\n" + "\n".join(f"- {e}" for e in errors[:8])
-               + f"\n\nFix them. The game should still be: {goal}\nWrite every file again, fixed.")
+    models = ("\n\n3D models the user made for this game (glTF, y up, front faces +z, real size in metres); load them with "
+              "GLTFLoader from 'three/addons/loaders/GLTFLoader.js' and use them: " + ", ".join(glbs)) if glbs else ""
+    own = {p: v for p, v in current.items() if isinstance(v, str) and p not in KIT}
+    if errors and own:
+        listing = "\n".join(f"=== FILE: {p} ===\n{v}\n=== END ===" for p, v in own.items())
+        ask = (f"The game below was played in a browser and broke with these errors:\n" + "\n".join(f"- {e}" for e in errors[:8])
+               + f"\n\nFix them. The game should still be: {goal}\nWrite every file again, fixed.{models}\n\n{listing}")
     else:
-        ask = f"Make this game: {goal}\nStart from this working game and change it into that:"
-    raw = await brain.brain.chat([{"role": "system", "content": SPEC}, {"role": "user", "content": f"{ask}\n\n{listing}"}],
-                                 task.effort, max_tokens=12000, temperature=0.5)
+        ask = f"Make this game, from scratch: {goal}{models}"
+    raw = await brain.brain.chat([{"role": "system", "content": SPEC}, {"role": "user", "content": ask}],
+                                 task.effort, max_tokens=7000, temperature=0.5)
     files, _ = sites.parse_files(raw)
     files = {p: v for p, v in files.items() if p.endswith((".html", ".js", ".css", ".json")) and p not in KIT}
-    if "index.html" not in files or not any(p.endswith(".js") for p in files):
-        raise sites.SiteError("the model didn't write a whole game")
-    keep = {p: v for p, v in current.items() if (p.endswith(".css") or isinstance(v, bytes) or p in KIT) and p not in files}
+    if "index.html" not in files or "game.js" not in files:
+        raise sites.SiteError("the model didn't write a whole game (it needs index.html and game.js)")
+    keep = {p: v for p, v in current.items() if (isinstance(v, bytes) or p in KIT) and p not in files}
     return {**keep, **files}
+
+
+def _why(exc: Exception) -> str:
+    """The model's error, in words."""
+    msg = str(exc)
+    if "longer than the context" in msg or "context length" in msg or "exceeds the context" in msg:
+        return ("the model's memory (its context window) is too small for a whole game. Restart the Hive so the model starts "
+                "with a bigger window (MNX_CTX, 16384 by default), or pick a bigger model")
+    return msg[:200]
+
+
+def _controls(files: dict) -> str:
+    first = str(files.get("game.js") or "").lstrip().splitlines()[:1]
+    m = re.match(r"//\s*CONTROLS:\s*(.+)", first[0]) if first else None
+    return m.group(1).strip()[:200] if m else "shown in the game"
 
 
 async def play(url: str) -> dict:
@@ -188,8 +225,8 @@ async def play(url: str) -> dict:
         return {"ok": bool(ready) and not errs, "ready": bool(ready), "errors": errs[:10],
                 "shot": base64.b64decode(shot.split(",", 1)[1]) if "," in shot else b""}
     except BrowserError as exc:
-        if "couldn't start" in str(exc):
-            return {"ok": None, "errors": [], "shot": b"", "skipped": "this machine has no Chromium to play-test it"}
+        if any(w in str(exc) for w in ("couldn't start", "Playwright isn't installed", "can't run a Bee's website browser")):
+            return {"ok": None, "errors": [], "shot": b"", "skipped": "this machine has no browser to play-test it"}
         return {"ok": False, "ready": False, "errors": [str(exc)[:300]], "shot": b""}
     finally:
         await b.shutdown()
@@ -211,10 +248,14 @@ async def handle(task: Task, intent: dict) -> None:
         await task.answer("A Bee makes the game on its own computer. Make one first (New Bee in Peace, e.g. “Gamer: makes my games”), then ask again.")
         return
     bee = b["name"]
+    if not brain.is_connected():
+        await task.answer("A Bee writes every game from scratch with an AI model, and no model is running on this Hive yet. Pick one in the "
+                          "model menu (Mnx 1.5 Max Coder if it's installed) or set one up in Settings, then ask again.")
+        return
     goal = _brief(task, intent)
     name = name_for(intent["goal"], intent["styles"])
     models = await models_for(b, goal)
-    files = template_files(models)
+    files = kit_files(models)
     note, did = [], []
     if models:
         did.append(f"Put your 3D model{'s' if len(models) > 1 else ''} in it: " + ", ".join(models))
@@ -224,18 +265,19 @@ async def handle(task: Task, intent: dict) -> None:
     if intent["styles"]:
         note.append(f"It's an original game in the style of {', '.join(intent['styles'])}: its own world, names and art, nothing copied.")
 
-    if brain.is_connected():
-        s = await task.step("writing", "Designing and writing the game (three.js)", bee=bee)
-        try:
-            files = await write_game(task, goal, files)
-            await task.finish_step(s, text=f"{len(files)} files")
-            did.append(f"Wrote the game in three.js ({len(files)} files), starting from a working 3D city")
-        except (sites.SiteError, brain.BrainNotConnected) as exc:
-            await task.finish_step(s, status="error", text=str(exc)[:160])
-            note.append("The model's own version didn't come out whole, so this is the starter open-world game; ask for changes and I'll make them.")
-    else:
-        note.append("No model is running on this Hive, so this is the starter open-world game as it is.")
-        did.append("Took the starter open-world game (a 3D city to drive around, traffic, delivery missions, minimap, day and night)")
+    s = await task.step("writing", f"Writing {name} from scratch (three.js)", bee=bee)
+    try:
+        files = await write_game(task, goal, files)
+    except (sites.SiteError, brain.BrainNotConnected) as exc:
+        await task.finish_step(s, status="error", text=_why(exc)[:160])
+        await task.answer(f"I couldn't make the game: {_why(exc)}. Nothing was made; ask again and I'll write it from scratch.")
+        return
+    except Exception as exc:  # the model's server said no (too long a prompt, overloaded …)
+        await task.finish_step(s, status="error", text=_why(exc)[:160])
+        await task.answer(f"I couldn't make the game: {_why(exc)}. Nothing was made.")
+        return
+    await task.finish_step(s, text=f"{len(files)} files")
+    did.append(f"Wrote {name} from scratch in three.js, for what you asked")
 
     result: dict = {}
     d: dict = {}
@@ -262,19 +304,17 @@ async def handle(task: Task, intent: dict) -> None:
             break
         problems = result["errors"] or ["the game never started (window.__game.ready stayed false)"]
         await task.finish_step(s, status="error", text=f"{len(problems)} problem{'s' if len(problems) != 1 else ''}: {problems[0][:120]}")
-        if attempt == FIX_ROUNDS or not brain.is_connected():
-            files = template_files(models)  # still broken: the starter game, which is known to run
-            note.append("My changes kept breaking, so you got the starter open-world game; tell me what to change and I'll try again.")
-            d = await sites.chroma.deploy(task.user, name, files, [], private=True)
-            result = await play(d["url"])
+        if attempt == FIX_ROUNDS:
+            note.append(f"It still has a problem after {FIX_ROUNDS} fixes ({problems[0][:120]}); tell me what you see and I'll fix it.")
             break
         s = await task.step("writing", "Fixing what broke", bee=bee)
         try:
             files = await write_game(task, goal, files, problems)
             await task.finish_step(s)
-        except (sites.SiteError, brain.BrainNotConnected) as exc:
-            await task.finish_step(s, status="error", text=str(exc)[:160])
-            files = template_files(models)
+        except Exception as exc:  # keep the last version rather than swapping in anything else
+            await task.finish_step(s, status="error", text=_why(exc)[:160])
+            note.append(f"The fix didn't come out ({_why(exc)}), so this is my last version.")
+            break
 
     folder = await sites.save_to_bee(b, name, files, d.get("name", name), folder="games")
     did.append(f"Saved it in {bee}'s Vortex OS computer at {folder}")
@@ -286,12 +326,12 @@ async def handle(task: Task, intent: dict) -> None:
     sid = _shot_id(task.user, result.get("shot") or b"", "image/jpeg")
     if sid:
         await task.emit("screen", bee=bee, title=f"{name} running in {bee}'s browser", shot=sid, live=d["url"])
-    tested = "play-tested in a browser: no errors" if result.get("ok") else ("not play-tested (no Chromium here)" if result.get("skipped")
-                                                                            else "it had problems in the test")
+    tested = ("play-tested in a browser: no errors" if result.get("ok") else
+              f"not play-tested ({result['skipped']})" if result.get("skipped") else "it had problems in the test")
     await task.emit("result", bee=bee, service="Game", title=f"{name} is ready to play", badge="Private",
                     details=[["Play", d["url"]], ["Who can open it", "only people you give the link to: it isn't listed or public"],
-                             ["Controls", "WASD or arrows to drive, Space to brake, C camera, N night, R reset; touch buttons on phones"],
+                             ["Controls", _controls(files)],
                              ["Tested", tested], ["In Vortex OS", f"{bee}'s computer, {folder}: open its desktop to edit the code"]])
     lines = "\n".join(f"- {x}" for x in did)
-    await task.answer(f"**[Play {name}]({d['url']})**: {bee} made it and it {'runs' if result.get('ok') else 'is ready'}.\n\nWhat I did:\n{lines}\n\n"
-                      + (" ".join(note) + " " if note else "") + "Say what to change (more cars, a different city, a story, police chases …) and I'll update it.")
+    await task.answer(f"**[Play {name}]({d['url']})**: {bee} wrote it from scratch and it {'runs' if result.get('ok') else 'is ready'}.\n\n"
+                      f"What I did:\n{lines}\n\n" + (" ".join(note) + " " if note else "") + "Tell me what to change and I'll update it.")
