@@ -13,7 +13,7 @@ import time
 import shlex
 import shutil
 import uuid
-from collections import deque
+from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -54,6 +54,10 @@ EVENT_LOG: deque[dict] = deque(maxlen=500)
 CLIENTS: set[WebSocket] = set()
 CLIENT_USER: dict = {}  # an open page → who it belongs to (hive/users.py)
 TASKS: dict[str, tuple[Task, asyncio.Task]] = {}
+# Every task's events, kept so a page that reloads (or another of your pages) picks the task back up where it is,
+# cards still waiting for you included. The newest 200 tasks; a task's streamed pieces are dropped once its answer is in.
+TASK_LOG: "OrderedDict[str, dict]" = OrderedDict()
+TASK_LOG_MAX, TASK_EVENTS_MAX = 200, 3000
 
 
 def bee_view(b: dict) -> dict:
@@ -1558,6 +1562,36 @@ async def _prefetch_apps(p: phone.Phone) -> None:
         pass
 
 
+def _page_user(ws) -> str | None:
+    return CLIENT_USER.get(ws) if ws in CLIENT_USER else getattr(ws, "user", None) if isinstance(ws, SseClient) else None
+
+
+def _task_emit(task_id: str, user: str):
+    """A task's events go into its log and to every page its owner has open, so a reload doesn't lose them."""
+    TASK_LOG[task_id] = {"user": user, "events": [], "running": True}
+    while len(TASK_LOG) > TASK_LOG_MAX:
+        TASK_LOG.popitem(last=False)
+
+    async def emit(event: dict) -> None:
+        EVENT_LOG.append(event)
+        rec = TASK_LOG.get(task_id)
+        if rec is not None:
+            if event.get("type") == "answer":
+                rec["events"] = [e for e in rec["events"] if e.get("type") != "answer_delta"]
+            rec["events"].append(event)
+            del rec["events"][:-TASK_EVENTS_MAX]
+            if event.get("type") in ("task_done", "task_error"):
+                rec["running"] = False
+        for ws in list(CLIENTS):
+            if _page_user(ws) != user:
+                continue
+            try:
+                await ws.send_json(event)
+            except Exception:
+                CLIENTS.discard(ws)
+    return emit
+
+
 async def handle_client_message(msg: dict, emit, user: str) -> None:
     """One message from the web app (over a WebSocket or the streaming fallback): a chat message, a tapped card, a stop.
     `user` is who sent it: a card or a stop only reaches that user's own messages."""
@@ -1569,7 +1603,7 @@ async def handle_client_message(msg: dict, emit, user: str) -> None:
         task_id = str(msg.get("task") or f"t_{uuid.uuid4().hex[:10]}")[:40]
         if task_id in TASKS:
             return
-        task = Task(task_id, str(msg.get("chat", ""))[:40], text, emit, effort=str(msg.get("effort") or "")[:12],
+        task = Task(task_id, str(msg.get("chat", ""))[:40], text, _task_emit(task_id, user), effort=str(msg.get("effort") or "")[:12],
                     bee=str(msg.get("bee") or "")[:40] or None, mode=str(msg.get("mode") or "")[:8], user=user)
         hist = msg.get("history") if isinstance(msg.get("history"), list) else []
         task.history = [{"role": "bot" if h.get("role") == "bot" else "user", "text": str(h.get("text", ""))[:4000]}
@@ -1589,6 +1623,13 @@ async def handle_client_message(msg: dict, emit, user: str) -> None:
         if entry and entry[0].user == user:
             TASKS.pop(str(msg.get("task")), None)
             entry[1].cancel()
+    elif kind == "resume":  # a page that reloaded: where are my tasks now? (only this user's, only to this page)
+        for task_id in [str(t)[:40] for t in (msg.get("tasks") or []) if t][:20]:
+            rec = TASK_LOG.get(task_id)
+            if rec and rec["user"] == user:
+                await emit({"type": "task_state", "task": task_id, "events": rec["events"], "running": rec["running"]})
+            else:
+                await emit({"type": "task_state", "task": task_id, "unknown": True})
 
 
 @app.websocket("/ws")
@@ -1701,6 +1742,9 @@ async def _run_task(task: Task) -> None:
         await task.emit("task_done")
     except asyncio.CancelledError:
         EVENT_LOG.append({"task": task.id, "type": "stopped", "text": "Stopped by you", "at": now()})
+        if task.id in TASK_LOG:
+            TASK_LOG[task.id]["events"].append({"task": task.id, "type": "task_error", "text": "Stopped by you", "at": now()})
+            TASK_LOG[task.id]["running"] = False
     except Exception as exc:  # report, don't crash the gateway
         await task.emit("tokens", **task.usage())
         await task.emit("task_error", f"The Hive hit an error: {exc}")

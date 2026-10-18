@@ -33,25 +33,33 @@ syncActive();
 
 function syncActive() { activeId = mode === "peace" ? (peaceBee ? `peace_${peaceBee}` : null) : rushId; }
 
-// A task still "running" after a reload lost its stream; close it out.
-for (const c of chats) {
-  for (const t of c.turns) {
-    if (t.role === "mnx" && isRunning(t)) t.events.push({ task: t.task, type: "task_error", text: "Interrupted — the page was reloaded." });
-  }
+// A task still "running" after a reload keeps running on the Hive: once connected, ask where each one is now (resumeTasks).
+function runningTurns() {
+  const out = [];
+  for (const c of chats) for (const t of c.turns) if (t.role === "mnx" && isRunning(t)) out.push(t.task);
+  return out;
+}
+function resumeTasks() {
+  const tasks = runningTurns();
+  if (tasks.length) client.send({ type: "resume", tasks });
 }
 
 const runs = new Map(); // task id → { el, cardCache }
 let saveTimer = null;
 
+function writeChats() {
+  clearTimeout(saveTimer);
+  store.set(CHATS_KEY, chats);
+  store.set(ACTIVE_KEY, rushId);
+  store.set("mnx.peaceBee", peaceBee);
+  store.set("mnx.mode", mode);
+}
 function saveChats() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    store.set(CHATS_KEY, chats);
-    store.set(ACTIVE_KEY, rushId);
-    store.set("mnx.peaceBee", peaceBee);
-    store.set("mnx.mode", mode);
-  }, 150);
+  saveTimer = setTimeout(writeChats, 150);
 }
+// a reload or a closed tab right after a change: write it now, or that chat is lost
+addEventListener("pagehide", writeChats);
 const activeChat = () => chats.find((c) => c.id === activeId) || null;
 
 function findTurn(task) {
@@ -77,7 +85,7 @@ const client = new HiveClient();
 
 client.addEventListener("state", (e) => {
   connLabel($("conn"), e.detail);
-  if (e.detail === "online") { loadTools(); loadBees(); sayFromLink(); }
+  if (e.detail === "online") { loadTools(); loadBees(); resumeTasks(); sayFromLink(); }
 });
 
 // index.html?say=connect%20blinkit (from the Apps page): send that message once, as if typed
@@ -99,6 +107,16 @@ client.addEventListener("event", (e) => {
   if (!ev.task) return;
   const found = findTurn(ev.task);
   if (!found) return;
+  if (ev.type === "task_state") {  // the Hive's answer to resumeTasks(): the task's whole story so far
+    if (ev.unknown) {
+      found.turn.events.push({ task: ev.task, type: "task_error", text: "Interrupted: the Hive restarted while this was running. Ask again." });
+    } else {
+      found.turn.events = ev.events;
+    }
+    saveChats();
+    if (found.chat.id === activeId) scheduleRender(found.turn);
+    return;
+  }
   // A streamed reply arrives in pieces (answer_delta); once the whole answer is in, only it is kept on this device.
   if (ev.type === "answer") found.turn.events = found.turn.events.filter((e) => e.type !== "answer_delta");
   found.turn.events.push(ev);

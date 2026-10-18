@@ -40,6 +40,7 @@ def test_a_message_over_the_stream_is_answered_in_that_streams_queue(gw):
     sse = g.SseClient()
     sse.user = "owner"  # /api/live notes whose stream it is; only they can send into it
     g.LIVE["sess_test1"] = sse
+    g.CLIENTS.add(sse)  # as /api/live does: an open page, which the task's events reach
     other = g.SseClient()
     other.user = "u_someoneelse"
     g.LIVE["sess_other"] = other
@@ -70,6 +71,7 @@ def test_a_message_over_the_stream_is_answered_in_that_streams_queue(gw):
             break
         __import__("time").sleep(0.1)
     g.LIVE.pop("sess_test1", None)
+    g.CLIENTS.discard(sse)
     assert {e["task"] for e in events if "task" in e} == {"t_sse1"}
     assert any(e["type"] == "answer" for e in events) and events[-1]["type"] == "task_done"
 
