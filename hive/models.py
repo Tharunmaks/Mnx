@@ -264,9 +264,11 @@ class Models:
         self._sync()
         e = next((m for m in CATALOG if m["id"] == model_id), None)
         st = self.state.get(model_id, {})
-        if not e or st.get("status") not in ("ready", "running", "starting", "stopped"):
+        if not e or st.get("status") not in ("ready", "running", "starting", "stopped", "failed"):   # failed: it can be tried again
             return False
-        return e["kind"] == "gguf" or bool(st.get("command"))
+        if e["kind"] == "gguf":
+            return bool(st.get("path")) and Path(st["path"]).exists()   # a model whose file is gone isn't offered
+        return bool(st.get("command"))
 
     def choices(self) -> list[dict]:
         """What a user's model picker shows: names only."""
@@ -475,8 +477,12 @@ class Models:
     async def start(self, model_id: str, use: bool = True, wait: float = 180) -> dict:
         e = self._entry(model_id)
         st = self.state.get(model_id, {})
-        if st.get("status") not in ("ready", "stopped", "running") and e["kind"] == "gguf":
-            raise ModelError("Download it first")
+        if e["kind"] == "gguf":
+            have = bool(st.get("path")) and Path(st["path"]).exists()
+            if not have:
+                raise ModelError("The model's file isn't on this machine (python3 -m hive.admin install-models …)")
+            if st.get("status") in ("starting", "failed", None):   # left over from a start that was cut off: the file is there
+                st["status"] = "ready"
         await self.stop_all()
         if e["kind"] == "gguf":
             port = self._port_for(model_id)

@@ -352,3 +352,23 @@ def test_a_failed_install_says_so_and_nothing_appears(tmp_path, monkeypatch, cap
     monkeypatch.setattr(models_mod, "models", cli)
     assert admin.main(["install-models", "tiny=1qZiLMCJWyMytw88ZIO5T2_lCkYLXRZHS"]) == 1
     assert "Checksum mismatch" in capsys.readouterr().out and cli.choices() == []
+
+
+def test_a_model_left_as_starting_by_a_cut_off_start_still_starts_and_a_missing_file_is_not_offered(mm, monkeypatch, tmp_path):
+    m, _ = mm
+    monkeypatch.setattr(models_mod, "models", m)
+    _two_models(monkeypatch, tmp_path, m)
+    m.state["alpha"]["status"] = "starting"        # the Hive was stopped while it was starting
+    m.state["beta"]["status"] = "failed"
+
+    async def go():
+        async with m.using("alpha") as url:
+            assert url
+        async with m.using("beta") as url:       # the file is there, so it starts rather than "Download it first"
+            assert url
+        await m.stop_all()
+    run(go())
+    Path(m.state["beta"]["path"]).unlink()         # the file is gone: it isn't offered, and starting it says why
+    assert [c["id"] for c in m.choices()] == ["alpha"]
+    with pytest.raises(models_mod.ModelError, match="isn't on this machine"):
+        run(m.start("beta"))
