@@ -17,6 +17,19 @@ git clone <this repo> Mnx && cd Mnx && bash scripts/install.sh
 bash scripts/update.sh          # later: pull the latest code and restart
 ```
 
+**Free, no card: a Hugging Face Space.** A free Docker Space has 2 CPUs and 16 GB RAM, enough for Mnx 1.5 Max Coder and the
+Bees' Chromium:
+
+1. On huggingface.co: **New Space**, SDK **Docker** (blank), hardware **CPU basic (free)**.
+2. In the Space's **Files**, add the two files from `deploy/huggingface/` (`Dockerfile`, and replace its `README.md`).
+3. In **Settings → Variables and secrets**, add the secrets `MNX_TOKEN` (any long password: your access token) and, for
+   your models, `MNX_MODELS` = `mnx-1.5-max-coder=<Drive folder link>` (the folder shared "Anyone with the link").
+4. It builds (about 10 minutes the first time), then opens at `https://<you>-<space>.hf.space`; enter `MNX_TOKEN`.
+
+A free Space forgets its files when it restarts or sleeps (after 48 hours unused): your Bees and chats start fresh, and the
+model downloads again by itself (`data/models-install.log`). Shopping sites may block a data-centre address; for Blinkit use
+your phone (the Phone Drone, `--gateway https://<you>-<space>.hf.space`).
+
 Or by hand, for trying it out:
 
 ```bash
