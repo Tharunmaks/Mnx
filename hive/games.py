@@ -182,18 +182,69 @@ async def write_game(task: Task, goal: str, current: dict, errors: list[str] | N
 
 async def _stream(task: Task, msgs: list[dict], step: str | None, temperature: float) -> str:
     """The model writes the game piece by piece (a slow model on a phone takes minutes, and a streamed answer doesn't time out
-    while it's still writing); the step shows how far it has got."""
+    while it's still writing). The step shows how far it has got and how long since its last words, and a model that stops
+    in the middle of the code is told to carry on from there."""
     import time
-    written, last, t0 = [0, 0], [0.0], time.monotonic()
+    seen = {"lines": 0, "chars": 0, "at": time.monotonic()}
+    t0 = time.monotonic()
+
+    async def show() -> None:
+        now = time.monotonic()
+        quiet = now - seen["at"]
+        text = (f"Writing the game: {seen['lines']} lines so far ({seen['chars'] / 3 / max(now - t0, 1):.1f} tokens a second)"
+                + (f", thinking for {int(quiet)} s" if quiet > 6 else ""))
+        if step:
+            await task.emit("step", id=step, text=text)
 
     async def progress(piece: str) -> None:
-        written[0] += piece.count("\n")
-        written[1] += max(1, len(piece) // 4)   # about 4 characters a token
-        now = time.monotonic()
-        if step and now - last[0] > 3:
-            last[0] = now
-            await task.emit("step", id=step, text=f"Writing the game: {written[0]} lines so far ({written[1] / (now - t0):.1f} tokens a second)")
-    return await brain.brain.chat(msgs, task.effort, max_tokens=3500, temperature=temperature, on_text=progress)
+        seen["lines"] += piece.count("\n")
+        seen["chars"] += len(piece)
+        seen["at"] = time.monotonic()
+        await show()
+
+    async def beat() -> None:   # a slow phone can be quiet for a minute: keep the counter moving
+        while True:
+            await asyncio.sleep(5)
+            await show()
+    ticker = asyncio.create_task(beat())
+    try:
+        raw = await brain.brain.chat(msgs, task.effort, max_tokens=3500, temperature=temperature, on_text=progress)
+        for _ in range(CONTINUES):
+            if not unfinished(raw):
+                break
+            more = await brain.brain.chat(
+                msgs + [{"role": "assistant", "content": raw}, {"role": "user", "content": CONTINUE}],
+                task.effort, max_tokens=3000, temperature=temperature, on_text=progress)
+            more = re.sub(r"^\s*```[\w.+-]*\n", "", more)
+            if not more.strip():
+                break
+            raw = raw.rstrip() + "\n" + more
+        return raw
+    finally:
+        ticker.cancel()
+
+
+CONTINUES = 3
+CONTINUE = ("You stopped before the game was finished. Carry on from exactly where you stopped: write only the rest of the "
+            "code (no repeating, no explanation), then end with window.__game = { ready: true };")
+
+
+def unfinished(raw: str) -> bool:
+    """True when the code stops in the middle: brackets still open, or it never says it's ready and never draws anything."""
+    m = None
+    for m in FENCE.finditer(raw or ""):
+        pass
+    code = m.group("body") if m else (raw or "")
+    if "=== FILE" in (raw or "") and "=== END ===" in (raw or "") and raw.rstrip().endswith("=== END ==="):
+        return False
+    if "game.js" in (raw or "") and "=== FILE" in raw:
+        return "=== END ===" not in raw.rsplit("=== FILE", 1)[-1]
+    code = re.sub(r"//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`", "", code, flags=re.S)
+    depth = sum(code.count(c) for c in "({[") - sum(code.count(c) for c in ")}]")
+    if depth > 0:
+        return True
+    looks_like_code = re.search(r"\b(?:const|let|function|import)\b", code)   # not a refusal or an apology
+    return bool(looks_like_code and "__game" not in (raw or "") and not re.search(r"requestAnimationFrame|setAnimationLoop|\.render\(", code))
 
 
 AGAIN = """You can make this game: you write code, and the Hive runs it. Don't explain, don't refuse, don't describe steps.

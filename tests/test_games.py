@@ -349,3 +349,28 @@ def test_speed_flags_are_only_the_ones_this_llama_server_has(tmp_path, monkeypat
     assert models.speed_flags(fake("old", "--threads N")) == [] and models.speed_flags("/no/such/server") == []
     monkeypatch.setenv("MNX_SPEED", "off")
     assert models.speed_flags(fake("off", "--parallel N")) == []
+
+
+@pytest.mark.parametrize("raw,open_", [
+    ("```js\nimport * as THREE from 'three';\nfunction f() {\n  const a = 1;\n", True),
+    ("```js\nconst s = createStage(c);\nfunction f() { s.render(0); requestAnimationFrame(f); }\nf();\nwindow.__game = { ready: true };\n```", False),
+    ("```js\nconst s = createStage(c);\nf();\n```", True),   # never said it's ready: stopped early
+    ("```js\nconst t = 'a { b';\nwindow.__game = { ready: true };\n```", False),   # a bracket inside a string isn't an open one
+    ("=== FILE: game.js ===\nconst a = 1;\n", True), (TRAIN, False),
+])
+def test_code_that_stops_in_the_middle_is_noticed(raw, open_):
+    assert games.unfinished(raw) is open_
+
+
+def test_a_model_that_stops_after_a_few_lines_is_told_to_carry_on(hive, monkeypatch, tmp_path):
+    first = "```js\n// CONTROLS: W go\nimport { createStage } from './gfx.js';\nconst stage = createStage(document.getElementById('game'));\nfunction f() {\n"
+    rest = "  stage.render(0.016);\n  requestAnimationFrame(f);\n}\nf();\nwindow.__game = { ready: true };\n```"
+    asked = _model(monkeypatch, tmp_path, [first, rest])
+
+    async def play(url):
+        return {"ok": None, "errors": [], "shot": b"", "skipped": "no browser"}
+    monkeypatch.setattr(games, "play", play)
+    _run("make a train game")
+    assert len(asked) == 2 and asked[1]["messages"][-1]["content"] == games.CONTINUE and asked[1]["messages"][-2]["role"] == "assistant"
+    js = hive["deployed"][-1][2]["game.js"]
+    assert "requestAnimationFrame(f)" in js and js.rstrip().endswith("window.__game = { ready: true };")
