@@ -448,3 +448,48 @@ def test_the_artifact_view_lists_the_code_of_your_own_game_only(hive, monkeypatc
     assert got.json()["files"] == {"index.html": "<p>hi</p>", "game.js": "const a = 1;"}
     assert got.json()["change"].startswith("Change my train game: ")
     assert c.get("/api/artifact", params={"url": "/d/dpl_1/"}, headers={"Authorization": "Bearer tok-b"}).status_code == 404
+
+
+def test_the_builder_model_writes_the_game_and_the_phone_model_is_the_fallback(hive, monkeypatch, tmp_path):
+    b = brain_mod.Brain(tmp_path / "brain.json")
+    b.update({"url": "http://127.0.0.1:11434", "builder_url": "https://builder.example", "builder_key": "secret", "builder_model": "big"})
+    seen = []
+
+    def route(r):
+        body = json.loads(r.content)
+        seen.append((r.url.host, r.headers.get("authorization"), body.get("model"), body["max_tokens"]))
+        if r.url.host == "builder.example":
+            return httpx.Response(200, json={"choices": [{"message": {"content": TRAIN}}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": TRAIN.replace("const train = 1;", "const train = 9;")}}]})
+    b.transport = httpx.MockTransport(route)
+    monkeypatch.setattr(brain_mod, "brain", b)
+
+    async def play(url):
+        return {"ok": None, "errors": [], "shot": b"", "skipped": "no browser"}
+    monkeypatch.setattr(games, "play", play)
+    _run("make a train game")
+    assert seen[0] == ("builder.example", "Bearer secret", "big", games.BIG) and len(seen) == 1       # the builder wrote it, with room for a real game
+    assert "const train = 1;" in hive["deployed"][-1][2]["game.js"]
+    view = b.view()
+    assert view["builder_key_set"] and "secret" not in json.dumps(view) and view["builder_url"] == "https://builder.example"
+
+    # the builder is down: the local model writes it instead
+    b.transport = httpx.MockTransport(lambda r: httpx.Response(503, text="down") if r.url.host == "builder.example" else route(r))
+    _run("make a train game")
+    events = _run("make a train game")
+    assert "const train = 9;" in hive["deployed"][-1][2]["game.js"] and "503" in b.builder_error
+    assert "builder model didn't answer" in events[-1]["text"]
+
+
+def test_the_builder_alone_is_enough_to_build_without_any_local_model(hive, monkeypatch, tmp_path):
+    b = brain_mod.Brain(tmp_path / "brain.json")
+    b.update({"builder_url": "https://builder.example", "builder_model": "big"})
+    b.transport = httpx.MockTransport(lambda r: httpx.Response(200, json={"choices": [{"message": {"content": TRAIN}}]}))
+    monkeypatch.setattr(brain_mod, "brain", b)
+    monkeypatch.setattr(brain_mod, "is_connected", lambda: False)
+
+    async def play(url):
+        return {"ok": None, "errors": [], "shot": b"", "skipped": "no browser"}
+    monkeypatch.setattr(games, "play", play)
+    _run("make a train game")
+    assert hive["deployed"] and "300 to 600 lines" in games.SPEC_STRONG and "300 to 600 lines" not in games.SPEC

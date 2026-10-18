@@ -77,6 +77,12 @@ Use MeshStandardMaterial. Keyboard controls plus on-screen buttons for phones, a
 """
 
 
+# What the instructions say when a strong model (Settings → Builder) is writing: a real game, not a 120-line sketch.
+SPEC_STRONG = SPEC.replace("Keep it short and working: about 120 lines, every variable defined, no placeholders.",
+                           "Make it a complete, polished game of 300 to 600 lines: real mechanics and progression, enemies or obstacles, a HUD, "
+                           "particles, sound with makeAudio, smooth controls and camera. Every variable defined, no placeholders.")
+
+
 def parse(text: str) -> dict | None:
     t = " ".join((text or "").split())
     if not GAME.search(t):
@@ -170,7 +176,8 @@ async def write_game(task: Task, goal: str, current: dict, errors: list[str] | N
                + f"\n\nFix them. The game should still be: {goal}\nWrite every file again, fixed.{models}\n\n{listing}")
     else:
         ask = f"Make this game, from scratch: {goal}{models}"
-    msgs = [{"role": "system", "content": SPEC}, {"role": "user", "content": ask}]
+    brain.brain.builder_error = ""
+    msgs = [{"role": "system", "content": SPEC_STRONG if brain.brain.strong else SPEC}, {"role": "user", "content": ask}]
     raw = await _stream(task, msgs, step, temperature=0.5)
     files = salvage(raw)
     if not files:   # a small model refused, rambled or lost the format: ask once more, for one file only
@@ -213,13 +220,13 @@ async def _stream(task: Task, msgs: list[dict], step: str | None, temperature: f
             await show()
     ticker = asyncio.create_task(beat())
     try:
-        raw = await brain.brain.chat(msgs, task.effort, max_tokens=3500, temperature=temperature, on_text=progress)
+        raw = await brain.brain.chat(msgs, task.effort, max_tokens=BIG if brain.brain.strong else 3500, temperature=temperature, on_text=progress, builder=True)
         for _ in range(CONTINUES):
             if not unfinished(raw):
                 break
             more = await brain.brain.chat(
                 msgs + [{"role": "assistant", "content": raw}, {"role": "user", "content": CONTINUE}],
-                task.effort, max_tokens=3000, temperature=temperature, on_text=progress)
+                task.effort, max_tokens=BIG if brain.brain.strong else 3000, temperature=temperature, on_text=progress, builder=True)
             more = re.sub(r"^\s*```[\w.+-]*\n", "", more)
             if not more.strip():
                 break
@@ -230,6 +237,7 @@ async def _stream(task: Task, msgs: list[dict], step: str | None, temperature: f
 
 
 CONTINUES = 3
+BIG = 12000   # tokens a strong builder model may write for one game
 CONTINUE = ("You stopped before the game was finished. Carry on from exactly where you stopped: write only the rest of the "
             "code (no repeating, no explanation), then end with window.__game = { ready: true };")
 
@@ -497,7 +505,7 @@ async def handle_edit(task: Task, edit: dict) -> bool:
     """Changes the game made before instead of writing a new one: the same files, the change made in them, checked, put up
     again at the same name. False when there is no game to change (the message then goes on as usual)."""
     found = _find(task, edit["name"])
-    if not found or not brain.is_connected():
+    if not found or not brain.brain.can_build():
         return False
     rec, b = found
     files = await load(b, rec["name"])
@@ -532,7 +540,7 @@ async def handle(task: Task, intent: dict) -> None:
         await task.answer("A Bee makes the game on its own computer. Make one first (New Bee in Peace, e.g. “Gamer: makes my games”), then ask again.")
         return
     bee = b["name"]
-    if not brain.is_connected():
+    if not brain.brain.can_build():
         await task.answer("A Bee writes every game from scratch with an AI model, and no model is running on this Hive yet. Pick one in the "
                           "model menu (Mnx 1.5 Max Coder if it's installed) or set one up in Settings, then ask again.")
         return
@@ -562,6 +570,8 @@ async def handle(task: Task, intent: dict) -> None:
         return
     await task.finish_step(s, text=f"{len(files)} files")
     did.append(f"Wrote {name} from scratch in three.js, for what you asked")
+    if brain.brain.strong and brain.brain.builder_error:
+        note.append(f"The builder model didn't answer ({brain.brain.builder_error[:120]}), so your own model wrote this one: check the Builder in Settings.")
 
     await ship(task, b, name, goal, files, note, did)
 

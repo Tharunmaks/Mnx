@@ -1772,10 +1772,14 @@ def brain_update(body: dict):
 
 
 @api.post("/brain/test", dependencies=[Depends(auth.require_owner)])
-async def brain_test():
+async def brain_test(builder: bool = False):
     from hive.brain import BrainNotConnected, brain
     try:
-        reply = await brain.chat([{"role": "user", "content": "Reply with just: OK"}], max_tokens=20)
+        if builder and not brain.strong:
+            raise BrainNotConnected("No builder model is set yet")
+        reply = await brain.chat([{"role": "user", "content": "Reply with just: OK"}], max_tokens=20, builder=builder)
+        if builder and brain.builder_error and not reply:
+            raise BrainNotConnected(brain.builder_error)
     except (BrainNotConnected, httpx.HTTPError) as exc:
         raise HTTPException(502, str(exc)) from exc
     return {"ok": True, "reply": reply[:200]}

@@ -766,14 +766,30 @@ async function loadBrain() {
     $("bKey").placeholder = b.key_set ? "Saved · type a new key to replace it" : "Only if the server needs one";
     $("bPreset").replaceChildren(h("option", { value: "" }, "Pick a free option…"), ...b.presets.map((p) => h("option", { value: p.id }, p.label)));
     $("bPreset").onchange = () => { const p = b.presets.find((x) => x.id === $("bPreset").value); if (p) { $("bUrl").value = p.url; $("bModel").value = p.model; } };
+    $("xUrl").value = b.builder_url || "";
+    $("xModel").value = b.builder_model || "";
+    $("xKey").value = "";
+    $("xKey").placeholder = b.builder_key_set ? "Saved · type a new key to replace it" : "Your key from the provider";
+    $("xPreset").replaceChildren(h("option", { value: "" }, "Pick a builder…"), ...b.builder_presets.map((p) => h("option", { value: p.id }, p.label)));
+    $("xPreset").onchange = () => { const p = b.builder_presets.find((x) => x.id === $("xPreset").value); if (p) { $("xUrl").value = p.url; $("xModel").value = p.model; } };
+    $("xHint").textContent = b.builder_url ? `Games, websites and 3D models are written by ${b.builder_model || "the builder"}; the phone model is the fallback.`
+      : "Optional. Without it, your own model writes everything (slower and simpler). A free Groq key writes a full game in seconds.";
     $("bHint").textContent = b.connected ? `Connected: ${b.model || ""} at ${b.url}` : "No brain yet: bots answer from their knowledge and memory until you connect one.";
   } catch { /* offline */ }
 }
 async function saveBrain() {
-  const body = { url: $("bUrl").value.trim() || "-", model: $("bModel").value.trim() || "-" };
+  const body = { url: $("bUrl").value.trim() || "-", model: $("bModel").value.trim() || "-",
+    builder_url: $("xUrl").value.trim() || "-", builder_model: $("xModel").value.trim() || "-" };
   if ($("bKey").value.trim()) body.key = $("bKey").value.trim();
+  if ($("xKey").value.trim()) body.builder_key = $("xKey").value.trim();
   try { await api("/api/brain", { method: "PUT", body }); } catch (e) { toast(`Brain: ${e.message}`, "error"); }
 }
+$("xTest").addEventListener("click", async () => {
+  await saveBrain();
+  $("xHint").textContent = "Asking the builder…";
+  try { const r = await api("/api/brain/test?builder=true", { method: "POST" }); $("xHint").textContent = `It answered: “${r.reply}”`; }
+  catch (e) { $("xHint").textContent = `No answer: ${e.message}`; }
+});
 $("bTest").addEventListener("click", async () => {
   await saveBrain();
   $("bHint").textContent = "Asking the brain…";

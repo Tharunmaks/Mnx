@@ -30,6 +30,16 @@ PRESETS = [
 ]
 
 
+# A stronger, faster model for building games, websites and 3D models (Settings → Builder). Your phone's model stays the Hive's
+# everyday brain; the builder is used only for the big writing jobs, and if it can't be reached the local model does the job.
+BUILDER_PRESETS = [
+    {"id": "groq", "label": "Groq (free tier, very fast, needs a key)", "url": "https://api.groq.com/openai", "model": "llama-3.3-70b-versatile"},
+    {"id": "gemini", "label": "Google Gemini (free tier, needs a key)", "url": "https://generativelanguage.googleapis.com/v1beta/openai",
+     "model": "gemini-2.0-flash"},
+    {"id": "openrouter", "label": "OpenRouter (needs a key; pick a coder model)", "url": "https://openrouter.ai/api", "model": "qwen/qwen-2.5-coder-32b-instruct"},
+]
+BUILDER_KEYS = ("builder_url", "builder_key", "builder_model")
+
 # Seconds to wait for the model (between streamed pieces when streaming). A small model on a phone can take minutes to read a
 # long prompt before its first word.
 TIMEOUT = float(os.getenv("MNX_MODEL_TIMEOUT", "600"))
@@ -47,6 +57,7 @@ class Brain:
         except (FileNotFoundError, json.JSONDecodeError):
             self.cfg = {"url": "", "key": "", "model": ""}
         self.transport: httpx.AsyncBaseTransport | None = None  # tests swap in a fake model
+        self.builder_error = ""
 
     def _get(self, k: str) -> str:
         return (os.getenv(f"MNX_BRAIN_{k.upper()}") or self.cfg.get(k) or "").strip()
@@ -64,13 +75,13 @@ class Brain:
         return u + "/v1/chat/completions"
 
     def update(self, change: dict) -> dict:
-        for k in ("url", "key", "model"):
+        for k in ("url", "key", "model", *BUILDER_KEYS):
             if change.get(k) is None:
                 continue
             v = str(change[k]).strip()
-            if k == "key" and v == "":
+            if k.endswith("key") and v == "":
                 continue  # empty keeps the saved key; "-" clears it
-            if k == "url" and v and v != "-" and not v.startswith(("http://", "https://")):
+            if k.endswith("url") and v and v != "-" and not v.startswith(("http://", "https://")):
                 raise ValueError("The brain URL starts with http:// or https://")
             self.cfg[k] = "" if v == "-" else v[:300]
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,10 +93,24 @@ class Brain:
 
     def view(self) -> dict:
         return {"url": self.url, "model": self._get("model"), "key_set": bool(self._get("key")), "connected": bool(self.url),
-                "presets": PRESETS, "from_env": bool(os.getenv("MNX_BRAIN_URL"))}
+                "presets": PRESETS, "from_env": bool(os.getenv("MNX_BRAIN_URL")),
+                "builder_url": self._builder("url"), "builder_model": self._builder("model"), "builder_key_set": bool(self._builder("key")),
+                "builder_presets": BUILDER_PRESETS}
+
+    def _builder(self, k: str) -> str:
+        return (os.getenv(f"MNX_BUILDER_{k.upper()}") or self.cfg.get(f"builder_{k}") or "").strip()
+
+    def can_build(self) -> bool:
+        """Something can write a big job: the builder model, or the Hive's own brain or models."""
+        return bool(self._builder("url")) or is_connected()
+
+    @property
+    def strong(self) -> bool:
+        """The builder model is set: games and sites can ask for much more than a phone's model can write."""
+        return bool(self._builder("url"))
 
     async def chat(self, messages: list[dict], effort: str | None = None, max_tokens: int | None = None,
-                   temperature: float = 0.7, on_text=None) -> str:
+                   temperature: float = 0.7, on_text=None, builder: bool = False) -> str:
         """One answer. The model the user picked for this message (hive/models.py) answers it; with none picked, the
         brain set in Settings, else the first of the owner's models that is set up. With on_text (an async function),
         the answer streams: on_text gets each piece as it's written, whole sentences at a time, already in the
@@ -95,6 +120,18 @@ class Brain:
         name = model_name(picked)
         messages = with_identity(messages, name)
         guard = NameGuard(name, on_text) if on_text else None
+        if builder and self._builder("url"):   # the big writing jobs go to the builder; if it can't be reached the local model does it
+            try:
+                text = await self._post(self._builder("url"), self._builder("key"), self._builder("model"), messages, effort,
+                                        max_tokens, temperature, guard)
+                if guard:
+                    await guard.close()
+                return own_name(text, name)
+            except (BrainNotConnected, httpx.HTTPError) as exc:
+                self.builder_error = str(exc)[:200] or type(exc).__name__
+                if not is_connected():
+                    raise BrainNotConnected(f"The builder model didn't answer ({self.builder_error}) and no local model is set up") from exc
+                guard = NameGuard(name, on_text) if on_text else None
         if picked:
             try:
                 async with models_mod.models.using(picked) as base:

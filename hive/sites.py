@@ -331,7 +331,7 @@ async def write_site(task: Task, goal: str, current: dict[str, str] | None = Non
         msgs.append({"role": "user", "content": f"The site now:\n{listing}\n\nChange it: {goal}\nWrite every file of the new version."})
     else:
         msgs.append({"role": "user", "content": f"Build this site: {goal}"})
-    raw = await brain.brain.chat(msgs, task.effort, max_tokens=8000, temperature=0.4)
+    raw = await brain.brain.chat(msgs, task.effort, max_tokens=8000, temperature=0.4, builder=True)
     files, cols = parse_files(raw)
     if "index.html" not in files:
         raise SiteError("The model didn't write an index.html")
@@ -366,7 +366,7 @@ async def handle(task: Task, intent: dict) -> None:
     if not b:
         await task.answer("A Bee builds the site in its own computer. Make one first (New Bee in Peace, e.g. “Webby: builds my websites”), then ask again.")
         return
-    if not brain.is_connected():
+    if not brain.brain.can_build():
         await task.answer("Building a site needs a model running on this Hive, and none is yet.")
         return
     bee = b["name"]

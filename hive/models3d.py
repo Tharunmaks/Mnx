@@ -489,7 +489,7 @@ async def design(task: Task, goal: str, current: dict | None = None) -> dict:
     ask = (f"The model now:\n{json.dumps(current)}\n\nChange it: {goal}\nAnswer with the whole new design." if current
            else f"Design this 3D model: {goal}")
     raw = await brain.brain.chat([{"role": "system", "content": SPEC}, {"role": "user", "content": ask}],
-                                 task.effort, max_tokens=8000, temperature=0.4)
+                                 task.effort, max_tokens=8000, temperature=0.4, builder=True)
     return parse_spec(raw)
 
 
@@ -515,7 +515,7 @@ async def handle(task: Task, intent: dict) -> None:
     current = await load(b, intent["change"]) if intent.get("change") else None
     name = intent["change"] if current else name_for(intent["goal"])
     did, note = [], []
-    if brain.is_connected():
+    if brain.brain.can_build():
         s = await task.step("writing", f"Designing the {name.replace('-', ' ')} model" if not current else f"Changing {name}", bee=bee)
         try:
             spec = await design(task, intent["goal"], current)
