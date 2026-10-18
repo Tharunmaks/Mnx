@@ -58,7 +58,9 @@ BASE_HTML = """<!doctype html>
 
 SPEC = """You make complete, fun browser games with three.js, written from scratch for exactly what the user asked. A train game
 is about trains (tracks, stations, signals, passengers), a racing game about racing, a space game about space: never turn the
-request into a different game. Write every file in this exact format, nothing before or after:
+request into a different game. You can do this: you write the code and the Hive runs
+it, so never refuse, never explain how, never list steps: just write the game. Write every file in this exact format, nothing
+before or after (if the format is hard, one ```js block with the whole game.js is enough; the Hive adds index.html):
 
 === FILE: index.html ===
 (full content)
@@ -180,14 +182,56 @@ async def write_game(task: Task, goal: str, current: dict, errors: list[str] | N
                + f"\n\nFix them. The game should still be: {goal}\nWrite every file again, fixed.{models}\n\n{listing}")
     else:
         ask = f"Make this game, from scratch: {goal}{models}"
-    raw = await brain.brain.chat([{"role": "system", "content": SPEC}, {"role": "user", "content": ask}],
-                                 task.effort, max_tokens=7000, temperature=0.5)
-    files, _ = sites.parse_files(raw)
-    files = {p: v for p, v in files.items() if p.endswith((".html", ".js", ".css", ".json")) and p not in KIT}
-    if "index.html" not in files or "game.js" not in files:
-        raise sites.SiteError("the model didn't write a whole game (it needs index.html and game.js)")
+    msgs = [{"role": "system", "content": SPEC}, {"role": "user", "content": ask}]
+    raw = await brain.brain.chat(msgs, task.effort, max_tokens=7000, temperature=0.5)
+    files = salvage(raw)
+    if not files:   # a small model refused, rambled or lost the format: ask once more, for one file only
+        s = await task.step("writing", "Asking the model again, for just the game code")
+        raw = await brain.brain.chat(msgs + [{"role": "assistant", "content": (raw or "")[:1500]}, {"role": "user", "content": AGAIN}],
+                                     task.effort, max_tokens=7000, temperature=0.3)
+        files = salvage(raw)
+        await task.finish_step(s, "done" if files else "failed")
+    if not files:
+        raise sites.SiteError("the model didn't write the game's code (it answered without a game.js)")
     keep = {p: v for p, v in current.items() if (isinstance(v, bytes) or p in KIT) and p not in files}
     return {**keep, **files}
+
+
+AGAIN = """You can make this game: you write code, and the Hive runs it. Don't explain, don't refuse, don't describe steps.
+Reply with only one ```js code block: the complete game.js for the game I asked for (three.js from "three", the kit from
+"./gfx.js"), first line // CONTROLS: ..., last line window.__game = { ready: true };"""
+
+FENCE = re.compile(r"```[ \t]*(?P<lang>[\w.+-]*)[^\n]*\n(?P<body>.*?)(?:```|\Z)", re.S)
+
+
+def salvage(raw: str) -> dict:
+    """The game files in whatever shape a model wrote them: the === FILE === format, fenced code blocks, or one whole page.
+    Only game.js is a must; the Hive supplies the standard index.html when the model leaves it out. {} when there's no game."""
+    from . import respond
+    files, _ = sites.parse_files(raw)
+    files = {p: v for p, v in files.items() if p.endswith((".html", ".js", ".css", ".json")) and p not in KIT}
+    if "game.js" not in files:
+        for m in FENCE.finditer(raw or ""):
+            body, lang = m.group("body").strip(), m.group("lang").lower()
+            if lang in ("html", "htm") or body.lower().startswith(("<!doctype", "<html")):
+                files.setdefault("index.html", body)
+            elif lang in ("js", "javascript", "mjs") or (not lang and re.search(r"\bimport\b.+\bfrom\b|THREE\.", body)):
+                if len(body) > len(files.get("game.js", "")):   # the longest script is the game, not a one-line snippet
+                    files["game.js"] = body
+            elif lang == "css":
+                files.setdefault("style.css", body)
+    page = files.get("index.html", "")
+    inline = re.search(r"<script\b[^>]*>\s*\S[\s\S]{200,}?</script>", page) if "game.js" not in files else None
+    if "game.js" not in files and not inline:
+        return {}
+    if "game.js" in files and respond.REFUSAL.search(files["game.js"][:300]):
+        return {}
+    if not page or ("game.js" in files and "game.js" not in page):
+        files["index.html"] = BASE_HTML   # the model's page doesn't load its game: use the standard one
+    js = files.get("game.js")
+    if js and "window.__game" not in js:
+        files["game.js"] = js.rstrip() + "\nwindow.__game = { ready: true };\n"   # runs only if everything above it did
+    return files
 
 
 def _why(exc: Exception) -> str:

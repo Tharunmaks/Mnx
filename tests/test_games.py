@@ -218,3 +218,40 @@ def test_a_wrong_refusal_is_never_shown_and_is_asked_again(tmp_path, monkeypatch
 ])
 def test_what_counts_as_a_refusal(text, refused):
     assert bool(respond.REFUSAL.search(text)) is refused
+
+
+SMALL_MODEL = """Sure! Here is your train game.
+
+```javascript
+// CONTROLS: W go, S stop
+import * as THREE from "three";
+import { createStage } from "./gfx.js";
+const stage = createStage(document.getElementById("game"), { time: 9 });
+const train = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 6), new THREE.MeshStandardMaterial({ color: 0xcc2222 }));
+stage.scene.add(train);
+```
+Have fun!"""
+
+
+@pytest.mark.parametrize("raw,ok", [
+    (SMALL_MODEL, True), (TRAIN, True), ("I'm sorry, but I can't create games.", False), ("Use Unity and follow these steps: 1. …", False),
+    ("```html\n<!doctype html><html><body><canvas id=game></canvas><script type=\"module\">" + "const a = 1;\n" * 30 + "</script></body></html>\n```", True),
+])
+def test_a_small_models_game_is_taken_in_any_shape(raw, ok):
+    files = games.salvage(raw)
+    assert bool(files) is ok
+    if ok:
+        assert "index.html" in files and ("game.js" not in files or "window.__game" in files["game.js"])
+
+
+def test_a_small_model_that_refuses_is_asked_once_more_for_just_the_code(hive, monkeypatch, tmp_path):
+    asked = _model(monkeypatch, tmp_path, ["I'm sorry, I can't make a game. You could try Unity.", SMALL_MODEL])
+
+    async def play(url):
+        return {"ok": None, "errors": [], "shot": b"", "skipped": "this machine has no browser to play-test it"}
+    monkeypatch.setattr(games, "play", play)
+    events = _run("make a train game")
+    assert len(asked) == 2 and "one ```js code block" in asked[1]["messages"][-1]["content"]
+    game = hive["deployed"][-1][2]
+    assert game["index.html"] == games.BASE_HTML and game["game.js"].startswith("// CONTROLS: W go") and "window.__game" in game["game.js"]
+    assert "wrote it from scratch" in events[-1]["text"]
