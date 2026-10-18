@@ -56,41 +56,24 @@ BASE_HTML = """<!doctype html>
 <body><canvas id="game"></canvas></body>
 </html>"""
 
-SPEC = """You make complete, fun browser games with three.js, written from scratch for exactly what the user asked. A train game
-is about trains (tracks, stations, signals, passengers), a racing game about racing, a space game about space: never turn the
-request into a different game. You can do this: you write the code and the Hive runs
-it, so never refuse, never explain how, never list steps: just write the game. Write every file in this exact format, nothing
-before or after (if the format is hard, one ```js block with the whole game.js is enough; the Hive adds index.html):
+SPEC = """You write browser games in JavaScript with three.js. You can do this: the Hive runs whatever you write, so never refuse,
+never explain, never list steps. Write exactly the game asked for (a train game is about trains, a racing game about racing:
+never turn the request into a different game). If it names a famous game, make an ORIGINAL game in that style with your own
+names and art from shapes and colours; copy nothing.
 
-=== FILE: index.html ===
-(full content)
-=== END ===
-=== FILE: game.js ===
-(full content)
-=== END ===
+Reply with ONE ```js code block: the complete game.js, nothing else (the Hive supplies the HTML page and the canvas
+with id "game"). Keep it short and working: about 120 lines, every variable defined, no placeholders.
+First line: // CONTROLS: <keys and taps in one line>. Last line: window.__game = { ready: true };
 
-Rules
-- Start index.html from this page and keep its importmap exactly (add your HUD and buttons to the body):
-""" + BASE_HTML + """
-- No other libraries, no npm, no build step, no files you don't write. Add a style.css file only if you need one.
-- The game must run as written: every variable defined, no placeholders, no "TODO", no "..." in the code.
-- The first line of game.js is a comment listing the controls: // CONTROLS: <keys and taps, in one line>
-- Keyboard controls and on-screen touch buttons (phones), a HUD with the goal and score, and a way to win or progress.
-- End game.js with: window.__game = { ready: true };
-- If the user names a famous game (GTA, Minecraft …), make an ORIGINAL game in that style: your own title, world, characters
-  and art made from shapes and colours. Never copy names, logos, characters, maps, music or text from it.
-- Keep it light enough for a phone: instanced meshes for many objects, few lights, modest shadows.
+Start like this and build the game inside it:
+import * as THREE from "three";
+import { createStage } from "./gfx.js";
+const stage = createStage(document.getElementById("game"), { time: 15 });   // sky, sun, fog, shadows, bloom: done for you
+// stage.scene, stage.camera, stage.update(dt), stage.follow(vec3), stage.render(dt), stage.setTime(0-24), stage.setRain(bool)
+// also from "./gfx.js": Particles, makeWater, asphaltTextures, concreteTextures, buildCar (cars only), makeAudio, rng, lerp
+// loop: requestAnimationFrame(f); dt = clock.getDelta(); move things; stage.update(dt); stage.render(dt)
 
-A graphics kit, gfx.js, is next to game.js (never write it, import from it: `import { createStage } from "./gfx.js";`). Use it so
-the game looks great:
-  const stage = createStage(document.getElementById("game"), { time: 15 })  → { renderer, scene, camera, setTime(hours 0-24),
-        setRain(bool), night (0-1), follow(vec3: keeps the shadows around the player), update(dt), render(dt, speed01),
-        glow(material, dayI, nightI) (lights up at night) }. Each frame: stage.update(dt); stage.follow(target); stage.render(dt).
-        It already has the sky, sun, moon, stars, fog, shadows, bloom and tone mapping: don't add your own sky or renderer.
-  Also: Particles(scene, max, {additive}) .spawn(pos, vel, {life,size,grow,color,alpha,gravity}) .update(dt);
-        makeWater(size, y) (call water.userData.update(dt)); asphaltTextures(), concreteTextures(), facadeTextures(seed);
-        buildCar(stage, {kind, color}) only if the game has cars; makeAudio(); rng(seed); lerp.
-Prefer MeshStandardMaterial / MeshPhysicalMaterial (real light and reflections), not Basic or Lambert.
+Use MeshStandardMaterial. Keyboard controls plus on-screen buttons for phones, a score on screen, and a goal to reach.
 """
 
 
@@ -201,14 +184,16 @@ async def _stream(task: Task, msgs: list[dict], step: str | None, temperature: f
     """The model writes the game piece by piece (a slow model on a phone takes minutes, and a streamed answer doesn't time out
     while it's still writing); the step shows how far it has got."""
     import time
-    written, last = [0], [0.0]
+    written, last, t0 = [0, 0], [0.0], time.monotonic()
 
     async def progress(piece: str) -> None:
         written[0] += piece.count("\n")
-        if step and time.monotonic() - last[0] > 3:
-            last[0] = time.monotonic()
-            await task.emit("step", id=step, text=f"Writing the game: {written[0]} lines so far")
-    return await brain.brain.chat(msgs, task.effort, max_tokens=7000, temperature=temperature, on_text=progress)
+        written[1] += max(1, len(piece) // 4)   # about 4 characters a token
+        now = time.monotonic()
+        if step and now - last[0] > 3:
+            last[0] = now
+            await task.emit("step", id=step, text=f"Writing the game: {written[0]} lines so far ({written[1] / (now - t0):.1f} words a second)")
+    return await brain.brain.chat(msgs, task.effort, max_tokens=3500, temperature=temperature, on_text=progress)
 
 
 AGAIN = """You can make this game: you write code, and the Hive runs it. Don't explain, don't refuse, don't describe steps.

@@ -65,6 +65,16 @@ selected: contextvars.ContextVar[str | None] = contextvars.ContextVar("mnx_selec
 DRIVE_FOLDER = re.compile(r"(?:folders/|[?&]id=)([A-Za-z0-9_-]{20,})")
 
 
+def threads_for() -> str:
+    """Threads for the model server. All cores is slower on a phone: its small efficiency cores make every step wait for the
+    slowest thread, so a phone gets 4 (its fast cores). MNX_THREADS overrides."""
+    if os.getenv("MNX_THREADS", "").strip().isdigit():
+        return os.environ["MNX_THREADS"].strip()
+    cores = os.cpu_count() or 2
+    phone = bool(os.getenv("TERMUX_VERSION")) or os.path.isdir("/data/data/com.termux")
+    return str(max(1, min(4, cores - 1) if phone else cores - 1))
+
+
 class ModelError(RuntimeError):
     pass
 
@@ -431,7 +441,7 @@ class Models:
         if want in ("expertstream", "expert-stream", "es"):
             raise ModelError("Expert Stream isn't built yet: python3 -m hive.admin install-expertstream")
         exe = shutil.which("llama-server") or next((str(p) for p in [Path.home() / "llama.cpp/build/bin/llama-server"] if p.exists()), None)
-        threads = str(max(1, (os.cpu_count() or 2) - 1))
+        threads = threads_for()
         if exe:
             return [exe, "-m", path, "--host", "127.0.0.1", "--port", str(port), "-c", CTX, "-t", threads]
         if shutil.which("docker"):

@@ -316,3 +316,20 @@ def test_a_broken_first_try_is_fixed_before_deploying_and_errors_show_on_the_pag
     assert len(asked) == 2 and "no export called makeTrain" in asked[1]["messages"][1]["content"]
     assert len(hive["deployed"]) == 1 and "makeTrain" not in hive["deployed"][0][2]["game.js"]
     assert "__err" in hive["deployed"][0][2]["index.html"]   # an error panel, so a broken game is never just blank
+
+
+def test_the_phone_runs_the_model_on_its_fast_cores_only(monkeypatch):
+    from hive import models
+    monkeypatch.delenv("MNX_THREADS", raising=False)
+    monkeypatch.setattr("os.cpu_count", lambda: 8)
+    monkeypatch.setenv("TERMUX_VERSION", "0.118")
+    assert models.threads_for() == "4"
+    monkeypatch.delenv("TERMUX_VERSION")
+    monkeypatch.setattr("os.path.isdir", lambda p: False)
+    assert models.threads_for() == "7"
+    monkeypatch.setenv("MNX_THREADS", "3")
+    assert models.threads_for() == "3"
+
+
+def test_the_game_prompt_is_short_and_asks_only_for_the_game_code():
+    assert len(games.SPEC) < 2200 and "ONE ```js code block" in games.SPEC and "<!doctype" not in games.SPEC
