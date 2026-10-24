@@ -36,7 +36,8 @@ BUILDER_PRESETS = [
     {"id": "groq", "label": "Groq (free tier, very fast, needs a key)", "url": "https://api.groq.com/openai", "model": "llama-3.3-70b-versatile"},
     {"id": "gemini", "label": "Google Gemini (free tier, needs a key)", "url": "https://generativelanguage.googleapis.com/v1beta/openai",
      "model": "gemini-2.0-flash"},
-    {"id": "openrouter", "label": "OpenRouter (needs a key; pick a coder model)", "url": "https://openrouter.ai/api", "model": "qwen/qwen-2.5-coder-32b-instruct"},
+    {"id": "openrouter", "label": "OpenRouter (free models end in :free; names change, so edit it if needed)", "url": "https://openrouter.ai/api",
+     "model": "qwen/qwen3-coder:free"},
 ]
 BUILDER_KEYS = ("builder_url", "builder_key", "builder_model")
 
