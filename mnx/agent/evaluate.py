@@ -26,6 +26,8 @@ from typing import Dict, List, Optional
 
 from mnx.agent.agent import MNXAgent
 from mnx.agent.router import cross_validate, default_intents_path, load_intents
+from mnx.agent.skills.code import extract_code
+from mnx.agent.skills.neural import run_tests
 
 
 def default_benchmark() -> Path:
@@ -33,6 +35,8 @@ def default_benchmark() -> Path:
 
 
 def load_benchmark(path: Optional[Path] = None) -> List[dict]:
+    """JSONL rows: ``category``, ``question`` and ``expect`` (accepted substrings, or null when the
+    right answer is to abstain), or ``tests`` (hidden asserts the returned code must pass)."""
     return [json.loads(l) for l in Path(path or default_benchmark()).read_text(encoding="utf-8").splitlines() if l.strip()]
 
 
@@ -42,7 +46,7 @@ def _contains(text: str, expected: str) -> bool:
 
 
 def run(items: List[dict], agent: Optional[MNXAgent] = None, verbose: bool = False) -> Dict[str, dict]:
-    agent = agent or MNXAgent(today=dt.date(2026, 1, 1))
+    agent = agent or MNXAgent(today=dt.date(2026, 1, 1), learn=False)
     stats: Dict[str, dict] = defaultdict(lambda: {"n": 0, "correct": 0, "wrong": 0, "abstained": 0, "ms": 0.0})
     for it in items:
         start = time.perf_counter()
@@ -52,7 +56,11 @@ def run(items: List[dict], agent: Optional[MNXAgent] = None, verbose: bool = Fal
         s["n"] += 1
         s["ms"] += ms
         abstained = ans.skill == "abstain" or ans.failed
-        if it["expect"] is None:
+        if it.get("tests"):
+            # coding questions: the returned code must pass hidden tests
+            code = extract_code(ans.text) if not abstained else None
+            ok = bool(code) and run_tests(code, it["tests"], timeout=10)[0]
+        elif it["expect"] is None:
             ok = abstained
         else:
             ok = not abstained and any(_contains(ans.text, e) for e in it["expect"])

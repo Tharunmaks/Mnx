@@ -195,6 +195,15 @@ OPS: List[Tuple[str, Tuple[str, ...], Callable]] = [
     ("[w[::-1] for w in {0}]", ("slist",), lambda l: [w[::-1] for w in l]),
 ]
 
+#: extra size charged for "exotic" operators so that simpler explanations win
+#: (``x * 2`` before ``zip(x, x)``, ``x % 2 == 0`` before digit sums)
+OP_COST = {
+    "sum(int(c) for c in str({0}))": 2, "[int(c) for c in str({0})]": 2, "prod({0})": 2, "({0} ** {1})": 2,
+    "[a + b for a, b in zip({0}, {1})]": 2, "[a * b for a, b in zip({0}, {1})]": 2, "list(range({0}))": 1,
+    "list(range(1, {0} + 1))": 1, "[sum({0}[:i + 1]) for i in range(len({0}))]": 2, "{0}.count({1})": 1,
+    "list(dict.fromkeys({0}))": 1, "''.join(dict.fromkeys({0}))": 1, "int({0})": 1,
+}
+
 INT_CONSTS = [0, 1, 2, 3, 10]
 STR_CONSTS = [" ", ""]
 
@@ -289,7 +298,7 @@ def _enumerate(terminals: List[Prog], ops, max_size: int, n_ex: int, deadline: f
         if time.monotonic() > deadline or (hits and size > hits[0].size + 1) or len(hits) >= 64:
             break
         for code, types, fn in ops:
-            for parts in _compositions(size - 1, len(types)):
+            for parts in _compositions(size - 1 - OP_COST.get(code, 0), len(types)):
                 arg_pools = [pools.get((s, t), []) for s, t in zip(parts, types)]
                 if any(not pl for pl in arg_pools):
                     continue
@@ -357,7 +366,8 @@ def synthesize(examples: List[Tuple[Tuple[Any, ...], Any]], queries: Sequence[Tu
         if typ is None:
             return None
         terminals.append(Prog(ARG_NAMES[j], typ, 1, vals))
-    terminals += [Prog(str(c), "int", 1, (c,) * n) for c in INT_CONSTS]
+    # small constants are cheap; 3 and 10 cost more, so "n == 3" doesn't beat "n % 2 == 0"
+    terminals += [Prog(str(c), "int", 1 if c <= 2 else 2, (c,) * n) for c in INT_CONSTS]
     terminals += [Prog(repr(c), "str", 1, (c,) * n) for c in STR_CONSTS]
 
     deadline = time.monotonic() + time_limit

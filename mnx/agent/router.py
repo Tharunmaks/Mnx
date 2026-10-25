@@ -39,6 +39,8 @@ def features(text: str) -> List[str]:
         shapes.append("<syllogism>")
     if re.search(r"[\[\]'\"]", low):
         shapes.append("<literal>")
+    if re.search(r"^\s*def \w+\(|```|\bassert\b|^\s*(import|class) ", low, re.M):
+        shapes.append("<code>")
     words = re.findall(r"[a-z]+", low)
     bigrams = [f"{a}_{b}" for a, b in zip(words, words[1:])]
     return words + bigrams + shapes * 2
@@ -52,6 +54,7 @@ class NaiveBayesRouter:
         self.counts: Dict[str, Counter] = {}
         self.totals: Dict[str, int] = {}
         self.vocab: set = set()
+        self.docs: Counter = Counter()
 
     def fit(self, examples: Iterable[Tuple[str, str]]) -> "NaiveBayesRouter":
         docs = defaultdict(list)
@@ -66,8 +69,22 @@ class NaiveBayesRouter:
             self.counts[label] = c
             self.totals[label] = sum(c.values())
             self.vocab.update(c)
+            self.docs[label] = len(texts)
             self.log_prior[label] = math.log(len(texts) / n)
         return self
+
+    def partial_fit(self, label: str, text: str) -> None:
+        """Learn one more example online (used when MNX learns from chats)."""
+        c = self.counts.setdefault(label, Counter())
+        feats = features(text)
+        c.update(feats)
+        self.totals[label] = self.totals.get(label, 0) + len(feats)
+        self.vocab.update(feats)
+        self.docs[label] += 1
+        if label not in self.labels:
+            self.labels = sorted(self.labels + [label])
+        n = sum(self.docs.values())
+        self.log_prior = {k: math.log(self.docs[k] / n) for k in self.labels}
 
     def predict(self, text: str) -> List[Tuple[str, float]]:
         """Posterior over labels, highest first."""

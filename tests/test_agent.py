@@ -20,7 +20,7 @@ from mnx.agent.skills.units import UnitSkill
 
 @pytest.fixture(scope="module")
 def agent():
-    return MNXAgent(today=dt.date(2026, 1, 1))
+    return MNXAgent(today=dt.date(2026, 1, 1), learn=False)
 
 
 # ------------------------------------------------------------------ algebra
@@ -214,9 +214,9 @@ def test_bm25_ranks_relevant_chunk_first():
 
 def test_memory_persists(tmp_path):
     path = tmp_path / "mem.jsonl"
-    a = MNXAgent(knowledge_dirs=[], memory_path=path)
+    a = MNXAgent(knowledge_dirs=[], memory_path=path, learn=False)
     assert "remember" in a.ask("remember that my name is Ada").text
-    b = MNXAgent(knowledge_dirs=[], memory_path=path)
+    b = MNXAgent(knowledge_dirs=[], memory_path=path, learn=False)
     assert "Your name is Ada" in b.ask("what is my name?").text
     assert Memory(path).facts == ["my name is Ada"]
 
@@ -246,7 +246,7 @@ def test_router_learns_intents():
 def test_agent_routes_and_answers(agent, q, expected, skill):
     ans = agent.ask(q)
     assert ans.skill == skill and expected in ans.text
-    assert ans.trace[0].startswith("router:")
+    assert ans.trace[0].startswith("agent:") and ans.trace[1].startswith("router:")
 
 
 @pytest.mark.parametrize("q", ["Write a poem about the sea", "Who will win the next election?", "What is the capital of Atlantis?"])
@@ -265,7 +265,7 @@ def test_benchmark_has_no_wrong_answers():
 def test_cli(capsys):
     from mnx.agent.__main__ import main
 
-    assert main(["--trace", "solve", "2x", "+", "3", "=", "11"]) == 0
+    assert main(["--no-learn", "--trace", "solve", "2x", "+", "3", "=", "11"]) == 0
     out = capsys.readouterr().out
     assert "x = 4" in out and "verified" in out
 
@@ -284,3 +284,98 @@ def test_neural_skill_keeps_only_passing_samples():
 def test_run_tests_sandbox_times_out():
     ok, err = run_tests("def f():\n    while True: pass\n", ["assert f()"], timeout=1)
     assert not ok and err == "timeout"
+
+
+# ------------------------------------------------------------ coding agent
+from mnx.agent.skills.code import CodeSkill, RecipeBook, default_recipe_dir, parse_asserts, undefined_names  # noqa: E402
+
+
+def test_every_recipe_passes_its_own_tests():
+    book = RecipeBook([default_recipe_dir()])
+    assert len(book.recipes) >= 70
+    for r in book.recipes:
+        ok, err = run_tests(r.code, r.tests, timeout=20)
+        assert ok, f"{r.name}: {err}"
+
+
+@pytest.mark.parametrize(
+    "q,expected",
+    [
+        ("write a python function that checks if a string is a palindrome", "def is_palindrome"),
+        ("implement merge sort", "def merge_sort"),
+        ("write code that converts a decimal number to binary", "def decimal_to_binary"),
+        ("write a function that converts an integer to a roman numeral", "def int_to_roman"),
+        ("create a stack class", "class Stack"),
+        ("write a function called fib that returns the nth fibonacci number", "def fib("),
+    ],
+)
+def test_code_agent_writes_tested_code(q, expected):
+    ans = CodeSkill().answer(q)
+    assert ans.verified and expected in ans.text and "Tests it passed" in ans.text
+
+
+def test_code_agent_declines_instead_of_guessing():
+    ans = CodeSkill().answer("write a function that sends an email via smtp")
+    assert ans.failed and not ans.verified
+    assert CodeSkill().answer("make a cake") is None
+
+
+def test_code_agent_solves_from_asserts_and_learns(tmp_path):
+    skill = CodeSkill(learned_dir=tmp_path)
+    q = "def mystery(a, b):\nassert mystery(2, 3) == 13\nassert mystery(1, 1) == 2\nassert mystery(0, 4) == 16\nassert mystery(3, 0) == 9"
+    ans = skill.answer(q)
+    assert ans.verified and "def mystery(a, b)" in ans.text
+    assert parse_asserts("mystery", ["assert mystery(2, 3) == 13"]) == [((2, 3), 13)]
+
+
+def test_code_agent_run_and_check():
+    skill = CodeSkill()
+    assert "45" in skill.answer("run this:\n```python\nprint(sum(range(10)))\n```").text
+    report = skill.answer("check this code:\n```python\ndef f(x):\n    return x + y\n```").text
+    assert "`y` is used but never defined" in report
+    assert "Syntax error on line 1" in skill.answer("debug:\n```python\ndef f(x)\n    return x\n```").text
+    assert undefined_names("import os\nfor i in range(3):\n    print(os.sep, i, j)") == [("j", 3)]
+
+
+# ---------------------------------------------------------------- learning
+def test_learning_from_feedback_and_corrections(tmp_path):
+    a = MNXAgent(state_dir=tmp_path, today=dt.date(2026, 1, 1))
+    assert a.ask("what is the capital of Wakanda?").skill == "abstain"
+    assert "learned" in a.ask("wrong, the answer is Birnin Zana").text
+    assert "Birnin Zana" in a.ask("What's the capital of Wakanda").text
+    a.ask("solve x^2 - 9 = 0")
+    assert a.ask("correct").skill == "feedback"
+    # everything is on disk, so a fresh agent remembers
+    b = MNXAgent(state_dir=tmp_path)
+    assert "Birnin Zana" in b.ask("capital of wakanda?").text
+    rows = (tmp_path / "transcript.jsonl").read_text().splitlines()
+    assert len(rows) == 6 and "learned_intents.tsv" in {p.name for p in tmp_path.iterdir()}
+
+
+def test_router_partial_fit_changes_prediction():
+    r = train_default_router()
+    q = "zorblat the quux"
+    before = dict(r.predict(q))["logic"]
+    for _ in range(5):
+        r.partial_fit("logic", q)
+    assert dict(r.predict(q))["logic"] > before
+
+
+def test_slow_answers_are_replayed(tmp_path):
+    a = MNXAgent(state_dir=tmp_path)
+    q = "[1,2,3] -> [2,4,6], [5] -> [10], [7] -> ?"
+    first = a.ask(q)
+    again = a.ask(q)
+    assert again.text == first.text and any("experience" in t for t in again.trace)
+
+
+def test_agent_refuses_images(agent):
+    ans = agent.ask("generate an image of a cat")
+    assert ans.skill == "chat" and "can't create images" in ans.text
+
+
+def test_code_holdout_has_no_wrong_answers():
+    from mnx.agent.evaluate import default_benchmark, load_benchmark, run
+
+    stats = run(load_benchmark(default_benchmark().with_name("code_holdout.jsonl")))
+    assert stats["code"]["wrong"] == 0
