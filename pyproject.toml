@@ -21,6 +21,7 @@ dependencies = []
 
 [project.optional-dependencies]
 coder = ["torch>=2.2,<3.0", "numpy>=1.24,<3.0"]
+browser = ["playwright>=1.40,<2.0"]
 dev = ["pytest>=8.0,<9.0"]
 
 [project.scripts]

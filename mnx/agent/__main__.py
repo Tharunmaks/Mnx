@@ -5,6 +5,8 @@
     python -m mnx.agent --trace "All men are mortal. Socrates is a man. Is Socrates mortal?"
     python -m mnx.agent                      # interactive chat
     python -m mnx.agent --kb ~/notes --memory ~/.mnx/memory.jsonl
+    python -m mnx.agent --tools web,gmail,drive     # optional: the web, Gmail and Drive (see docs/tools.md)
+    python -m mnx.agent --tools web --chrome        # read pages through your own Chrome (Playwright)
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from typing import List, Optional
 
 from mnx.agent.agent import MNXAgent, format_answer
 from mnx.agent.retrieval import default_knowledge_dir
+from mnx.agent.tools import build_tools
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,13 +31,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state", default="~/.mnx", help="folder where MNX1 keeps what it learns (default ~/.mnx)")
     p.add_argument("--no-learn", action="store_true", help="don't learn or log anything this run")
     p.add_argument("--ckpt", default=None, help="MNXCoder checkpoint dir: adds neural code proposals, kept only if tests pass (needs torch)")
+    p.add_argument("--tools", default="", help="optional online tools, comma separated: web, gmail, drive, google (= gmail,drive), all")
+    p.add_argument("--chrome", action="store_true", help="with --tools web: open pages in Chrome via Playwright instead of fetching them")
+    p.add_argument("--cdp", default="http://localhost:9222", help="Chrome remote-debugging URL to attach to (default http://localhost:9222)")
     return p
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     dirs = ([] if args.no_default_kb else [default_knowledge_dir()]) + [Path(k).expanduser() for k in args.kb]
-    agent = MNXAgent(knowledge_dirs=dirs, memory_path=Path(args.memory).expanduser() if args.memory else None, ckpt=args.ckpt,
+    tools = build_tools(args.tools.split(","), chrome=args.chrome, cdp=args.cdp) if args.tools else []
+    agent = MNXAgent(tools=tools, knowledge_dirs=dirs, memory_path=Path(args.memory).expanduser() if args.memory else None, ckpt=args.ckpt,
                      state_dir=None if args.no_learn else Path(args.state).expanduser(), learn=not args.no_learn)
     if args.question:
         print(format_answer(agent.ask(" ".join(args.question)), args.trace))
