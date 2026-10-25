@@ -71,7 +71,9 @@ covers, and easy to extend.
 
 **Which model does it beat?** None on the public coding benchmark. On
 [HumanEval](https://github.com/openai/human-eval) (164 Python problems,
-pass@1) MNX1 solves 12 (7.3%), against these published scores:
+pass@1) MNX1 solves 42 (25.6%) — but only **2 of the 82 problems nobody
+looked at while building it** (see the warning under Evaluation). Against
+published scores:
 
 | Model | HumanEval |
 |---|---:|
@@ -79,12 +81,13 @@ pass@1) MNX1 solves 12 (7.3%), against these published scores:
 | GPT-3.5 (same table) | 48.1% |
 | Qwen2-0.5B-Instruct ([model card](https://featherless.ai/models/Qwen/Qwen2-0.5B-Instruct/readme)) | 17.1% |
 | Qwen1.5-0.5B-Chat (same card) | 9.1% |
-| **MNX1** (`scripts/humaneval.py`, no tuning on the test half) | **7.3%** |
+| **MNX1** (`scripts/humaneval.py`, problems 82–163, never looked at) | **2.4%** |
 
 Those numbers come from different evaluation setups, so treat them as rough.
-What MNX1 does differently: of the 16 problems it answers, 12 are right (75%);
-on the other 148 it says it isn't sure and shows a labelled guess or nothing,
-where an LLM would always return code. The table above describes task types,
+What MNX1 does differently: of the 43 problems it answers, 42 are right (98%);
+on the other 121 it says it isn't sure and shows a labelled guess or nothing,
+where an LLM would always return code. It is far behind every LLM on breadth
+and far ahead of them on not being wrong. The table above describes task types,
 not benchmark results. `scripts/compare_models.py` runs any local model
 through [Ollama](https://ollama.com) on MNX's own test sets with the same
 scoring, so you can compare directly, for example against `qwen2.5:0.5b`.
@@ -183,7 +186,7 @@ solutions, save new verified code as recipes
 The coder never ships code it hasn't run.
 
 - **Write a function.** "implement merge sort", "write a function called fib
-  that returns the nth fibonacci number". It searches 78 hand-written recipes
+  that returns the nth fibonacci number". It searches 165 hand-written recipes
   in `data/code/` (BM25 over the description, tags and name, with a check
   that "decimal to binary" doesn't match `binary_to_decimal`), renames the
   function to the name you asked for, and runs the recipe's own tests in an
@@ -348,9 +351,10 @@ number that matters for trust. "Abstain" means it said it didn't know.
 |---|---:|---:|---:|---:|
 | `benchmark.jsonl` (written while building, used for tuning) | 83 | 83 (100%) | 0 | 0 |
 | `holdout.jsonl` (written afterwards; first run, no tuning) | 45 | 40 (89%) | 1 | 4 |
-| `code_holdout.jsonl` (15 coding tasks with hidden tests) | 15 | 11 (73%) | 0 | 4 |
-| `code_holdout2.jsonl` (20 def + assert tasks, more hidden tests) | 20 | 3 (15%) | 1 | 16 |
-| [HumanEval](https://github.com/openai/human-eval) (public; tuning looked only at problems 0–81) | 164 | 12 (7.3%) | 4 | 148 |
+| `code_holdout.jsonl` (15 coding tasks with hidden tests) | 15 | 12 (80%) | 0 | 3 |
+| `code_holdout2.jsonl` (20 def + assert tasks) — *no longer held out, see below* | 20 | 9 (45%) | 1 | 10 |
+| [HumanEval](https://github.com/openai/human-eval) problems 0–81 — *tuning half* | 82 | 40 (49%) | 0 | 42 |
+| **[HumanEval](https://github.com/openai/human-eval) problems 82–163 — never looked at** | 82 | **2 (2.4%)** | 1 | 79 |
 
 The coding holdout scored 10/15 with 2 wrong on its first run: "decimal to
 binary" was answered with a `binary_to_decimal` recipe and "merge two
@@ -396,14 +400,28 @@ Held-out misses, left unfixed so the numbers stay honest:
   questions whose wording didn't match the knowledge file ("percentage of
   the atmosphere", "what does RAM stand for").
 
-Both sets were written by the same author as the system and cover only what
-it was designed for, so **these numbers are not comparable to public LLM
-benchmarks**. They show the system does what it claims within its scope:
-zero hallucinated answers on the 15 out-of-scope questions, and 2 wrong
-answers in 163.
+**Read the HumanEval rows together.** The 49% on problems 0–81 is not a
+capability measurement. `data/code` was grown from 78 to 165 recipes while
+those problems were on screen, and several recipes cover the same classic
+tasks they ask for (prefixes, running balances, prime factors). That is
+memorisation of the tuning half, and it moved the untouched half only from
+0 to 2. `code_holdout2.jsonl` stopped being a holdout for the same reason:
+some of the new recipes (`average`, `clamp`, `is_sorted`) answer its tasks
+directly, which is why it jumped from 15% to 45%. **The honest headline for
+coding is 2 of 82 on problems 82–163.** The recipes are still worth having:
+each is tested, and they make MNX1 useful on everyday requests. They just
+don't make it a better programmer.
+
+Both self-written sets cover only what the system was designed for, so
+**those numbers are not comparable to public LLM benchmarks**. They show the system does what it claims within its scope:
+zero hallucinated answers on the 15 out-of-scope questions, and 1 wrong
+answer in 163.
 
 ## Limits
 
+- **It is not a general programmer.** On HumanEval problems it had never
+  seen, it solves about 1 in 40. It is strong on tasks that match a recipe
+  or a small searchable program, and silent on the rest.
 - **Narrow coverage.** Questions have to fit a skill's patterns. Rephrase
   into a supported form, or add a skill.
 - **Shallow language understanding.** The parsers are regular expressions
@@ -454,7 +472,7 @@ mnx/agent/
   retrieval.py    BM25 index, sentence extraction, memory store
   evaluate.py     benchmark runner (python -m mnx.agent.evaluate)
   skills/         code, math, units, dates, logic, sequences, synth, knowledge, chat, neural
-data/code/        78 verified code recipes (description, code, tests)
+data/code/        165 verified code recipes (description, code, tests)
 data/knowledge/   bundled knowledge base (markdown, one fact per sentence)
 data/router/      router training examples
 data/eval/        benchmark.jsonl (tuning); holdout.jsonl, code_holdout.jsonl, code_holdout2.jsonl (held out)

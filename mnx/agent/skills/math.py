@@ -106,6 +106,10 @@ def factorize(n: int) -> Dict[int, int]:
     return dict(sorted(out.items()))
 
 
+#: a question that is really Python source (def header, asserts, a code fence)
+_IS_CODE = re.compile(r"^\s*(?:def |class |```|assert )", re.M)
+
+
 # ------------------------------------------------------ language → algebra
 _LEADIN = re.compile(
     r"^(?:please\s+|now\s+|hey\s+)*(?:can you\s+|could you\s+)?(?:tell me\s+)?"
@@ -264,6 +268,8 @@ class MathSkill(Skill):
     description = "exact arithmetic, equations, systems, polynomials, primes"
 
     def answer(self, question: str) -> Optional[Answer]:
+        if _IS_CODE.search(question):
+            return None  # a def/assert/code block belongs to the coding agent, not here
         question = re.sub(r"\s*=\s*\?\s*$", "", question.strip())  # "19 * 216 = ?" asks for the value
         low = question.lower().strip()
         try:

@@ -38,7 +38,8 @@ CODE_STOP = set(tokenize("write create make implement build give generate code p
 
 #: abbreviations used in function names → the words people type
 _NAME_WORDS = {"int": "integer", "str": "string", "dict": "dictionary", "num": "number", "nums": "numbers",
-               "len": "length", "dfs": "depth first search", "bfs": "breadth first search", "lcs": "longest common subsequence"}
+               "len": "length", "dfs": "depth first search", "bfs": "breadth first search", "lcs": "longest common subsequence",
+               "gcd": "greatest common divisor", "lcm": "least common multiple", "hcf": "highest common factor"}
 
 
 def name_words(name: str) -> str:
