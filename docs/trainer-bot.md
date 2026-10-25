@@ -71,7 +71,8 @@ next step without restarting.
 current level, which looks reasonable and is ruinous: an hour of level-1
 training (arithmetic, leap years, units) took the model from **54% to 6%** on
 the unseen Q&A set, because nothing reminded it of the code and logic it
-already answered perfectly (code 100% -> 2%, syllogisms 100% -> 0%). Fresh
+already answered perfectly (code 100% -> 2%, syllogisms 100% -> 0%; the two
+score sheets are in [evidence/trainer-bot-forgetting.md](evidence/trainer-bot-forgetting.md)). Fresh
 questions come from the current level; replay comes from every kind. That is
 what "prevent catastrophic forgetting" has to mean here. `--warm-start` seeds
 the buffer with questions from every kind before step 1, so maintenance covers
