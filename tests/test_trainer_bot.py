@@ -42,6 +42,7 @@ def test_the_replay_buffer_keeps_the_hardest_when_full():
     assert len(buf) == 2 and "hard" in buf.items and "easy" not in buf.items
     assert all(i.kind == "arithmetic" for i in buf.sample(2, ("arithmetic",)))
     assert buf.sample(2, ("code",)) == []
+    assert len(buf.sample(2)) == 2  # with no filter, replay draws from every kind
 
 
 def test_the_buffer_survives_a_round_trip():
@@ -85,3 +86,14 @@ def test_a_question_the_model_keeps_failing_is_retired():
     buf2 = PrioritizedReplayBuffer(retire_after=0)   # 0 keeps the original behaviour
     buf2.add(Item("q", "a", "arithmetic", failures=99))
     assert len(buf2) == 1
+
+
+def test_replay_crosses_the_curriculum_so_the_model_does_not_forget():
+    """The bug that mattered: level-filtered replay cost the model everything else."""
+    buf = PrioritizedReplayBuffer()
+    buf.add(Item("code q", "a", "code", last_loss=0.2, last_score=0.9, times_seen=5))
+    buf.add(Item("logic q", "a", "syllogism", last_loss=0.2, last_score=0.9, times_seen=5))
+    buf.add(Item("sum q", "a", "arithmetic", last_loss=2.0, last_score=0.0))
+    kinds = {i.kind for i in buf.sample(3)}
+    assert kinds == {"code", "syllogism", "arithmetic"}
+    assert {i.kind for i in buf.sample(3, LEVELS[1])} == {"arithmetic"}

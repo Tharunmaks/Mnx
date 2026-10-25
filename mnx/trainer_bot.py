@@ -164,8 +164,15 @@ class PrioritizedReplayBuffer:
             worst = min(self.items.values(), key=lambda i: i.priority)
             self.items.pop(worst.q, None)
 
-    def sample(self, k: int, kinds: Sequence[str]) -> List[Item]:
-        pool = [i for i in self.items.values() if i.kind in kinds]
+    def sample(self, k: int, kinds: Optional[Sequence[str]] = None) -> List[Item]:
+        """Highest-priority items, from every kind unless ``kinds`` narrows it.
+
+        Replay deliberately ignores the curriculum level. Filtering it by level
+        is what makes the model forget: training on level 1 for an hour with
+        only level-1 replay took it from 54% to 6% on the unseen Q&A set,
+        because nothing reminded it of the code and logic it already knew.
+        """
+        pool = [i for i in self.items.values() if kinds is None or i.kind in kinds]
         if not pool or k <= 0:
             return []
         weights = [i.priority for i in pool]
@@ -259,6 +266,7 @@ class BotConfig:
     seed: int = 0
     level: int = 1
     retire_after: int = 8
+    warm_start: int = 400
     data_path: Optional[Path] = None
     verify: bool = True
     history: List[float] = field(default_factory=list)
@@ -285,9 +293,16 @@ class ContinuousQATrainerBot:
         self.hub = QAGeneratorHub(seed=cfg.seed + 1, data_path=cfg.data_path)
         self.step = 0
         self.level = cfg.level
+        self.warm_start = cfg.warm_start
         self.rolling: List[float] = []
         self.stop = False
         self._load_state(source == str(resume))
+        if self.warm_start and not self.buffer.items:
+            # fill the buffer across every kind so maintenance covers what the
+            # model can already do, from the first step
+            for it in self.hub.take(self.warm_start, LEVELS[5]):
+                self.buffer.add(it)
+            print(f"warm start: {len(self.buffer)} questions across every kind")
         signal.signal(signal.SIGINT, self._on_signal)
         signal.signal(signal.SIGTERM, self._on_signal)
 
@@ -383,7 +398,7 @@ class ContinuousQATrainerBot:
     def run_step(self) -> dict:
         kinds = LEVELS[self.level]
         n_replay = int(round(self.cfg.batch_size * self.cfg.replay_ratio))
-        replayed = self.buffer.sample(n_replay, kinds)
+        replayed = self.buffer.sample(n_replay)  # every kind, not just this level: that is what stops forgetting
         fresh = self.hub.take(self.cfg.batch_size - len(replayed), kinds)
         batch = replayed + fresh
         graded = self.quiz(batch)
@@ -491,6 +506,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sleep-ms", type=int, default=50)
     p.add_argument("--save-interval", type=int, default=50)
     p.add_argument("--level", type=int, default=1, choices=sorted(LEVELS))
+    p.add_argument("--warm-start", type=int, default=400,
+                   help="questions from every kind to seed the replay buffer with, so training one level does not "
+                        "make the model forget the others (0 = off)")
     p.add_argument("--retire-after", type=int, default=8,
                    help="retire a question after this many failures so the budget goes to what is still moving (0 = never)")
     p.add_argument("--data-path", default=None, help="hot folder or file of extra Q&A (.jsonl/.json/.txt)")
@@ -508,7 +526,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     cfg = BotConfig(ckpt=a.ckpt, workdir=Path(a.workdir), steps=a.steps, batch_size=a.batch_size,
                     replay_ratio=a.replay_ratio, active_epochs=a.active_epochs, pass_mark=a.pass_mark,
                     lr=a.lr, cpu_threads=a.cpu_threads, sleep_ms=a.sleep_ms, save_interval=a.save_interval,
-                    level=a.level, retire_after=a.retire_after,
+                    level=a.level, retire_after=a.retire_after, warm_start=a.warm_start,
                     data_path=Path(a.data_path) if a.data_path else None,
                     verify=not a.no_verify, seed=a.seed)
     return ContinuousQATrainerBot(cfg).run()

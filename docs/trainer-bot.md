@@ -65,6 +65,24 @@ a phone in Termux) usable while it runs.
 `{"q": ..., "a": ...}` lines in while the bot runs and it picks them up on the
 next step without restarting.
 
+## Two rules that came out of actually running it
+
+**Replay must cross the curriculum.** The first run filtered replay by the
+current level, which looks reasonable and is ruinous: an hour of level-1
+training (arithmetic, leap years, units) took the model from **54% to 6%** on
+the unseen Q&A set, because nothing reminded it of the code and logic it
+already answered perfectly (code 100% -> 2%, syllogisms 100% -> 0%). Fresh
+questions come from the current level; replay comes from every kind. That is
+what "prevent catastrophic forgetting" has to mean here. `--warm-start` seeds
+the buffer with questions from every kind before step 1, so maintenance covers
+the model's existing skills from the start.
+
+**Hopeless questions have to be retired.** Prioritized replay keeps
+resurfacing what the model fails, and exact multi-digit arithmetic is not
+learnable at 10M parameters, so the budget drains into impossible items and
+the rolling score sits flat. `--retire-after` (default 8) drops a question
+after that many failures.
+
 ## What it does and does not improve
 
 It improves what it measures: answering the generated Q&A. It does **not**
