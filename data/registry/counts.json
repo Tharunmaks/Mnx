@@ -1,0 +1,20 @@
+{
+  "total": 10309,
+  "verified": 9593,
+  "reference": 716,
+  "families": {
+    "recipe": 164,
+    "math": 26,
+    "stats": 105,
+    "unit": 548,
+    "date": 846,
+    "base": 70,
+    "cipher": 25,
+    "number": 3147,
+    "digits": 27,
+    "list": 1747,
+    "bits": 1768,
+    "text": 1120,
+    "stdlib": 716
+  }
+}

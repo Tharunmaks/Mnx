@@ -30,6 +30,7 @@ from mnx.agent.base import Answer, Skill
 from mnx.agent.learning import Learner
 from mnx.agent.retrieval import Memory, build_index, default_knowledge_dir
 from mnx.agent.router import NaiveBayesRouter, train_default_router
+from mnx.agent.skills.agents import RegistrySkill
 from mnx.agent.skills.chat import ChatSkill
 from mnx.agent.skills.code import CodeSkill
 from mnx.agent.skills.dates import DateSkill
@@ -134,6 +135,7 @@ class MNXAgent:
             SequenceSkill(),
             SynthSkill(synth_time_limit),
             KnowledgeSkill(self.index),
+            RegistrySkill(),  # ten thousand small agents, loaded the first time one is needed
         ]
         self.skills: Dict[str, Skill] = {s.name: s for s in skills}
 

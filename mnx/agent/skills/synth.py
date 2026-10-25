@@ -259,8 +259,8 @@ OP_COST = {
 
 #: character-level string operations, searched only when a string actually
 #: appears in the examples: they would otherwise slow every numeric search down
-CHAR_OPS = frozenset(o[0] for o in OPS if "for c in" in o[0] or o[0].endswith("key=len)")
-                     or "{0}.split()]" in o[0])
+CHAR_OPS = frozenset(o[0] for o in OPS if "str" in o[1] and ("for c in" in o[0] or o[0].endswith("key=len)")
+                                                            or "{0}.split()]" in o[0]))
 
 #: neighbour / all-pairs templates, searched only when the examples hold a
 #: sequence: like the character ops they would otherwise tax every search

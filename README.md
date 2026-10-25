@@ -203,6 +203,16 @@ The coder never ships code it hasn't run.
 - Code it wrote and verified is saved as a new recipe in the state folder,
   so the next similar request is answered from memory.
 
+### The agent registry
+
+Besides the specialists, MNX1 carries a registry of **10,309 small
+agents** (9,593 with asserts that passed at build time, 716 standard-library
+pointers that were not run). It searches them by what the question is about,
+re-runs the chosen agent's tests, applies it to the arguments in the question,
+and prints the result with the tests behind it. It never answers a `def` plus
+asserts from the registry — that belongs to the coder, which verifies against
+your own tests. See [docs/registry.md](docs/registry.md).
+
 ### How MNX1 learns
 
 Everything is kept in a state folder (`~/.mnx` by default, `--state` to
@@ -517,8 +527,10 @@ mnx/agent/
   retrieval.py    BM25 index, sentence extraction, memory store
   evaluate.py     benchmark runner (python -m mnx.agent.evaluate)
   skills/         code, math, units, dates, logic, sequences, synth, knowledge, chat, neural,
-                  local_model (opt-in bridge to a code model on localhost)
+                  local_model (opt-in bridge to a code model on localhost), agents (the registry skill)
+  registry.py     10,309 small agents: build, verify, search, run
 data/code/        165 verified code recipes (description, code, tests)
+data/registry/    the agent registry manifest (agents.jsonl.gz) and what it is made of
 data/knowledge/   bundled knowledge base (markdown, one fact per sentence)
 data/router/      router training examples
 data/eval/        benchmark.jsonl (tuning); holdout.jsonl, code_holdout.jsonl, code_holdout2.jsonl (held out)
@@ -530,6 +542,7 @@ mnx/export_mobile.py  int8 ExecuTorch export for phones
 mnx/trainer_bot.py    24/7 active-learning CPU trainer (quiz, grade, replay, curriculum)
 docs/mobile.md    running MNX1 and the model on a phone
 docs/trainer-bot.md  the 24/7 CPU Q&A trainer bot
+docs/registry.md  the agent registry and how MNX1 picks from it
 docs/local-model.md  the opt-in local code model proposer (Termux or Ollama)
 docs/coder.md     transformer documentation
 tests/            pytest suite (agent tests need only the standard library)
