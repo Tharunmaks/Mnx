@@ -27,7 +27,8 @@ _RULES = [
      "I can't create images, video or audio: I'm a text-only assistant. I can write code, solve math, reason "
      "through logic and answer from my knowledge base. If you want, I can write Python that draws something (e.g. with turtle)."),
     (r"^.*\b(browse|search the (web|internet)|google|look up online|latest news|weather (today|tomorrow)|stock price)\b.*$",
-     "I work offline, so I can't browse the internet or fetch live data like news, weather or prices."),
+     "I work offline, so I can't browse the internet or fetch live data like news, weather or prices. "
+     "Start me with --tools web to let me open pages and search the web."),
     (r"^(hi|hello|hey|hiya|yo|good (morning|afternoon|evening))\b.*$", "Hello! Ask me a math, logic, date, unit or factual question. Type 'help' to see what I can do."),
     (r"^(thanks|thank you|thx|cheers|nice|great|cool|ok|okay|nice job|good job)\b.*$", "You're welcome."),
     (r"^(bye|goodbye|see you|quit|exit)\b.*$", "Goodbye!"),
@@ -46,10 +47,15 @@ class ChatSkill(Skill):
     name = "chat"
     description = "greetings, help and self-description"
 
+    def __init__(self, online: bool = False):
+        self.online = online
+
     def answer(self, question: str) -> Optional[Answer]:
         q = question.strip().lower()
         for pat, reply in _RULES:
             if re.match(pat, q):
+                if self.online and reply.startswith("I work offline"):
+                    reply = "I can use the web, but I couldn't tell what to open. Try \"search the web for ...\" or \"open <url>\"."
                 refusal = reply.startswith(("I can't", "I work offline"))  # a polite "can't do that" is an abstention
                 return Answer(reply, self.name, 0.9, True, ["matched a conversation template"], failed=refusal)
         return None
