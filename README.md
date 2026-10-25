@@ -133,6 +133,8 @@ can be traded for **external knowledge, tools, search and verification**:
 question
    │
    ├─ feedback ("correct" / "wrong, the answer is X")? → learn from it
+   ├─ "open <url>", "check my email", "search my drive"? → browser / mail / files agent
+   │     (only with --tools; live data, never replayed; see docs/tools.md)
    ├─ corrected before? → your answer, credited to you
    ├─ solved before by a slow agent? → replay the verified answer
    ▼
@@ -246,6 +248,15 @@ mnx> Birnin Zana
 python -m mnx.agent --kb ~/notes --memory ~/.mnx/memory.jsonl
 you> remember that the standup is at 9:30
 you> when is the standup?
+```
+
+Optional online tools (off by default; details in [docs/tools.md](docs/tools.md)):
+
+```bash
+python -m mnx.agent --tools web "open https://en.wikipedia.org/wiki/Sea_otter"   # read pages, search the web
+python -m mnx.agent --tools web --chrome                                       # through your own Chrome (Playwright)
+python -m mnx.agent.tools.google login                                         # once, with your own Google OAuth client
+python -m mnx.agent --tools gmail,drive                                        # "check my email", "search my drive for budget"
 ```
 
 Python API:
@@ -428,6 +439,10 @@ answers in 163.
 - **Learning is lightweight.** It learns corrections, phrasings and
   solutions, not new reasoning ability. A correction applies to that
   question and close rephrasings.
+- **Offline unless you opt in.** With `--tools` it can read the web, Gmail
+  and Drive, but it only reads (plus Gmail drafts) and it finds what to do
+  from fixed phrasings, not open-ended instructions. It can't fill in forms
+  or click around websites for you.
 - **Not better than every model.** Inside its skills it is exact, checked
   and fast; outside them a large model will answer far more questions.
 
@@ -454,6 +469,7 @@ mnx/agent/
   retrieval.py    BM25 index, sentence extraction, memory store
   evaluate.py     benchmark runner (python -m mnx.agent.evaluate)
   skills/         code, math, units, dates, logic, sequences, synth, knowledge, chat, neural
+  tools/          optional online agents: web (+ Chrome via Playwright), gmail, drive, google (OAuth sign-in)
 data/code/        78 verified code recipes (description, code, tests)
 data/knowledge/   bundled knowledge base (markdown, one fact per sentence)
 data/router/      router training examples
@@ -464,6 +480,7 @@ docs/sample-session.md  the output of that script
 mnx/*.py          MNX 2.0 Max Coder transformer: tokenizer, model, data (incl. streaming), train, generate
 mnx/export_mobile.py  int8 ExecuTorch export for phones
 docs/mobile.md    running MNX1 and the model on a phone
+docs/tools.md     the optional web, Chrome, Gmail and Drive agents
 docs/coder.md     transformer documentation
 tests/            pytest suite (agent tests need only the standard library)
 ```

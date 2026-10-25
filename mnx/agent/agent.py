@@ -5,6 +5,7 @@
     question
        ├─ feedback? ("correct" / "wrong, the answer is X") → learn, reply
        ├─ corrected before? → your answer, credited to you
+       ├─ an explicit tool request ("open <url>", "check my email")? → that tool agent, if enabled
        ├─ solved before by a slow agent? → replay the verified answer
        └─ router (naive Bayes prior over skills, updated online)
             → specialist agents, each a group of skills:
@@ -13,6 +14,7 @@
                 reasoner     logic
                 researcher   knowledge, memory
                 conversation chat
+                browser / mail / files   web, Chrome, Gmail, Drive (optional, --tools)
             → rank candidates by confidence, verification and prior
             → best answer, or "I don't know" below the threshold
        → log to the transcript, self-train on verified answers
@@ -39,6 +41,7 @@ from mnx.agent.skills.math import MathSkill
 from mnx.agent.skills.sequences import SequenceSkill
 from mnx.agent.skills.synth import SynthSkill
 from mnx.agent.skills.units import UnitSkill
+from mnx.agent.tools import TOOL_AGENTS
 
 ABSTAIN = (
     "I don't know. None of my skills could produce an answer I trust, and I didn't find it in my knowledge base. "
@@ -53,7 +56,7 @@ AGENTS: Dict[str, Tuple[str, ...]] = {
     "researcher": ("knowledge", "memory", "learned"),
     "conversation": ("chat", "feedback"),
 }
-SKILL_TO_AGENT = {s: a for a, skills in AGENTS.items() for s in skills}
+SKILL_TO_AGENT = {s: a for a, skills in {**AGENTS, **TOOL_AGENTS}.items() for s in skills}
 
 #: skills that are slow; only tried when the router gives them some weight
 _EXPENSIVE = {"synth"}
@@ -78,6 +81,10 @@ class MNXAgent:
         proposals for the coding agent (requires PyTorch).
     threshold:
         Minimum ranking score for an answer; below it the agent abstains.
+    tools:
+        Optional tool skills (see :func:`mnx.agent.tools.build_tools`) that
+        reach the web, Chrome, Gmail or Drive. Empty by default: MNX1 is
+        offline unless you opt in.
     """
 
     def __init__(
@@ -91,6 +98,7 @@ class MNXAgent:
         synth_time_limit: float = 4.0,
         state_dir: Optional[Path] = None,
         learn: bool = True,
+        tools: Sequence[Skill] = (),
     ):
         dirs = list(knowledge_dirs) if knowledge_dirs is not None else [default_knowledge_dir()]
         self.learner = Learner(state_dir) if learn else None
@@ -113,7 +121,7 @@ class MNXAgent:
             # the expert-stream model was trained with the tests as comments above the function
             proposers.append(lambda prompt, tests: [assemble(prompt, c) for c in sampler(prompt_for(prompt, tests[:4]), 16)])
         skills: List[Skill] = [
-            ChatSkill(),
+            ChatSkill(online="web" in {t.name for t in tools}),
             MemorySkill(self.index, self.memory),
             CodeSkill(learned_dir=self.learner.recipe_dir if self.learner else None, proposers=proposers),
             MathSkill(),
@@ -125,6 +133,7 @@ class MNXAgent:
             KnowledgeSkill(self.index),
         ]
         self.skills: Dict[str, Skill] = {s.name: s for s in skills}
+        self.tools: Dict[str, Skill] = {t.name: t for t in tools}
 
     # ------------------------------------------------------------------ API
     def ask(self, question: str) -> Answer:
@@ -133,13 +142,26 @@ class MNXAgent:
             return Answer("Ask me something, or type 'help'.", "chat", 1.0)
         ans = self._answer(q)
         if self.learner:
-            self.learner.observe(q, ans, self.router, SKILL_TO_AGENT.get(ans.skill, "none"))
+            logged = ans
+            if ans.skill in self.tools:  # keep email and file contents out of the transcript
+                logged = Answer(f"[{ans.skill}: {ans.text.splitlines()[0][:120]}]", ans.skill, ans.confidence, False, failed=ans.failed)
+            self.learner.observe(q, logged, self.router, SKILL_TO_AGENT.get(ans.skill, "none"))
         return ans
 
     def _answer(self, q: str) -> Answer:
         start = time.perf_counter()
         if self.learner:
-            for shortcut in (self.learner.handle_feedback(q, self.router), self.learner.lookup_correction(q), self.learner.replay(q)):
+            fb = self.learner.handle_feedback(q, self.router)
+            if fb is not None:
+                fb.trace = [f"agent: {SKILL_TO_AGENT.get(fb.skill, 'learner')}"] + fb.trace
+                return fb
+        for name, tool in self.tools.items():  # live data: asked for explicitly, never replayed
+            ans = tool.answer(q)
+            if ans is not None:
+                ans.trace = [f"agent: {SKILL_TO_AGENT.get(name, name)} → skill: {name}", f"{(time.perf_counter() - start) * 1000:.0f} ms"] + ans.trace
+                return ans
+        if self.learner:
+            for shortcut in (self.learner.lookup_correction(q), self.learner.replay(q)):
                 if shortcut is not None:
                     shortcut.trace = [f"agent: {SKILL_TO_AGENT.get(shortcut.skill, 'learner')}"] + shortcut.trace
                     return shortcut
