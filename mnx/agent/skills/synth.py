@@ -229,6 +229,11 @@ OP_COST = {
     "{0}.replace({1}, '')": 1,
 }
 
+#: character-level string operations, searched only when a string actually
+#: appears in the examples: they would otherwise slow every numeric search down
+CHAR_OPS = frozenset(o[0] for o in OPS if "for c in" in o[0] or o[0].endswith("key=len)")
+                     or "{0}.split()]" in o[0])
+
 INT_CONSTS = [0, 1, 2, 3, 10]
 STR_CONSTS = [" ", ""]
 
@@ -430,7 +435,10 @@ def synthesize(examples: List[Tuple[Tuple[Any, ...], Any]], queries: Sequence[Tu
                             if vals is not None:
                                 yield Prog(f"({a.code} if {c.code} else {b.code})", ttype, size, vals)
 
-    hits = _enumerate(terminals, OPS, max_size, n_ex, deadline, target=target, extra=extra)
+    has_str = any(isinstance(v, str) or (isinstance(v, list) and any(isinstance(e, str) for e in v))
+                  for i in inputs for v in i) or any(isinstance(v, str) for v in target_vals)
+    ops = OPS if has_str else [o for o in OPS if o[0] not in CHAR_OPS]
+    hits = _enumerate(terminals, ops, max_size, n_ex, deadline, target=target, extra=extra)
     if not hits:
         return None
     hits.sort(key=lambda p: p.size)
