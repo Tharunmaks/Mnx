@@ -1,0 +1,199 @@
+# label	text — training data for the MNX router (multinomial naive Bayes)
+math	what is 2 + 2
+math	calculate 15% of 240
+math	what is 17 times 23
+math	solve 2x + 3 = 11
+math	solve x^2 - 5x + 6 = 0
+math	find x if 3x - 7 = 20
+math	what's the square root of 144
+math	compute 2^64
+math	evaluate (3 + 4) * 5 / 7
+math	is 97 prime
+math	what are the prime factors of 360
+math	factor x^2 + 5x + 6
+math	expand (x + 1)^3
+math	derivative of x^3 + 2x
+math	integrate 3x^2 + 2x
+math	what is 1/3 + 1/6
+math	solve x + y = 10, x - y = 2
+math	how much is 1234 divided by 4
+math	what is 12 choose 3
+math	gcd of 48 and 180
+math	what is 10 factorial
+math	simplify (x+2)(x-2)
+math	what is 3 to the power of 5
+math	log(1000)
+math	sqrt(2) * sqrt(8)
+math	what is 7 minus 12
+math	what is 0.1 + 0.2
+math	lcm of 4 and 6
+math	what is 25 percent of 80
+math	x^3 - 6x^2 + 11x - 6 = 0
+math	is 1000003 a prime number
+math	solve for y: 2x + 3y = 6
+math	what is 99 squared
+math	sin(pi / 2)
+math	what is the sum of 45 and 67
+units	convert 5 km to miles
+units	how many feet are in a mile
+units	100 fahrenheit in celsius
+units	what is 3 hours in minutes
+units	10 kg to pounds
+units	how many ounces in a pound
+units	convert 2 liters to gallons
+units	1 gb in mb
+units	how many seconds in a day
+units	60 mph to km/h
+units	convert 30 celsius to fahrenheit
+units	how many centimeters in an inch
+units	5 feet in meters
+units	convert 1000 calories to kilojoules
+units	how many cups in a gallon
+units	1 light year in km
+units	what is 350 kelvin in celsius
+units	convert 500 grams to ounces
+units	how many meters in a kilometer
+units	2 weeks in hours
+units	convert 1 acre to square meters
+units	how many bytes in a kilobyte
+units	70 kg in stone
+units	convert 26.2 miles to km
+units	how many milliliters in a liter
+dates	what day of the week was july 4, 1776
+dates	what day is 2024-02-29
+dates	how many days between 2024-01-01 and 2024-12-25
+dates	what date is 100 days after 2024-01-01
+dates	is 2024 a leap year
+dates	was 1900 a leap year
+dates	what is the date today
+dates	what day of the week is christmas 2030
+dates	how many days from 1 january 2000 to 1 january 2001
+dates	what date is 90 days before 2025-03-01
+dates	what weekday was 1969-07-20
+dates	how many weeks between 2023-01-01 and 2023-06-01
+dates	what day of the week was i born on 1990-05-17
+dates	what date will it be in 30 days
+dates	is 2100 a leap year
+dates	how many days until 2030-01-01 from 2026-10-25
+dates	what day was 14 february 2000
+dates	2 weeks after 2024-03-10
+dates	what is today's date
+dates	which day of the week is 2025-12-25
+logic	all men are mortal. socrates is a man. is socrates mortal?
+logic	all birds can fly. tweety is a bird. can tweety fly?
+logic	no reptiles have fur. all snakes are reptiles. kaa is a snake. does kaa have fur?
+logic	all cats are mammals. all mammals are animals. are all cats animals?
+logic	if something is a dog then it is loyal. rex is not loyal. is rex a dog?
+logic	every square is a rectangle. every rectangle is a polygon. is every square a polygon?
+logic	all roses are flowers. some flowers fade quickly. do all roses fade quickly?
+logic	no fish are mammals. nemo is a fish. is nemo a mammal?
+logic	all students in the class passed. maria is a student in the class. did maria pass?
+logic	if it rains then the ground is wet. the ground is not wet. did it rain?
+logic	all programmers drink coffee. alice is a programmer. does alice drink coffee?
+logic	all metals conduct electricity. copper is a metal. does copper conduct electricity?
+logic	no vegetarians eat meat. sam is a vegetarian. does sam eat meat?
+logic	all planets orbit a star. earth is a planet. does earth orbit a star?
+logic	all whales are mammals. moby is a whale. is moby a mammal?
+logic	penguins are birds. all birds have feathers. pingu is a penguin. does pingu have feathers?
+logic	every prime greater than 2 is odd. seven is a prime greater than 2. is seven odd?
+logic	all doctors are graduates. john is not a graduate. is john a doctor?
+logic	all a are b. all b are c. are all a c?
+logic	if something is a triangle then it has three sides. shape x is a triangle. does it have three sides?
+sequence	what comes next 2, 4, 8, 16
+sequence	next number in 1, 1, 2, 3, 5, 8
+sequence	continue the sequence 1, 4, 9, 16, 25
+sequence	2, 3, 5, 7, 11, ?
+sequence	3, 7, 11, 15, ...
+sequence	find the next term 1, 2, 6, 24, 120
+sequence	what is the next number 1, 3, 7, 15, 31
+sequence	complete the pattern 5, 10, 20, 40
+sequence	what number follows 100, 90, 80, 70
+sequence	next in the series 1, 8, 27, 64
+sequence	what comes after 0, 1, 3, 6, 10
+sequence	1, 10, 2, 20, 3, 30, next
+sequence	guess the next number 2, 6, 18, 54
+sequence	sequence 1, 2, 4, 7, 11, 16 what comes next
+sequence	the pattern is 81, 27, 9, 3 what is next
+sequence	next term of 4, 9, 14, 19, 24
+sequence	what's next: 1, 4, 16, 64
+sequence	continue: 10, 7, 4, 1
+sequence	2, 5, 10, 17, 26 next term
+sequence	find the missing next value 1, 3, 9, 27
+synth	f(1) = 2, f(2) = 4, f(3) = 6, f(10) = ?
+synth	[1,2,3] -> [2,4,6], [5] -> [10]
+synth	'hello' -> 'HELLO', 'abc' -> 'ABC'
+synth	write a function: [3,1,2] -> [1,2,3], [9,8] -> [8,9]
+synth	f(2, 3) = 5, f(10, 4) = 14
+synth	'hello world' -> 'Hello World', 'foo bar' -> 'Foo Bar'
+synth	[1,2,3,4] -> [2,4], [5,6,7,8] -> [6,8]
+synth	find a program: f(3)=6, f(4)=24, f(5)=120
+synth	'racecar' -> True, 'hello' -> False
+synth	'John Smith' -> 'JS', 'Ada Lovelace' -> 'AL'
+synth	[1,2,3] -> 6, [4,5] -> 9
+synth	f(-3) = 3, f(4) = 4, f(0) = 0
+synth	synthesize a function where f(1)=1, f(2)=4, f(3)=9
+synth	learn the transformation 'abc' -> 'cba', 'hello' -> 'olleh'
+synth	program by example [1,-2,3] -> [1,3], [-1,5] -> [5]
+synth	g(5) = 1, g(8) = 0, g(3) = 1
+synth	'a b c' -> 'abc', 'x y' -> 'xy'
+synth	examples: [4,1,3] -> 4, [2,9] -> 9
+synth	f([1,2]) = [2,1], f([1,2,3]) = [3,2,1]
+synth	'cat' -> 3, 'horse' -> 5
+knowledge	what is the capital of france
+knowledge	who wrote hamlet
+knowledge	when did world war ii end
+knowledge	what is photosynthesis
+knowledge	who invented the world wide web
+knowledge	how far is the moon from earth
+knowledge	what is the speed of light
+knowledge	who was the first person on the moon
+knowledge	what is dna
+knowledge	what is the largest planet
+knowledge	how many bones are in the human body
+knowledge	what is the chemical symbol for gold
+knowledge	who created python
+knowledge	what is a hash table
+knowledge	when was the berlin wall torn down
+knowledge	what is the tallest mountain in the world
+knowledge	what is machine learning
+knowledge	which ocean is the largest
+knowledge	who painted the mona lisa
+knowledge	what is the boiling point of water
+knowledge	what is binary search
+knowledge	when did india become independent
+knowledge	what is the transformer architecture
+knowledge	who discovered penicillin
+knowledge	how many planets are in the solar system
+knowledge	what is my name
+knowledge	where do i live
+knowledge	what is my favourite color
+memory	remember that my name is tharun
+memory	remember my favourite color is blue
+memory	please remember that i live in chennai
+memory	note that the meeting is on friday
+memory	remember: the wifi password is in the drawer
+memory	remember that my dog is called max
+memory	don't forget that my birthday is in may
+memory	keep in mind that i prefer python
+memory	remember the project deadline is december 1
+memory	save this: my car is a red hatchback
+chat	hi
+chat	hello
+chat	hey there
+chat	good morning
+chat	thanks
+chat	thank you
+chat	who are you
+chat	what can you do
+chat	help
+chat	what are you
+chat	how are you
+chat	bye
+chat	goodbye
+chat	are you an llm
+chat	how do you work
+chat	what is your name
+chat	nice job
+chat	ok
+chat	cool
+chat	tell me about yourself

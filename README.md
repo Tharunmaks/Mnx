@@ -1,227 +1,283 @@
-# MNX 2.0 Max Coder
+# MNX
 
-**MNX 2.0 Max Coder** is a decoder-only transformer language model for source
-code, implemented from scratch in PyTorch. Every part of the pipeline lives in
-this repository and depends on nothing but `torch` and `numpy`:
+MNX is a small AI assistant built from scratch. It uses **no pretrained
+language model and no API key**, and the agent runs on the Python standard
+library alone, offline, in milliseconds.
 
-- a byte-level **BPE tokenizer** trained from raw files, with fill-in-the-middle
-  (FIM) special tokens;
-- a modern **transformer architecture** (RMSNorm, RoPE, grouped-query
-  attention, SwiGLU, tied embeddings) with a KV-cache for fast decoding;
-- a **data pipeline** that packs source files into training windows and applies
-  the PSM fill-in-the-middle transformation;
-- a **training loop** (AdamW, warmup + cosine schedule, gradient clipping and
-  accumulation, validation, CSV logging, checkpoint resume);
-- an **inference CLI** for code completion and fill-in-the-middle with
-  greedy / temperature / top-k / top-p sampling.
+```text
+$ python -m mnx.agent "solve x^3 - 6x^2 + 11x - 6 = 0"
+x = 1 or x = 2 or x = 3
 
-No pre-trained weights or third-party model classes are used anywhere.
+$ python -m mnx.agent "All dolphins are mammals. All mammals breathe air. Flipper is a dolphin. Does Flipper breathe air?"
+Yes, Flipper breathes air.
 
-> **Honest note.** The bundled demo trains a ~1M-parameter model for a few
-> hundred steps on a laptop CPU using 51 tiny Python snippets. It learns to
-> reproduce and recombine that corpus; it is a toy. The `small`, `base` and
-> `max` presets describe real model sizes (up to a 7B-class flagship), but
-> pretraining them requires GPUs/TPUs, a large deduplicated code corpus and a
-> distributed training setup that are outside the scope of this repository.
+$ python -m mnx.agent "[1,2,3,4] -> [2,4], [5,6,7,8,10] -> [6,8,10], [11,12,14] -> ?"
+def f(x):
+    return [e for e in x if e % 2 == 0]
+f([11, 12, 14]) = [12, 14]
+
+$ python -m mnx.agent "Who will win the next election?"
+I don't know. None of my skills could produce an answer I trust, ...
+```
+
+The repository also contains **MNX 2.0 Max Coder**, a from-scratch PyTorch
+transformer for code (documented in [docs/coder.md](docs/coder.md)). The agent
+can use it as an optional proposer whose samples are checked by tests.
 
 ---
+
+## The honest answer to "smarter than the big models"
+
+A small system built from scratch will not beat frontier LLMs *in general*.
+Those models gain breadth from trillions of training tokens and billions of
+parameters, and nothing in this repository replaces that. It can't write an
+essay, translate, summarise a book or chat about anything at all.
+
+What a small system *can* do is beat them on **narrow tasks where the answer
+can be computed or checked**, and be more trustworthy everywhere else:
+
+| | Large LLM | MNX |
+|---|---|---|
+| `123456789 × 987654321`, `2^200`, `100!` | often slips a digit | exact (rational arithmetic, big integers) |
+| Solving equations and linear systems | usually right, unverified | exact, each root substituted back as a check |
+| Syllogisms and if-then deduction | can be talked into invalid conclusions | sound forward chaining with a printed proof, and "cannot be determined" when it can't be |
+| Inferring a program from examples | guesses | exhaustive search, re-runs the program on every example |
+| Facts it doesn't have | may hallucinate | says "I don't know" |
+| Open-ended language, broad world knowledge | strong | **not supported** |
+| Cost | GPUs or a paid API | a laptop CPU, no network |
+
+The aim, then, is a small system that is **always right or silent** on what it
+covers, and easy to extend.
+
+## Research: what makes small models punch above their weight
+
+The design follows results from the last few years showing that model size
+can be traded for **external knowledge, tools, search and verification**:
+
+1. **Retrieval instead of memorisation.** RAG (Lewis et al., 2020), RETRO
+   (Borgeaud et al., 2021) and Atlas (Izacard et al., 2022) showed that models
+   which look facts up in a corpus can match much larger closed-book models on
+   knowledge-heavy tasks. Facts in a text file are also easy to inspect,
+   correct and cite. → `mnx/agent/retrieval.py` (BM25 plus sentence extraction).
+2. **Tools and symbolic solvers.** Toolformer (Schick et al., 2023) and
+   program-aided LMs (PAL; Gao et al., 2022) hand arithmetic to a calculator
+   or interpreter instead of the network. AlphaGeometry (Trinh et al., 2024)
+   pairs a language model with a symbolic deduction engine, and the engine
+   does most of the proving. → exact algebra, units, calendar and logic skills.
+3. **Test-time search with a verifier.** Verifiers for maths word problems
+   (Cobbe et al., 2021), self-consistency voting (Wang et al., 2022) and
+   AlphaCode's sample-then-filter approach (Li et al., 2022) all show that
+   generating many candidates and *checking* them works better than trusting
+   a single guess. Snell et al. (2024) found that extra test-time compute can
+   beat a much larger model. → program synthesis (`synth.py`), held-out-term
+   checks for sequences, and the neural sample-and-verify skill.
+4. **Program synthesis from examples.** FlashFill (Gulwani, 2011), bottom-up
+   enumeration with observational-equivalence pruning (Udupa et al., 2013;
+   Albarghouthi et al., 2013) and DreamCoder (Ellis et al., 2021) learn exact
+   programs from a handful of examples, which is far more data-efficient than
+   gradient descent. → `mnx/agent/skills/synth.py`.
+5. **Small trained transformers on good data.** TinyStories (Eldan & Li,
+   2023) and phi-1, "Textbooks Are All You Need" (Gunasekar et al., 2023),
+   showed that small models trained on clean, focused or distilled data
+   (Hinton et al., 2015) are surprisingly capable within their domain. → the
+   existing `MNXCoder` transformer, used here only as a *proposer*, never as
+   the final authority.
+6. **Knowing when not to answer.** Selective prediction (answering only above
+   a confidence threshold) turns a mediocre model into a reliable one on the
+   questions it does answer. → every skill returns a calibrated confidence,
+   and the agent abstains below a threshold.
 
 ## Architecture
 
-`MNXCoder` (in `mnx/model.py`) is a pre-norm decoder-only transformer:
-
+```text
+question
+   │
+   ▼
+router ── multinomial naive Bayes on words, bigrams and shape tokens
+   │       (<num>, <op>, <eq>, <arrow>, <numlist>, <date>, <syllogism>…),
+   │       trained from scratch in milliseconds on data/router/intents.tsv
+   ▼
+skills, tried in router order (each may return a candidate or decline)
+   ├─ math       hand-written parser → exact Fractions; polynomials; rational
+   │             root theorem, quadratic formula, Durand–Kerner; Gaussian
+   │             elimination; Miller–Rabin and Pollard's rho; d/dx, ∫, factor
+   ├─ units      exact conversion factors; affine temperatures
+   ├─ dates      weekday, differences, offsets, leap years (checked against
+   │             Zeller's congruence)
+   ├─ logic      English premises → rules → forward chaining with modus
+   │             ponens and modus tollens; proofs, contradiction detection
+   ├─ sequence   hypotheses from simplest to most complex (constant, known
+   │             sequences, geometric, polynomial, linear recurrences,
+   │             differences, ratios, interleaved), checked on held-out terms
+   ├─ synth      bottom-up program search in a typed DSL (~75 operators,
+   │             map, filter, conditionals), observational equivalence, then
+   │             weighted voting over all consistent programs (2^-size)
+   ├─ memory     "remember that ..." adds facts to the index (optional JSONL)
+   ├─ knowledge  BM25 over data/knowledge/*.md (plus your own --kb folders),
+   │             sentence extraction, query expansion, cited sources
+   ├─ chat       templates for greetings and help
+   └─ neural-code (optional) sample MNXCoder completions and keep one that
+                 passes the asserts in a sandboxed subprocess
+   │
+   ▼
+rank candidates by confidence + verification bonus + router prior
+   │
+   ▼
+answer with a trace (router, proof, checks, sources), or "I don't know"
 ```
-tokens ─► Embedding ─► [ RMSNorm ─► GQA attention (RoPE, causal SDPA) ─► + ]
-                       [ RMSNorm ─► SwiGLU MLP                       ─► + ] × n_layers
-                   ─► RMSNorm ─► LM head (tied with embedding) ─► logits
-```
 
-| Component | Implementation |
-|-----------|----------------|
-| Normalisation | `RMSNorm`, pre-norm on both sub-blocks and before the LM head |
-| Positions | Rotary position embeddings (RoPE, half-split rotation, θ = 10 000) |
-| Attention | Grouped-query attention (`n_heads` query heads share `n_kv_heads` K/V heads) using `torch.nn.functional.scaled_dot_product_attention` with a causal mask |
-| Feed-forward | SwiGLU: `down(silu(gate(x)) * up(x))` |
-| Embeddings | Input and output embeddings tied |
-| Init | N(0, 0.02); residual output projections scaled by 1/√(2·n_layers) |
-| Decoding | KV cache; greedy, temperature, top-k and nucleus (top-p) sampling; `<\|eos\|>` stopping; sliding-window re-prefill past `max_seq_len` |
-
-### Presets
-
-Defined in `mnx/configs.py`. Only `tiny` is intended to be trained on a CPU;
-the others are configuration presets. Parameter counts are exact (tied weights
-counted once), computed with `MNXCoder.num_parameters()`.
-
-| Preset | Name | d_model | Layers | Heads (Q / KV) | d_ff | Context | Vocab | Params | Non-embedding |
-|--------|------|--------:|-------:|---------------:|-----:|--------:|------:|-------:|--------------:|
-| `tiny`  | `mnx-2.0-max-coder-tiny`  | 128  | 4  | 4 / 2  | 448   | 256    | 1 024  | **1.02M**   | 0.89M  |
-| `small` | `mnx-2.0-max-coder-small` | 768  | 12 | 12 / 4 | 2 048  | 4 096  | 32 768 | **100.7M**  | 75.5M  |
-| `base`  | `mnx-2.0-max-coder-base`  | 2048 | 24 | 16 / 8 | 5 632  | 8 192  | 32 768 | **1.20B**   | 1.13B  |
-| `max`   | `mnx-2.0-max-coder-max`   | 4096 | 32 | 32 / 8 | 14 336 | 16 384 | 32 768 | **7.11B**   | 6.98B  |
-
-```python
-from mnx import MNXCoder, get_config
-
-model = MNXCoder(get_config("small"))
-print(model.num_parameters())  # 100682496
-```
-
----
+Every skill tries to **verify its own answer**. Equation roots are
+substituted back. Factorisations are multiplied out. Unit conversions are
+converted back. Weekdays are cross-checked against a second algorithm.
+Synthesised programs are re-executed. Each sequence rule is fitted on the
+fewest terms it needs and must then predict the rest. Run with `--trace` to
+see these steps.
 
 ## Quickstart
 
-### 1. Install
-
 ```bash
-# CPU-only PyTorch (use the matching CUDA index URL for a GPU build)
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -r requirements.txt
-pip install -e .          # optional: installs the mnx-train / mnx-generate / mnx-tokenizer commands
+# no dependencies needed for the agent (pip install -e . adds an `mnx-agent` command)
+python -m mnx.agent "what is 15% of 240"
+python -m mnx.agent --trace "solve x + y = 10, x - y = 2"
+python -m mnx.agent                         # interactive; ':trace' toggles traces
+
+# your own knowledge and persistent memory
+python -m mnx.agent --kb ~/notes --memory ~/.mnx/memory.jsonl
+you> remember that the standup is at 9:30
+you> when is the standup?
 ```
 
-### 2. Train the tokenizer
-
-```bash
-python -m mnx.tokenizer train --data data/sample --vocab-size 1024 --out runs/tiny/tokenizer.json
-python -m mnx.tokenizer encode --tokenizer runs/tiny/tokenizer.json --text "def add(a, b):"
-```
-
-The tokenizer is byte-level BPE: ids 0–255 are raw bytes, the next six ids are
-the special tokens `<|bos|>`, `<|eos|>`, `<|pad|>`, `<|fim_prefix|>`,
-`<|fim_middle|>`, `<|fim_suffix|>`, and the rest are learned merges. Any string
-round-trips losslessly.
-
-### 3. Train the tiny demo model (CPU, ~15 s)
-
-```bash
-python -m mnx.train --config tiny --data data/sample --out runs/tiny \
-    --tokenizer runs/tiny/tokenizer.json --steps 300 --batch-size 8
-```
-
-If `--tokenizer` is omitted a tokenizer is trained on `--data` automatically.
-Typical output on a 4-core CPU:
-
-```
-corpus: 51 docs (46 train / 5 val), 7228 train tokens, seq_len=256, vocab=1024
-model mnx-2.0-max-coder-tiny: 1.02M parameters
-step      1/300 | lr 1.00e-04 | loss 6.9719 |    0.1s
-step     50/300 | lr 2.97e-03 | loss 2.8520 | val 4.0697 |    2.2s
-step    100/300 | lr 2.59e-03 | loss 1.5141 | val 3.9342 |    4.4s
-step    200/300 | lr 1.13e-03 | loss 0.2244 | val 4.4771 |    8.7s
-step    300/300 | lr 3.00e-04 | loss 0.1479 | val 4.7230 |   13.0s
-done. checkpoint: runs/tiny/ckpt.pt  best val loss: 3.9342
-```
-
-Training loss falls from ≈ ln(1024) ≈ 6.9 to ≈ 0.15 while the held-out loss
-bottoms out around 3.9 and then rises: with only ~7 K training tokens the model
-memorises the corpus, exactly as expected for a toy run. `runs/tiny/` contains
-`ckpt.pt`, `tokenizer.json`, `config.json` and `log.csv`
-(`step,lr,train_loss,val_loss,elapsed_s`). Add `--resume` to continue from the
-checkpoint.
-
-Useful flags: `--seq-len`, `--grad-accum`, `--lr`, `--warmup`, `--fim-rate`
-(fraction of documents rewritten as FIM, default 0.3), `--val-fraction`,
-`--set key=value ...` to override any `MNXConfig` field, `--device cuda`.
-
-### 4. Generate code
-
-```bash
-python -m mnx.generate --ckpt runs/tiny --prompt "def add(a, b):" --max-new-tokens 48 --temperature 0
-```
-
-```
---- MNX 2.0 Max Coder [mnx-2.0-max-coder-tiny, step 300] ---
-def add(a, b):
-    """Return the sum of a and b."""
-    return a + b
-
-
-def subtract(a, b):
-    """Return a minus b."""
-    return a - b
-```
-
-Sampling options: `--temperature` (0 = greedy), `--top-k`, `--top-p`, `--seed`,
-`--max-new-tokens`, `--raw` (print only the completion), `--prompt -` to read
-the prompt from stdin.
-
----
-
-## Fill-in-the-middle (FIM)
-
-During training a fraction of documents (`--fim-rate`) is rewritten in the
-PSM layout, so the model learns to produce the span between a prefix and a
-suffix:
-
-```
-<|bos|><|fim_prefix|> prefix <|fim_suffix|> suffix <|fim_middle|> middle <|eos|>
-```
-
-At inference time pass `--fim` with a prefix and suffix (`\n`/`\t` escapes are
-interpreted); the model emits the middle until `<|eos|>`:
-
-```bash
-python -m mnx.generate --ckpt runs/tiny --fim \
-    --prefix 'def is_prime(n):\n    if n < 2:\n        ' \
-    --suffix '\n    if n % 2 == 0:\n        return n == 2\n' \
-    --max-new-tokens 16 --temperature 0
-```
-
-Programmatic use:
+Python API:
 
 ```python
-from mnx.generate import complete, fill_in_middle
-from mnx.train import load_checkpoint
+from mnx.agent import MNXAgent
 
-model, tok, meta = load_checkpoint("runs/tiny")
-print(complete(model, tok, "def fib(n):", max_new_tokens=40, temperature=0.0))
-print(fill_in_middle(model, tok, prefix="def square(x):\n    ", suffix="\n", max_new_tokens=8))
+agent = MNXAgent()                 # knowledge_dirs=[...], memory_path=..., ckpt=...
+ans = agent.ask("factor x^2 - 5x + 6")
+print(ans.text, ans.verified, ans.confidence)
+print("\n".join(ans.trace))
 ```
 
----
+Things to try:
+
+| Skill | Example |
+|---|---|
+| math | `2^100`, `1/3 + 1/6`, `solve 2x^2 - 8 = 0`, `x^5 - x - 1 = 0`, `is 7919 prime`, `prime factors of 600851475143`, `expand (x+1)^3`, `derivative of x^3 + 2x`, `integrate 3x^2`, `20 choose 10` |
+| units | `convert 26.2 miles to km`, `98.6 F in C`, `how many ounces in a pound`, `1 TiB in GB` |
+| dates | `what day of the week was July 20, 1969`, `how many days between 2024-01-01 and 2024-12-25`, `what date is 100 days after 2024-01-01` |
+| logic | `If something is a dog then it is loyal. Rex is not loyal. Is Rex a dog?` |
+| sequence | `1, 3, 7, 15, 31, ?`, `1, 2, 4, 7, 11, 16, next` |
+| synth | `'John Smith' -> 'JS', 'Ada Lovelace' -> 'AL', 'Alan Turing' -> ?`, `f(3)=6, f(4)=24, f(5)=120, f(6)=?` |
+| knowledge | `who discovered penicillin`, `what is the time complexity of binary search` |
+
+### Optional: the neural proposer
+
+With PyTorch installed and a checkpoint trained as in
+[docs/coder.md](docs/coder.md), the agent can propose code with the
+transformer and keep only a sample that passes your tests:
+
+```bash
+pip install torch && python -m mnx.train --config tiny --data data/sample --out runs/tiny --steps 300
+python -m mnx.agent --ckpt runs/tiny $'def add(a, b):\n    """Return the sum of a and b."""\nassert add(2, 3) == 5\nassert add(-1, 1) == 0'
+```
+
+That example passes, but only because `add` is in the tiny model's 51-file
+training set. The bundled model is a toy, so expect "None of 16 samples
+passed" for anything new. The mechanism is the point here:
+a better-trained model plugs straight in.
+
+## Evaluation
+
+```bash
+python -m mnx.agent.evaluate                                     # tuning set
+python -m mnx.agent.evaluate --benchmark data/eval/holdout.jsonl # held-out set
+```
+
+"Wrong" means the agent gave an answer and it was incorrect. That's the
+number that matters for trust. "Abstain" means it said it didn't know.
+
+| Set | Questions | Correct | Wrong | Abstained |
+|---|---:|---:|---:|---:|
+| `benchmark.jsonl` (written while building, used for tuning) | 83 | 83 (100%) | 0 | 0 |
+| `holdout.jsonl` (written afterwards; first run, no tuning) | 45 | 40 (89%) | 1 | 4 |
+
+The router's 5-fold cross-validated accuracy on its training data is 84%. A
+routing mistake costs time but not correctness, because every skill decides
+for itself whether it can answer.
+
+Held-out misses, left unfixed so the numbers stay honest:
+
+- **Wrong (1):** a logic question with a second question embedded mid-text
+  (`... Is it true that Batty lays eggs? Batty is a bat. Does Batty lay
+  eggs?`). The sentence splitter doesn't split on `?`, so the premise "Batty
+  is a bat" was lost and it answered "cannot be determined".
+- **Abstained (4):** `2, 4, 12, 48, 240` (ratios 2, 3, 4, 5 starting from a
+  ratio of 2 is outside the hypothesis set), `'apple' -> 'APPLE!'` (the DSL
+  has no string constants taken from the examples), and two knowledge
+  questions whose wording didn't match the knowledge file ("percentage of
+  the atmosphere", "what does RAM stand for").
+
+Both sets were written by the same author as the system and cover only what
+it was designed for, so **these numbers are not comparable to public LLM
+benchmarks**. They show the system does what it claims within its scope:
+zero hallucinated answers on the 15 out-of-scope questions, and one wrong
+answer in 128.
+
+## Limits
+
+- **Narrow coverage.** Questions have to fit a skill's patterns. Rephrase
+  into a supported form, or add a skill.
+- **Shallow language understanding.** The parsers are regular expressions
+  and a recursive-descent grammar, not general NLU. Logic handles
+  categorical and if-then premises with unary predicates; it doesn't handle
+  "some", relations ("taller than"), quantities or time.
+- **Knowledge is only as good as the files.** The bundled knowledge base has
+  about 200 facts. Point `--kb` at your own notes for anything else.
+  Retrieval returns sentences; it doesn't combine facts across documents.
+- **Program search is bounded.** It covers programs up to size 8 in its DSL
+  and gives up after about 4 seconds. With few examples, the simplest
+  consistent program may still not be the one you meant. The trace lists the
+  alternatives, and the confidence drops when they disagree.
+- **Numeric roots** for degree ≥ 3 polynomials without rational roots are
+  floating point, checked against a residual tolerance.
+- **No learning from use** beyond the memory file. The router is retrained
+  from `intents.tsv` at start-up, and adding examples there is how you teach
+  it new phrasings.
+
+## Extending
+
+A skill is a class with a `name` and an `answer(question) -> Answer | None`
+method (see `mnx/agent/base.py`). Return `None` when the question isn't
+yours, set `verified=True` only after an independent check, and add a few
+routing examples to `data/router/intents.tsv`. Register the skill in
+`MNXAgent.__init__`.
 
 ## Project layout
 
-```
-mnx/
-  __init__.py     package exports (MNXCoder, MNXConfig, BPETokenizer, PRESETS, get_config)
-  tokenizer.py    byte-level BPE tokenizer: train / encode / decode / save / load + CLI
-  model.py        MNXConfig + MNXCoder (RMSNorm, RoPE, GQA, SwiGLU, KV cache, generate)
-  configs.py      named presets: tiny / small / base / max
-  data.py         corpus loading, document packing, FIM transform, CodeDataset
-  train.py        training loop, LR schedule, checkpoints + CLI (python -m mnx.train)
-  generate.py     completion and FIM inference + CLI (python -m mnx.generate)
-data/sample/      51 short self-authored Python snippets used by the demo and tests
-tests/            pytest suite (tokenizer, model, data, training, CLIs)
-pyproject.toml    package metadata (name: mnx)
-requirements.txt  pinned-ish dependencies
+```text
+mnx/agent/
+  agent.py        MNXAgent: route → try skills → rank → answer or abstain
+  __main__.py     CLI (python -m mnx.agent)
+  base.py         Answer / Skill types, number formatting
+  expr.py         from-scratch CAS core: tokenizer, parser, exact evaluator, polynomials, root finding
+  router.py       naive Bayes intent router + cross-validation
+  retrieval.py    BM25 index, sentence extraction, memory store
+  evaluate.py     benchmark runner (python -m mnx.agent.evaluate)
+  skills/         math, units, dates, logic, sequences, synth, knowledge, chat, neural
+data/knowledge/   bundled knowledge base (markdown, one fact per sentence)
+data/router/      router training examples
+data/eval/        benchmark.jsonl (tuning) and holdout.jsonl (held out)
+mnx/*.py          MNX 2.0 Max Coder transformer: tokenizer, model, data, train, generate
+docs/coder.md     transformer documentation
+tests/            pytest suite (agent tests need only the standard library)
 ```
 
 ## Tests
 
 ```bash
-pytest -q
+pip install pytest
+pytest -q                     # agent tests always; transformer tests too if torch is installed
 ```
-
-The suite covers tokenizer round trips and persistence, model output shapes,
-causality (changing a future token leaves earlier logits unchanged), KV-cache
-equivalence with the full forward pass, `generate()` length / eos handling /
-sliding window, RoPE relativity, the FIM transform, dataset windows, a 5-step
-training smoke test, checkpoint resume and both CLIs. It runs in a few seconds
-on CPU.
-
-## Scaling beyond the demo
-
-The code is device-agnostic (`--device cuda`) and the larger presets build
-with the same `MNXCoder` class, but training them for real needs:
-
-- a large, deduplicated, licence-filtered multi-language code corpus
-  (hundreds of billions of tokens for the `max` preset);
-- a 32 768-entry tokenizer trained on that corpus;
-- multi-GPU data/tensor parallelism, mixed precision, fused attention kernels
-  and a streaming data loader, none of which are included here;
-- an evaluation harness (e.g. pass@k on execution-based benchmarks) beyond the
-  held-out loss reported by `mnx.train`.
 
 ## License
 

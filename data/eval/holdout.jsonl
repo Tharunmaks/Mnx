@@ -1,0 +1,45 @@
+{"category": "math", "question": "what is 999 * 999", "expect": ["998001"]}
+{"category": "math", "question": "how much is 45% of 1200", "expect": ["540"]}
+{"category": "math", "question": "solve 5x + 2 = 3x - 8", "expect": ["x = -5"]}
+{"category": "math", "question": "solve x^2 - 2x + 1 = 0", "expect": ["x = 1"]}
+{"category": "math", "question": "what is (2/3) * (9/4)", "expect": ["3/2"]}
+{"category": "math", "question": "is 561 prime", "expect": ["No"]}
+{"category": "math", "question": "what is the cube root of 343", "expect": ["7"]}
+{"category": "math", "question": "integrate x^3", "expect": ["x^4"]}
+{"category": "math", "question": "what is 2 to the power of 10 minus 24", "expect": ["1000"]}
+{"category": "math", "question": "solve 2p + q = 7 and p - q = 2", "expect": ["p = 3", "q = 1"]}
+{"category": "units", "question": "how many grams in a pound", "expect": ["453.592"]}
+{"category": "units", "question": "convert 72 inches to feet", "expect": ["6"]}
+{"category": "units", "question": "what is 25 C in F", "expect": ["77"]}
+{"category": "units", "question": "convert 90 minutes to hours", "expect": ["1.5", "3/2"]}
+{"category": "units", "question": "how many kilobytes in a megabyte", "expect": ["1000"]}
+{"category": "dates", "question": "what day of the week was 2001-09-11", "expect": ["Tuesday"]}
+{"category": "dates", "question": "how many days from 2024-02-01 to 2024-03-01", "expect": ["29"]}
+{"category": "dates", "question": "what date is 7 days before 2024-01-03", "expect": ["December 27, 2023"]}
+{"category": "dates", "question": "is 1600 a leap year", "expect": ["Yes"]}
+{"category": "logic", "question": "All bats are mammals. No mammals lay eggs. Is it true that Batty lays eggs? Batty is a bat. Does Batty lay eggs?", "expect": ["No"]}
+{"category": "logic", "question": "Every poet is a dreamer. Some dreamers are rich. Lin is a poet. Is Lin a dreamer?", "expect": ["Yes"]}
+{"category": "logic", "question": "All lions are cats. All cats have whiskers. Leo is a lion. Does Leo have whiskers?", "expect": ["Yes"]}
+{"category": "logic", "question": "No insects have eight legs. All ants are insects. Is every ant an insect?", "expect": ["Yes"]}
+{"category": "sequence", "question": "what comes next 7, 14, 21, 28", "expect": ["35"]}
+{"category": "sequence", "question": "next: 1, 2, 4, 8, 16, 32", "expect": ["64"]}
+{"category": "sequence", "question": "1, 4, 7, 10, 13, what next", "expect": ["16"]}
+{"category": "sequence", "question": "next number 0, 1, 4, 9, 16", "expect": ["25"]}
+{"category": "sequence", "question": "what follows 2, 4, 12, 48, 240", "expect": ["1440"]}
+{"category": "synth", "question": "f(0) = 1, f(1) = 3, f(2) = 5, f(10) = ?", "expect": ["= 21"]}
+{"category": "synth", "question": "'apple' -> 'APPLE!', 'kiwi' -> 'KIWI!', 'fig' -> ?", "expect": ["'FIG!'"]}
+{"category": "synth", "question": "[5, 3, 8] -> 8, [1, 2] -> 2, [7] -> 7, [4, 9, 2] -> ?", "expect": ["= 9"]}
+{"category": "synth", "question": "[1, 2, 3] -> [1, 2, 3, 3], [4] -> [4, 1], [2, 2] -> ?", "expect": ["[2, 2, 2]"]}
+{"category": "knowledge", "question": "what's the capital of Kenya", "expect": ["Nairobi"]}
+{"category": "knowledge", "question": "who was the first person to walk on the moon", "expect": ["Armstrong"]}
+{"category": "knowledge", "question": "what percentage of the atmosphere is nitrogen", "expect": ["78%"]}
+{"category": "knowledge", "question": "what is the largest organ in the human body", "expect": ["skin"]}
+{"category": "knowledge", "question": "who invented the printing press", "expect": ["Gutenberg"]}
+{"category": "knowledge", "question": "what does RAM stand for", "expect": ["random-access memory"]}
+{"category": "knowledge", "question": "what is the smallest country", "expect": ["Vatican"]}
+{"category": "knowledge", "question": "who developed the theory of relativity", "expect": ["Einstein"]}
+{"category": "abstain", "question": "What will the weather be tomorrow?", "expect": null}
+{"category": "abstain", "question": "Write me a cover letter for a software job", "expect": null}
+{"category": "abstain", "question": "Who won the 2022 FIFA World Cup?", "expect": null}
+{"category": "abstain", "question": "What is love?", "expect": null}
+{"category": "abstain", "question": "Recommend a good book", "expect": null}
