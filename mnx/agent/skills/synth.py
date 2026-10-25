@@ -193,6 +193,24 @@ OPS: List[Tuple[str, Tuple[str, ...], Callable]] = [
     ("sorted({0})", ("slist",), sorted),
     ("[w.capitalize() for w in {0}]", ("slist",), lambda l: [w.capitalize() for w in l]),
     ("[w[::-1] for w in {0}]", ("slist",), lambda l: [w[::-1] for w in l]),
+    # str, character level: counting and filtering characters covers a lot of
+    # everyday string work that no single method call reaches
+    ("sum(1 for c in {0} if c.isupper())", ("str",), lambda t: sum(1 for c in t if c.isupper())),
+    ("sum(1 for c in {0} if c.islower())", ("str",), lambda t: sum(1 for c in t if c.islower())),
+    ("sum(1 for c in {0} if c.isdigit())", ("str",), lambda t: sum(1 for c in t if c.isdigit())),
+    ("sum(1 for c in {0} if c.isalpha())", ("str",), lambda t: sum(1 for c in t if c.isalpha())),
+    ("sum(1 for c in {0} if c in 'aeiou')", ("str",), lambda t: sum(1 for c in t if c in "aeiou")),
+    ("sum(1 for c in {0}.lower() if c in 'aeiou')", ("str",), lambda t: sum(1 for c in t.lower() if c in "aeiou")),
+    ("''.join(c for c in {0} if c.isalpha())", ("str",), lambda t: "".join(c for c in t if c.isalpha())),
+    ("''.join(c for c in {0} if c.isdigit())", ("str",), lambda t: "".join(c for c in t if c.isdigit())),
+    ("''.join(c for c in {0} if c.lower() not in 'aeiou')", ("str",),
+     lambda t: "".join(c for c in t if c.lower() not in "aeiou")),
+    ("''.join(c for c in {0} if c != {1})", ("str", "str"), lambda t, u: "".join(c for c in t if c != u)),
+    ("sum(ord(c) for c in {0})", ("str",), lambda t: sum(ord(c) for c in t)),
+    ("max({0}.split(), key=len)", ("str",), lambda t: max(t.split(), key=len)),
+    ("len({0}.split())", ("str",), lambda t: len(t.split())),
+    ("[len(w) for w in {0}.split()]", ("str",), lambda t: [len(w) for w in t.split()]),
+    ("{0}.replace({1}, '')", ("str", "str"), lambda t, u: t.replace(u, "") if u else t),
 ]
 
 #: extra size charged for "exotic" operators so that simpler explanations win
@@ -202,12 +220,19 @@ OP_COST = {
     "[a + b for a, b in zip({0}, {1})]": 2, "[a * b for a, b in zip({0}, {1})]": 2, "list(range({0}))": 1,
     "list(range(1, {0} + 1))": 1, "[sum({0}[:i + 1]) for i in range(len({0}))]": 2, "{0}.count({1})": 1,
     "list(dict.fromkeys({0}))": 1, "''.join(dict.fromkeys({0}))": 1, "int({0})": 1,
+    "sum(1 for c in {0} if c.isupper())": 1, "sum(1 for c in {0} if c.islower())": 1,
+    "sum(1 for c in {0} if c.isdigit())": 1, "sum(1 for c in {0} if c.isalpha())": 1,
+    "sum(1 for c in {0} if c in 'aeiou')": 1, "sum(1 for c in {0}.lower() if c in 'aeiou')": 2,
+    "''.join(c for c in {0} if c.isalpha())": 1, "''.join(c for c in {0} if c.isdigit())": 1,
+    "''.join(c for c in {0} if c.lower() not in 'aeiou')": 2, "''.join(c for c in {0} if c != {1})": 1,
+    "sum(ord(c) for c in {0})": 2, "max({0}.split(), key=len)": 1, "[len(w) for w in {0}.split()]": 1,
+    "{0}.replace({1}, '')": 1,
 }
 
 INT_CONSTS = [0, 1, 2, 3, 10]
 STR_CONSTS = [" ", ""]
 
-_SAFE_GLOBALS = {"__builtins__": {}, "len": len, "sum": sum, "max": max, "min": min, "abs": abs,
+_SAFE_GLOBALS = {"__builtins__": {}, "len": len, "sum": sum, "max": max, "min": min, "abs": abs, "ord": ord,
                  "sorted": sorted, "prod": math.prod, "list": list, "range": range, "dict": dict, "str": str, "int": int, "zip": zip}
 
 

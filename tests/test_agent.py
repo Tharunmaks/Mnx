@@ -383,3 +383,19 @@ def test_code_holdout_has_no_wrong_answers():
 
     stats = run(load_benchmark(default_benchmark().with_name("code_holdout.jsonl")))
     assert stats["code"]["wrong"] == 0
+
+
+def test_character_level_string_programs_are_found():
+    """Counting and filtering characters: everyday string work, searched not memorised."""
+    from mnx.agent.skills.synth import synthesize
+
+    cases = [
+        ([(("Hello",), 2), (("xyz",), 0), (("aeiou",), 5)], "aeiou"),
+        ([(("hello world",), "hll wrld"), (("abc",), "bc")], "join"),
+        ([(("a1b2",), "12"), (("xyz",), "")], "isdigit"),
+        ([(("one two three",), 3), (("a",), 1)], "split"),
+    ]
+    for examples, expected_fragment in cases:
+        res = synthesize(examples, (), time_limit=4.0)
+        assert res is not None, examples
+        assert expected_fragment in res.code, res.code
