@@ -327,6 +327,16 @@ in a newline split a token the model had always seen whole. That bug is
 fixed. A bigger model, the full 3M pairs and a GPU are the obvious next
 steps.
 
+### 24/7 active-learning trainer
+
+`python -m mnx.trainer_bot --ckpt runs/cpu --workdir runs/bot` keeps quizzing
+the model, grades each answer (token F1 plus exact numeric match), spends extra
+gradient steps on the batches it fails, replays what it got wrong before, and
+walks a five-level curriculum from arithmetic up to writing code. It
+checkpoints atomically, so a run that is killed resumes where it stopped.
+`--status` prints the rolling score by question type. See
+[docs/trainer-bot.md](docs/trainer-bot.md).
+
 ### On a phone
 
 Train on a PC, then `python -m mnx.export_mobile --ckpt runs/cpu --out mobile/ --check`
@@ -517,7 +527,9 @@ scripts/          demo_session.py (sample session), humaneval.py (public benchma
 docs/sample-session.md  the output of that script
 mnx/*.py          MNX 2.0 Max Coder transformer: tokenizer, model, data (incl. streaming), train, generate
 mnx/export_mobile.py  int8 ExecuTorch export for phones
+mnx/trainer_bot.py    24/7 active-learning CPU trainer (quiz, grade, replay, curriculum)
 docs/mobile.md    running MNX1 and the model on a phone
+docs/trainer-bot.md  the 24/7 CPU Q&A trainer bot
 docs/local-model.md  the opt-in local code model proposer (Termux or Ollama)
 docs/coder.md     transformer documentation
 tests/            pytest suite (agent tests need only the standard library)
