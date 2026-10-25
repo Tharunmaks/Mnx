@@ -323,8 +323,10 @@ def test_code_agent_declines_instead_of_guessing():
 def test_code_agent_solves_from_asserts_and_learns(tmp_path):
     skill = CodeSkill(learned_dir=tmp_path)
     q = "def mystery(a, b):\nassert mystery(2, 3) == 13\nassert mystery(1, 1) == 2\nassert mystery(0, 4) == 16\nassert mystery(3, 0) == 9"
-    ans = skill.answer(q)
-    assert ans.verified and "def mystery(a, b)" in ans.text
+    guess = skill.answer(q)  # programs that fit 4 asserts still disagree elsewhere: a labelled guess, not an answer
+    assert guess.failed and not guess.verified and "best guess" in guess.text and "def mystery(a, b)" in guess.text
+    ans = skill.answer(q + "\nassert mystery(5, 2) == 29\nassert mystery(-1, 2) == 5")
+    assert ans.verified and "def mystery(a, b)" in ans.text and "Passes all 6" in ans.text
     assert parse_asserts("mystery", ["assert mystery(2, 3) == 13"]) == [((2, 3), 13)]
 
 

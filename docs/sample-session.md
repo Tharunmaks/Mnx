@@ -80,20 +80,20 @@ assert fib(90) == 2880067194370816120
 ### 5.
 
 > def mystery(a, b):
->     """Find the rule."""
 > assert mystery(2, 3) == 13
 > assert mystery(1, 1) == 2
 > assert mystery(0, 4) == 16
 > assert mystery(3, 0) == 9
+> assert mystery(5, 2) == 29
+> assert mystery(-1, 2) == 5
 
 ```python
 def mystery(a, b):
     return ((a * a) + (b * b))
 ```
-Passes all 4 of your assert(s).
-Other programs also fit these asserts and behave differently on new inputs, so add a few more asserts if this isn't what you meant.
+Passes all 6 of your assert(s).
 
-*coder / code · verified · confidence 0.75*
+*coder / code · verified · confidence 0.95*
 
 ### 6.
 
@@ -288,4 +288,4 @@ I don't know. None of my skills could produce an answer I trust, and I didn't fi
 
 ---
 
-Learned during this session: 13 router examples from verified answers, 1 correction, 7 solved problems remembered for instant replay.
+Learned during this session: 14 router examples from verified answers, 1 correction, 7 solved problems remembered for instant replay.

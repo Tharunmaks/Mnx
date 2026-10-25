@@ -69,13 +69,25 @@ can be computed or checked**, and be more trustworthy everywhere else:
 The aim, then, is a small system that is **always right or silent** on what it
 covers, and easy to extend.
 
-**Which model does it beat?** None, in a measured head-to-head comparison:
-other models can't be downloaded in the environment where MNX was built, so
-no other model has been run on MNX's test sets. The table above describes
-task types, not benchmark results. `scripts/compare_models.py` runs any
-local model through [Ollama](https://ollama.com) on the same test sets with
-the same scoring, so you can measure it yourself, for example against
-`qwen2.5:0.5b`.
+**Which model does it beat?** None on the public coding benchmark. On
+[HumanEval](https://github.com/openai/human-eval) (164 Python problems,
+pass@1) MNX1 solves 12 (7.3%), against these published scores:
+
+| Model | HumanEval |
+|---|---:|
+| GPT-4 ([technical report](https://arxiv.org/pdf/2303.08774), 0-shot) | 67.0% |
+| GPT-3.5 (same table) | 48.1% |
+| Qwen2-0.5B-Instruct ([model card](https://featherless.ai/models/Qwen/Qwen2-0.5B-Instruct/readme)) | 17.1% |
+| Qwen1.5-0.5B-Chat (same card) | 9.1% |
+| **MNX1** (`scripts/humaneval.py`, no tuning on the test half) | **7.3%** |
+
+Those numbers come from different evaluation setups, so treat them as rough.
+What MNX1 does differently: of the 16 problems it answers, 12 are right (75%);
+on the other 148 it says it isn't sure and shows a labelled guess or nothing,
+where an LLM would always return code. The table above describes task types,
+not benchmark results. `scripts/compare_models.py` runs any local model
+through [Ollama](https://ollama.com) on MNX's own test sets with the same
+scoring, so you can compare directly, for example against `qwen2.5:0.5b`.
 
 ## Research: what makes small models punch above their weight
 
@@ -300,7 +312,7 @@ What one run on a 4-core CPU achieved (1 hour 48 minutes, 10.4M parameters,
 | Validation loss | 8.2 → 0.85 (0.55 on code after the code fine-tune) |
 | 600 unseen database questions, exact answer | 314 (52%): coding tasks 244/244, syllogisms 36/36, primality 17/17; arithmetic 6/152, dates 1/67 |
 | `code_holdout2.jsonl` tasks, model alone, 16 samples | 3 of 20 solved |
-| MNX1 with the model on both coding holdouts | 10/20 and 11/15, the same as without it, and no new wrong answers |
+| MNX1 with the model on both coding holdouts | the same as without it, and no new wrong answers |
 
 So the model learned the formats and the patterns it can memorise, but not
 arithmetic (a 10M model can't learn to multiply from examples; that's what
@@ -325,6 +337,8 @@ python -m mnx.agent.evaluate                                     # tuning set
 python -m mnx.agent.evaluate --benchmark data/eval/holdout.jsonl # held-out set
 python -m mnx.agent.evaluate --benchmark data/eval/code_holdout.jsonl # held-out coding tasks
 python -m mnx.agent.evaluate --benchmark data/eval/code_holdout2.jsonl --ckpt runs/cpu  # optional neural proposer
+pip download human-eval --no-deps -d /tmp/he && unzip -o /tmp/he/human_eval-*.whl -d /tmp/he
+python scripts/humaneval.py /tmp/he/human_eval/data/HumanEval.jsonl.gz                 # public benchmark
 ```
 
 "Wrong" means the agent gave an answer and it was incorrect. That's the
@@ -335,7 +349,8 @@ number that matters for trust. "Abstain" means it said it didn't know.
 | `benchmark.jsonl` (written while building, used for tuning) | 83 | 83 (100%) | 0 | 0 |
 | `holdout.jsonl` (written afterwards; first run, no tuning) | 45 | 40 (89%) | 1 | 4 |
 | `code_holdout.jsonl` (15 coding tasks with hidden tests) | 15 | 11 (73%) | 0 | 4 |
-| `code_holdout2.jsonl` (20 def + assert tasks, more hidden tests; first run) | 20 | 10 (50%) | 4 | 6 |
+| `code_holdout2.jsonl` (20 def + assert tasks, more hidden tests) | 20 | 3 (15%) | 1 | 16 |
+| [HumanEval](https://github.com/openai/human-eval) (public; tuning looked only at problems 0–81) | 164 | 12 (7.3%) | 4 | 148 |
 
 The coding holdout scored 10/15 with 2 wrong on its first run: "decimal to
 binary" was answered with a `binary_to_decimal` recipe and "merge two
@@ -345,13 +360,25 @@ recipes for the holdout tasks. The 4 it still declines are reverse_words,
 last_item on mixed-type lists, shout (needs a `'!'` constant) and
 merge_dicts. Learning is off during evaluation.
 
-`code_holdout2.jsonl` was committed before the expert stream existed. Its
-4 wrong answers come from program search fitting the 1 or 2 asserts shown
-with the wrong program: `max_of_three` returned `max(a, b)`, `drop_negatives`
-returned `sorted(xs)[1:]`, `average` returned `max(2, min(xs))`, and
-`sum_squares` returned a running-sum expression. Each passes the asserts it
-was given and fails the hidden ones. They are left unfixed here. Give more
-asserts and the search pins the program down.
+`code_holdout2.jsonl` was committed before the expert stream existed. On its
+first run MNX1 scored 10/20 with 4 wrong: program search fitted the 1 or 2
+asserts shown with the wrong program (`max_of_three` returned `max(a, b)`,
+`average` returned `max(2, min(xs))`). HumanEval showed the same problem at
+scale: 15 solved but 26 wrong on the first run. The fix is general, worked
+out on HumanEval problems 0–81 only:
+
+- When the programs that fit the asserts disagree on new inputs, the
+  description votes: programs whose operations its words mention ("sum",
+  "even", "reverse"…) count for more.
+- A program that uses operations or constants the description never
+  mentions is treated as a coincidence.
+- If that still leaves doubt, MNX1 doesn't answer. It shows its best guess,
+  labelled as checked only against your asserts, and asks for more asserts.
+
+That took HumanEval from 15 solved / 26 wrong to 12 solved / 4 wrong, and
+`code_holdout2` from 10/4 to 3/1. Fewer answers, far fewer wrong ones, in
+line with "right or silent". With more asserts the search usually pins the
+program down (the sample session's `mystery` puzzle needs 6).
 
 The router's 5-fold cross-validated accuracy on its training data is 83%. A
 routing mistake costs time but not correctness, because every skill decides
@@ -372,8 +399,8 @@ Held-out misses, left unfixed so the numbers stay honest:
 Both sets were written by the same author as the system and cover only what
 it was designed for, so **these numbers are not comparable to public LLM
 benchmarks**. They show the system does what it claims within its scope:
-zero hallucinated answers on the 15 out-of-scope questions, and 5 wrong
-answers in 163 (4 of them from too few asserts, above).
+zero hallucinated answers on the 15 out-of-scope questions, and 2 wrong
+answers in 163.
 
 ## Limits
 
@@ -431,7 +458,7 @@ data/code/        78 verified code recipes (description, code, tests)
 data/knowledge/   bundled knowledge base (markdown, one fact per sentence)
 data/router/      router training examples
 data/eval/        benchmark.jsonl (tuning); holdout.jsonl, code_holdout.jsonl, code_holdout2.jsonl (held out)
-scripts/          demo_session.py (sample session), eval_qa.py and eval_neural.py (model on unseen data),
+scripts/          demo_session.py (sample session), humaneval.py (public benchmark), eval_qa.py and eval_neural.py,
                   compare_models.py (score a local Ollama model on the same test sets)
 docs/sample-session.md  the output of that script
 mnx/*.py          MNX 2.0 Max Coder transformer: tokenizer, model, data (incl. streaming), train, generate

@@ -216,6 +216,33 @@ def _probes(examples: List[Tuple[tuple, object]]) -> List[tuple]:
     return [o for o in out if o not in seen]
 
 
+#: operations in synthesised code → words that describe them
+_OP_WORDS = [
+    (r"\bsum\(", "sum total add"), (r"\bmax\(", "max maximum largest biggest greatest highest"),
+    (r"\bmin\(", "min minimum smallest least lowest"), (r"\blen\(", "length count number many size long"),
+    (r"\bsorted\(", "sort sorted order ascending"), (r"\[::-1\]", "reverse reversed backwards"),
+    (r"% 2 == 0", "even"), (r"% 2 == 1|% 2 != 0", "odd"), (r"< 0\b", "negative below"), (r"> 0\b", "positive"),
+    (r"\*\* 2|(\b\w+) \* \1\b", "square squares squared"), (r"\*\* 3", "cube cubed"),
+    (r"\.upper\(", "upper uppercase capital case"), (r"\.lower\(", "lower lowercase case"), (r"\.split\(", "word words split"),
+    (r"\+ 1\b", "increment incremented incr add one next"), (r"\babs\(", "absolute distance difference"),
+    (r"fromkeys|\bset\(", "unique distinct duplicate duplicates"), (r"\bprod\(", "product multiply"),
+    (r"\* 2\b", "double twice"), (r"\.count\(", "count occurrences times"), (r"\.join\(", "join concatenate"),
+    (r"\[0\]", "first"), (r"\[-1\]", "last"), (r"\.title\(|\.capitalize\(", "capitalize capitalise title"),
+    (r"\.strip\(", "strip trim whitespace"), (r"\.replace\(", "replace remove"), (r"\.isdigit\(", "digit digits"),
+]
+
+
+def docstring_fit(code: str, words: str) -> int:
+    """How well a program's operations match the description: +1 per described op, -1 per op or
+    constant (3 or more) that the description never mentions."""
+    vocab = set(re.findall(r"[a-z]+", words))
+    score = sum(1 if vocab & set(ws.split()) else -1 for pat, ws in _OP_WORDS if re.search(pat, code))
+    for c in set(re.findall(r"(?<![\w.])(\d+)(?![\w.])", code)):
+        if int(c) >= 3 and c not in words:
+            score -= 1
+    return score
+
+
 def _call_args(name: str, tests: Sequence[str]) -> List[tuple]:
     """Literal argument tuples of every ``name(...)`` call in the asserts."""
     out = []
@@ -355,10 +382,31 @@ class CodeSkill(Skill):
 
                     agree = min(vote(res.hits, i)[1] for i in range(len(probes)))
                     trace.append(f"{len(res.hits)} programs fit; on {len(probes)} new probe inputs they agree ≥{agree:.0%}")
-                    if agree < 0.8:
+                    expr_code = res.code
+                    if agree < 0.8 and ('"""' in q or "'''" in q):
+                        # let the description vote too: programs whose operations match its words count for more
+                        words = (doc + " " + name.replace("_", " ")).lower()
+                        hits = [(c, size - 2 * docstring_fit(c, words), outs) for c, size, outs in res.hits]
+                        agree = min(vote(hits, i)[1] for i in range(len(probes)))
+                        outs = [vote(hits, i)[0] for i in range(len(probes))]
+                        fitting = sorted((h for h in hits if list(h[2]) == outs), key=lambda h: h[1])
+                        if agree >= 0.8 and fitting:
+                            expr_code = fitting[0][0]
+                            trace.append(f"the description breaks the tie: weighted by it, the programs agree ≥{agree:.0%}")
+                        else:
+                            ambiguous = True
+                            trace.append("ambiguous: different programs fit your asserts; add more asserts to pin it down")
+                    elif agree < 0.8:
                         ambiguous = True
                         trace.append("ambiguous: different programs fit your asserts; add more asserts to pin it down")
-                expr = res.code
+                else:
+                    expr_code = res.code
+                described = '"""' in q or "'''" in q
+                if described and docstring_fit(expr_code, (doc + " " + name.replace("_", " ")).lower()) < 0:
+                    # the program uses operations the description never mentions: likely a coincidence
+                    ambiguous = True
+                    trace.append("the program uses operations your description doesn't mention, so it may fit by coincidence")
+                expr = expr_code
                 for dsl, real in zip(ARG_NAMES, arg_names):
                     expr = re.sub(rf"\b{dsl}\b", real, expr)
                 code = f"def {name}({', '.join(arg_names)}):\n    return {expr}\n"
@@ -370,11 +418,16 @@ class CodeSkill(Skill):
                     if neural:
                         return self._ship(neural, tests, trace, "neural proposal (it reads the docstring) that passed your asserts",
                                           learn_from=q)
+                if ok and ambiguous:
+                    # several programs fit and disagree elsewhere: a guess, so it is not shipped as an answer
+                    trace.append("not returned as an answer: the asserts don't decide between the programs that fit")
+                    return Answer("I'm not sure. Several different programs pass your asserts and disagree on other "
+                                  f"inputs. My best guess, checked only against your asserts:\n```python\n{code}```\n"
+                                  "Add a few more asserts (especially edge cases) and I can pin it down.",
+                                  self.name, 0.4, False, trace, failed=True)
                 if ok:
-                    note = ("\nOther programs also fit these asserts and behave differently on new inputs, "
-                            "so add a few more asserts if this isn't what you meant.") if ambiguous else ""
                     return self._ship(code, tests, trace, "searched for the smallest program that fits your asserts",
-                                      learn_from=q, note=note)
+                                      learn_from=q)
             else:
                 trace.append("program search found nothing within its limits")
         # 3. other proposers (e.g. the neural model)

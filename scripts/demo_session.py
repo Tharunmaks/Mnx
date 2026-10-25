@@ -23,7 +23,7 @@ QUESTIONS = [
     "write a python function that checks if a string is a palindrome",
     "implement merge sort",
     "write a function called fib that returns the nth fibonacci number",
-    "def mystery(a, b):\n    \"\"\"Find the rule.\"\"\"\nassert mystery(2, 3) == 13\nassert mystery(1, 1) == 2\nassert mystery(0, 4) == 16\nassert mystery(3, 0) == 9",
+    "def mystery(a, b):\nassert mystery(2, 3) == 13\nassert mystery(1, 1) == 2\nassert mystery(0, 4) == 16\nassert mystery(3, 0) == 9\nassert mystery(5, 2) == 29\nassert mystery(-1, 2) == 5",
     "check this code:\n```python\ndef average(xs):\n    return total / len(xs)\n```",
     "run this:\n```python\nprint([n * n for n in range(6)])\n```",
     "write a function that sends an email via smtp",
