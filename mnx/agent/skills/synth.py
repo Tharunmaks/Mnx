@@ -211,6 +211,27 @@ OPS: List[Tuple[str, Tuple[str, ...], Callable]] = [
     ("len({0}.split())", ("str",), lambda t: len(t.split())),
     ("[len(w) for w in {0}.split()]", ("str",), lambda t: [len(w) for w in t.split()]),
     ("{0}.replace({1}, '')", ("str", "str"), lambda t, u: t.replace(u, "") if u else t),
+    # neighbour and all-pairs templates: comparisons across a sequence are a
+    # whole class of question ("is it sorted", "are two of them equal") that no
+    # element-wise map or filter can express
+    ("all(a <= b for a, b in zip({0}, {0}[1:]))", ("list",), lambda l: all(a <= b for a, b in zip(l, l[1:]))),
+    ("all(a < b for a, b in zip({0}, {0}[1:]))", ("list",), lambda l: all(a < b for a, b in zip(l, l[1:]))),
+    ("all(a >= b for a, b in zip({0}, {0}[1:]))", ("list",), lambda l: all(a >= b for a, b in zip(l, l[1:]))),
+    ("all(a > b for a, b in zip({0}, {0}[1:]))", ("list",), lambda l: all(a > b for a, b in zip(l, l[1:]))),
+    ("all(a == b for a, b in zip({0}, {0}[1:]))", ("list",), lambda l: all(a == b for a, b in zip(l, l[1:]))),
+    ("[b - a for a, b in zip({0}, {0}[1:])]", ("list",), lambda l: [b - a for a, b in zip(l, l[1:])]),
+    ("sum(1 for a, b in zip({0}, {0}[1:]) if a < b)", ("list",),
+     lambda l: sum(1 for a, b in zip(l, l[1:]) if a < b)),
+    ("len(set({0}))", ("list",), lambda l: len(set(l))),
+    ("sorted(set({0}))", ("list",), lambda l: sorted(set(l))),
+    ("(len(set({0})) == len({0}))", ("list",), lambda l: len(set(l)) == len(l)),
+    ("sorted({0})[len({0}) // 2]", ("list",), lambda l: sorted(_ne(l))[len(l) // 2]),
+    ("any(a + b == {1} for i, a in enumerate({0}) for b in {0}[i + 1:])", ("list", "int"),
+     lambda l, k: any(a + b == k for i, a in enumerate(l) for b in l[i + 1:])),
+    ("any(abs(a - b) < {1} for i, a in enumerate({0}) for b in {0}[i + 1:])", ("list", "int"),
+     lambda l, k: any(abs(a - b) < k for i, a in enumerate(l) for b in l[i + 1:])),
+    ("len(set({0}))", ("str",), lambda t: len(set(t))),
+    ("all(a <= b for a, b in zip({0}, {0}[1:]))", ("str",), lambda t: all(a <= b for a, b in zip(t, t[1:]))),
 ]
 
 #: extra size charged for "exotic" operators so that simpler explanations win
@@ -227,6 +248,13 @@ OP_COST = {
     "''.join(c for c in {0} if c.lower() not in 'aeiou')": 2, "''.join(c for c in {0} if c != {1})": 1,
     "sum(ord(c) for c in {0})": 2, "max({0}.split(), key=len)": 1, "[len(w) for w in {0}.split()]": 1,
     "{0}.replace({1}, '')": 1,
+    "all(a <= b for a, b in zip({0}, {0}[1:]))": 1, "all(a < b for a, b in zip({0}, {0}[1:]))": 1,
+    "all(a >= b for a, b in zip({0}, {0}[1:]))": 1, "all(a > b for a, b in zip({0}, {0}[1:]))": 1,
+    "all(a == b for a, b in zip({0}, {0}[1:]))": 1, "[b - a for a, b in zip({0}, {0}[1:])]": 1,
+    "sum(1 for a, b in zip({0}, {0}[1:]) if a < b)": 2, "len(set({0}))": 1, "sorted(set({0}))": 1,
+    "(len(set({0})) == len({0}))": 1, "sorted({0})[len({0}) // 2]": 2,
+    "any(a + b == {1} for i, a in enumerate({0}) for b in {0}[i + 1:])": 2,
+    "any(abs(a - b) < {1} for i, a in enumerate({0}) for b in {0}[i + 1:])": 2,
 }
 
 #: character-level string operations, searched only when a string actually
@@ -234,11 +262,16 @@ OP_COST = {
 CHAR_OPS = frozenset(o[0] for o in OPS if "for c in" in o[0] or o[0].endswith("key=len)")
                      or "{0}.split()]" in o[0])
 
+#: neighbour / all-pairs templates, searched only when the examples hold a
+#: sequence: like the character ops they would otherwise tax every search
+PAIR_OPS = frozenset(o[0] for o in OPS if "zip({0}, {0}[1:])" in o[0] or "enumerate({0})" in o[0]
+                     or "set({0})" in o[0] or "// 2]" in o[0])
+
 INT_CONSTS = [0, 1, 2, 3, 10]
 STR_CONSTS = [" ", ""]
 
 _SAFE_GLOBALS = {"__builtins__": {}, "len": len, "sum": sum, "max": max, "min": min, "abs": abs, "ord": ord,
-                 "sorted": sorted, "prod": math.prod, "list": list, "range": range, "dict": dict, "str": str, "int": int, "zip": zip}
+                 "sorted": sorted, "prod": math.prod, "set": set, "enumerate": enumerate, "any": any, "all": all, "ord": ord, "list": list, "range": range, "dict": dict, "str": str, "int": int, "zip": zip}
 
 
 @dataclass
@@ -437,7 +470,14 @@ def synthesize(examples: List[Tuple[Tuple[Any, ...], Any]], queries: Sequence[Tu
 
     has_str = any(isinstance(v, str) or (isinstance(v, list) and any(isinstance(e, str) for e in v))
                   for i in inputs for v in i) or any(isinstance(v, str) for v in target_vals)
-    ops = OPS if has_str else [o for o in OPS if o[0] not in CHAR_OPS]
+    has_seq = has_str or any(isinstance(v, list) for i in inputs for v in i) \
+        or any(isinstance(v, list) for v in target_vals)
+    skip = set()
+    if not has_str:
+        skip |= set(CHAR_OPS)
+    if not has_seq:
+        skip |= set(PAIR_OPS)
+    ops = OPS if not skip else [o for o in OPS if o[0] not in skip]
     hits = _enumerate(terminals, ops, max_size, n_ex, deadline, target=target, extra=extra)
     if not hits:
         return None

@@ -399,3 +399,15 @@ def test_character_level_string_programs_are_found():
         res = synthesize(examples, (), time_limit=4.0)
         assert res is not None, examples
         assert expected_fragment in res.code, res.code
+
+
+def test_sequence_wide_programs_are_found():
+    """Neighbour comparisons and set size: questions about a whole sequence."""
+    from mnx.agent.skills.synth import synthesize
+
+    sorted_ex = [(([1, 2, 3],), True), (([3, 1, 2],), False), (([1, 1, 2],), True), (([5, 4],), False)]
+    assert "zip(x, x[1:])" in synthesize(sorted_ex, (), time_limit=4.0).code
+    diffs = [(([1, 3, 6],), [2, 3]), (([5, 5],), [0]), (([0, 2, 4, 8],), [2, 2, 4])]
+    assert synthesize(diffs, (), time_limit=4.0).code == "[b - a for a, b in zip(x, x[1:])]"
+    distinct = [(([1, 1, 2],), 2), (([3, 3, 3],), 1), (([1, 2, 3, 4],), 4)]
+    assert synthesize(distinct, (), time_limit=4.0).code == "len(set(x))"
