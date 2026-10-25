@@ -335,6 +335,29 @@ The check reruns it with the ExecuTorch runtime and confirms it picks the
 same next token as PyTorch. The agents themselves are pure Python and run in
 Termux. See [docs/mobile.md](docs/mobile.md).
 
+### Optional: a local code model as a proposer (off by default, no PC needed)
+
+MNX1's own answers use no model and no network. If you want wider coverage
+than recipes and program search reach, you can let it consult a small code
+model running on **your own device** — a phone works, via llama.cpp in
+Termux:
+
+```bash
+# in Termux, once
+./llama.cpp/build/bin/llama-server -m ~/qwen-coder.gguf -c 4096 --port 8080 &
+python -m mnx.agent --model qwen-coder --model-url http://localhost:8080/v1
+```
+
+Nothing the model says is trusted. MNX1 runs every candidate in its sandbox,
+drops the ones that fail your asserts, and makes the survivors agree on fresh
+probe inputs before it answers. When a problem arrives with no asserts at all,
+it asks the model for test cases too, scores the candidates
+[CodeT](https://arxiv.org/abs/2207.10397)-style, and says in the answer that
+those tests were generated rather than given. Qwen2.5-Coder-1.5B-Instruct is
+about 1.1 GB at 4-bit and scores 70.7 on HumanEval by itself, so this is the
+realistic way to get a high coverage number out of MNX1 on a phone. Setup and
+caveats: [docs/local-model.md](docs/local-model.md).
+
 ## Evaluation
 
 ```bash
@@ -454,6 +477,12 @@ answer in 163.
   question and close rephrasings.
 - **Not better than every model.** Inside its skills it is exact, checked
   and fast; outside them a large model will answer far more questions.
+- **The local-model bridge is a bridge, not MNX1.** `--model` borrows
+  coverage from somebody else's trained weights. With it, the score is mostly
+  that model's; without it, the numbers above are MNX1's own. The one path
+  where MNX1 ships code it verified only against tests it wrote itself is the
+  no-asserts path described in
+  [docs/local-model.md](docs/local-model.md), and it labels those answers.
 
 ## Extending
 
@@ -477,7 +506,8 @@ mnx/agent/
   router.py       naive Bayes intent router + cross-validation
   retrieval.py    BM25 index, sentence extraction, memory store
   evaluate.py     benchmark runner (python -m mnx.agent.evaluate)
-  skills/         code, math, units, dates, logic, sequences, synth, knowledge, chat, neural
+  skills/         code, math, units, dates, logic, sequences, synth, knowledge, chat, neural,
+                  local_model (opt-in bridge to a code model on localhost)
 data/code/        165 verified code recipes (description, code, tests)
 data/knowledge/   bundled knowledge base (markdown, one fact per sentence)
 data/router/      router training examples
@@ -488,6 +518,7 @@ docs/sample-session.md  the output of that script
 mnx/*.py          MNX 2.0 Max Coder transformer: tokenizer, model, data (incl. streaming), train, generate
 mnx/export_mobile.py  int8 ExecuTorch export for phones
 docs/mobile.md    running MNX1 and the model on a phone
+docs/local-model.md  the opt-in local code model proposer (Termux or Ollama)
 docs/coder.md     transformer documentation
 tests/            pytest suite (agent tests need only the standard library)
 ```

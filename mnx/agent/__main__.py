@@ -28,6 +28,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--state", default="~/.mnx", help="folder where MNX1 keeps what it learns (default ~/.mnx)")
     p.add_argument("--no-learn", action="store_true", help="don't learn or log anything this run")
     p.add_argument("--ckpt", default=None, help="MNXCoder checkpoint dir: adds neural code proposals, kept only if tests pass (needs torch)")
+    p.add_argument("--model", default=None, metavar="NAME",
+                   help="also ask a code model served on localhost (e.g. qwen2.5-coder:7b via `ollama serve`) for "
+                        "proposals; they are kept only if they pass the tests. Off by default")
+    p.add_argument("--model-url", default=None, metavar="URL",
+                   help="OpenAI-compatible base URL of that local server (default http://localhost:11434/v1)")
+    p.add_argument("--model-samples", type=int, default=4, help="proposals to ask the local model for (default 4)")
     return p
 
 
@@ -35,7 +41,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     dirs = ([] if args.no_default_kb else [default_knowledge_dir()]) + [Path(k).expanduser() for k in args.kb]
     agent = MNXAgent(knowledge_dirs=dirs, memory_path=Path(args.memory).expanduser() if args.memory else None, ckpt=args.ckpt,
+                     model=args.model, model_url=args.model_url, model_samples=args.model_samples,
                      state_dir=None if args.no_learn else Path(args.state).expanduser(), learn=not args.no_learn)
+    if args.model:
+        from mnx.agent.skills.local_model import DEFAULT_URL, LocalModelError, check
+
+        try:
+            have = check(args.model_url or DEFAULT_URL)
+        except LocalModelError as exc:
+            print(f"--model: {exc}", file=sys.stderr)
+            return 2
+        if args.model not in have and not any(h.startswith(args.model.split(":")[0]) for h in have):
+            print(f"--model: the server has {have or 'no models'}; pull {args.model!r} first", file=sys.stderr)
+            return 2
     if args.question:
         print(format_answer(agent.ask(" ".join(args.question)), args.trace))
         return 0

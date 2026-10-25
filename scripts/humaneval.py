@@ -54,13 +54,17 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("data")
     p.add_argument("--ckpt", default=None)
+    p.add_argument("--model", default=None, help="also ask this local code model (see docs/local-model.md) for proposals")
+    p.add_argument("--model-url", default=None)
+    p.add_argument("--model-samples", type=int, default=4)
     p.add_argument("--verbose", action="store_true")
     p.add_argument("--out", default=None, help="write per-problem results as JSONL")
     p.add_argument("--raw-prompt", action="store_true",
                    help="hand MNX1 only the prompt, as a user would paste it, and let it find the docstring examples")
     a = p.parse_args()
     items = [json.loads(l) for l in gzip.open(a.data, "rt")]
-    agent = MNXAgent(learn=False, ckpt=a.ckpt)
+    agent = MNXAgent(learn=False, ckpt=a.ckpt, model=a.model, model_url=a.model_url,
+                     model_samples=a.model_samples)
     solved = wrong = abstained = 0
     rows = []
     for it in items:

@@ -85,6 +85,9 @@ class MNXAgent:
         knowledge_dirs: Optional[Iterable[Path]] = None,
         memory_path: Optional[Path] = None,
         ckpt: Optional[str] = None,
+        model: Optional[str] = None,
+        model_url: Optional[str] = None,
+        model_samples: int = 4,
         threshold: float = 0.35,
         today: Optional[dt.date] = None,
         router: Optional[NaiveBayesRouter] = None,
@@ -112,10 +115,18 @@ class MNXAgent:
             sampler = torch_sampler(ckpt)
             # the expert-stream model was trained with the tests as comments above the function
             proposers.append(lambda prompt, tests: [assemble(prompt, c) for c in sampler(prompt_for(prompt, tests[:4]), 16)])
+        test_makers = []
+        if model:
+            # opt-in: a code model served on localhost. Proposals are still only kept if they pass the tests.
+            from mnx.agent.skills.local_model import DEFAULT_URL, local_proposer, test_proposer
+
+            proposers.append(local_proposer(model, model_url or DEFAULT_URL, samples=model_samples))
+            test_makers.append(test_proposer(model, model_url or DEFAULT_URL))
         skills: List[Skill] = [
             ChatSkill(),
             MemorySkill(self.index, self.memory),
-            CodeSkill(learned_dir=self.learner.recipe_dir if self.learner else None, proposers=proposers),
+            CodeSkill(learned_dir=self.learner.recipe_dir if self.learner else None, proposers=proposers,
+                      test_makers=test_makers),
             MathSkill(),
             UnitSkill(),
             DateSkill(today),

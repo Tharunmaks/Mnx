@@ -59,6 +59,15 @@ builds. At 10M parameters MNX's model is already fast on a phone CPU, so
 the NPU isn't needed yet. To try one, swap the `XnnpackPartitioner` in
 `mnx/export_mobile.py` for that vendor's partitioner.
 
+## 3. No PC at all?
+
+Everything in part 1 already runs on the phone, and part 2 is the only step
+that needs a desktop (training the MNX model itself; phone CPUs can't do it
+in reasonable time). But you don't have to train anything to get a capable
+coder on the phone: run a small pretrained code model locally with llama.cpp
+in Termux and let MNX1 verify what it proposes. See
+[local-model.md](local-model.md) for the commands.
+
 ### Training on the phone
 
 ExecuTorch has an experimental on-device training path, but it is slow and

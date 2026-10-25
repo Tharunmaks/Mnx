@@ -23,6 +23,8 @@ from __future__ import annotations
 import ast
 import builtins
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Sequence, Tuple
@@ -304,6 +306,59 @@ def _behaviour(code: str, name: str, probes: Sequence[tuple]) -> str:
     return proc.stdout.strip() or proc.stderr.strip()[-80:]
 
 
+def pass_vector(code: str, tests: Sequence[str], timeout: float = 10.0) -> Optional[str]:
+    """Which of ``tests`` this code passes, as a string of 1s and 0s (one process, one assert at a time).
+
+    Used when the tests were generated rather than given: a generated test can
+    itself be wrong, so a program is judged on how many it passes, not on
+    passing all of them.
+    """
+    lines = ["import json", code, "r = []"]
+    for t in tests:
+        lines += ["try:", f"    {t}", "    r.append('1')", "except Exception:", "    r.append('0')"]
+    lines.append("print('MNXV:' + ''.join(r))")
+    script = "\n".join(lines) + "\n"
+
+    def limits():  # pragma: no cover - runs in the child
+        try:
+            import resource
+
+            resource.setrlimit(resource.RLIMIT_AS, (512 * 2**20, 512 * 2**20))
+        except Exception:
+            pass
+
+    try:
+        proc = subprocess.run([sys.executable, "-I", "-c", script], capture_output=True, text=True,
+                              timeout=timeout, preexec_fn=limits if sys.platform != "win32" else None)
+    except subprocess.TimeoutExpired:
+        return None
+    m = re.search(r"MNXV:([01]*)", proc.stdout)
+    return m.group(1) if m and len(m.group(1)) == len(tests) else None
+
+
+def consensus(candidates: Sequence[str], tests: Sequence[str]) -> Optional[Tuple[str, List[int], int, int]]:
+    """CodeT-style pick: group programs that pass the same generated tests, take the best group.
+
+    Score is ``len(group) * passed``, so a program needs both company and
+    evidence. Returns ``(code, indices of tests it passes, group size, score)``
+    for the winner, or ``None`` when nothing passes a test or two groups tie.
+    """
+    vectors: dict = {}
+    for code in candidates:
+        v = pass_vector(code, tests)
+        if v is None or "1" not in v:
+            continue
+        vectors.setdefault(v, []).append(code)
+    if not vectors:
+        return None
+    scored = sorted(((len(g) * v.count("1"), v, g) for v, g in vectors.items()), key=lambda x: -x[0])
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None
+    score, v, group = scored[0]
+    best = min(group, key=len)
+    return best, [i for i, c in enumerate(v) if c == "1"], len(group), score
+
+
 _CODE_VERB = re.compile(r"\b(write|create|make|implement|build|give me|generate|show me|how do i|how to)\b", re.I)
 _CODE_NOUN = re.compile(r"\b(code|function|program|script|class|python|algorithm|method|decorator|snippet)\b", re.I)
 
@@ -313,13 +368,15 @@ class CodeSkill(Skill):
     description = "write, run and check Python; only tested code is returned"
 
     def __init__(self, recipe_dirs: Optional[Iterable[Path]] = None, learned_dir: Optional[Path] = None,
-                 proposers: Sequence[Callable[[str, List[str]], List[str]]] = ()):
+                 proposers: Sequence[Callable[[str, List[str]], List[str]]] = (),
+                 test_makers: Sequence[Callable[[str], List[str]]] = ()):
         dirs = list(recipe_dirs) if recipe_dirs is not None else [default_recipe_dir()]
         self.learned_dir = Path(learned_dir) if learned_dir else None
         if self.learned_dir:
             dirs.append(self.learned_dir)
         self.book = RecipeBook(dirs)
         self.proposers = list(proposers)  # e.g. neural sampler: (prompt, tests) -> [code]
+        self.test_makers = list(test_makers)  # prompt -> [assert line], for signatures that arrive with no tests
 
     # ------------------------------------------------------------- entry
     def answer(self, question: str) -> Optional[Answer]:
@@ -336,6 +393,10 @@ class CodeSkill(Skill):
             tests = docstring_tests(q, header.group(1))  # ">>> f(2)" / "4" in the docstring are tests too
         if header and tests:
             return self._solve_with_tests(q, header.group(1), header.group(2), tests)
+        if header and self.test_makers and self.proposers:
+            found = self._solve_without_tests(q, header.group(1))
+            if found is not None:
+                return found
         if not code and (_CODE_NOUN.search(low) or _CODE_VERB.search(low)):
             return self._write(q, explicit=bool(_CODE_NOUN.search(low)))
         return None
@@ -469,6 +530,47 @@ class CodeSkill(Skill):
         return Answer("Nothing I tried passes all of your asserts, so I won't hand you untested code. "
                       "Adding more examples or a simpler spec usually helps.", self.name, 0.35, False, trace, failed=True)
 
+    def _solve_without_tests(self, q: str, name: str) -> Optional[Answer]:
+        """No asserts given: write tests from the description, then let the candidates vote.
+
+        This is the one path where MNX1's evidence is tests it generated
+        itself, so the answer says so. The programs come from the proposers,
+        every one of them is run, and only the group with the most support
+        wins (see :func:`consensus`).
+        """
+        trace = [f"target: {name}(...) with no asserts given, so tests have to be written first"]
+        gen: List[str] = []
+        for make in self.test_makers:
+            for t in make(q):
+                if t not in gen:
+                    gen.append(t)
+        if not gen:
+            trace.append("could not write any test for this signature")
+            return None
+        trace.append(f"wrote {len(gen)} test(s) from the description")
+        candidates: List[str] = []
+        for propose in self.proposers:
+            for code in propose(q.rstrip() + "\n", gen[:6]):
+                if code not in candidates:
+                    candidates.append(code)
+        if not candidates:
+            trace.append("no candidate program came back")
+            return None
+        trace.append(f"{len(candidates)} candidate program(s) to judge")
+        win = consensus(candidates, gen)
+        if win is None:
+            trace.append("no clear winner: the candidates pass different generated tests")
+            return Answer("I wrote candidate programs for that, but they disagree with each other on the tests I "
+                          "generated from your description, so I won't pick one. Give me a few `assert` lines and "
+                          "I can verify properly.", self.name, 0.35, False, trace, failed=True)
+        code, passed, group, score = win
+        trace.append(f"winning group: {group} program(s) agreeing, passing {len(passed)}/{len(gen)} generated tests")
+        shown = "\n".join(gen[i] for i in passed)
+        return Answer(f"```python\n{code}```\nYou gave me no tests, so I wrote some from your description and kept the "
+                      f"program that most candidates agreed with. It passes {len(passed)} of the {len(gen)} tests I "
+                      f"generated:\n```python\n{shown}\n```\nThose tests are mine, not yours, so check them before you "
+                      "trust the code.", self.name, 0.6, True, trace)
+
     def _propose(self, q: str, tests: List[str], trace: List[str]) -> Optional[str]:
         """Sample proposals, keep those that pass, and return one only if most of them agree.
 
@@ -489,7 +591,7 @@ class CodeSkill(Skill):
         probes = _probes([(args, None) for args in _call_args(m.group(1), tests)]) if m else []
         if not probes:
             trace.append(f"{len(passing)} neural proposal(s) passed, but there are no probe inputs to check them")
-            return passing[0] if len(passing) >= 2 else None
+            return passing[0] if len(passing) >= 2 or len(tests) >= 3 else None
         groups: dict = {}
         for code in passing:
             groups.setdefault(_behaviour(code, m.group(1), probes), []).append(code)
@@ -498,6 +600,10 @@ class CodeSkill(Skill):
                      f"{len(probes)} probe inputs has {len(best)}")
         if len(best) >= 2 and len(best) * 2 >= len(passing):
             return best[0]
+        if len(passing) == 1 and len(tests) >= 3:
+            # a lone survivor, but it passes three or more of the user's own asserts: evidence enough
+            trace.append("only one proposal passed; shipping it because there are 3 or more asserts behind it")
+            return passing[0]
         trace.append("the passing proposals disagree on new inputs, so none is returned")
         return None
 
