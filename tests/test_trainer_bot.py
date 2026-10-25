@@ -73,3 +73,15 @@ def test_the_hub_respects_the_level_and_reads_a_hot_folder(tmp_path):
 def test_status_of_an_empty_workdir_says_nothing_happened(tmp_path):
     out = status(tmp_path)
     assert out["workdir"] == str(tmp_path) and "last" not in out
+
+
+def test_a_question_the_model_keeps_failing_is_retired():
+    buf = PrioritizedReplayBuffer(retire_after=3)
+    hopeless = Item("13 * 47 = ?", "611", "arithmetic", failures=3)
+    buf.add(hopeless)
+    assert len(buf) == 0 and "13 * 47 = ?" in buf.retired
+    buf.add(Item("13 * 47 = ?", "611", "arithmetic"))  # and it stays out
+    assert len(buf) == 0
+    buf2 = PrioritizedReplayBuffer(retire_after=0)   # 0 keeps the original behaviour
+    buf2.add(Item("q", "a", "arithmetic", failures=99))
+    assert len(buf2) == 1

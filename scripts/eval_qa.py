@@ -11,6 +11,7 @@ must pass the task's tests instead).
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from collections import defaultdict
@@ -28,6 +29,8 @@ def main() -> int:
     p.add_argument("--db", default="runs/qa")
     p.add_argument("--n", type=int, default=600)
     p.add_argument("--seed", type=int, default=12345)
+    p.add_argument("--exclude", action="append", default=[],
+                   help="qa_history.jsonl from a trainer-bot run: drop every question it was trained on (repeatable)")
     a = p.parse_args()
 
     from mnx.generate import complete
@@ -35,6 +38,13 @@ def main() -> int:
 
     model, tok, _ = load_checkpoint(a.ckpt)
     train_q = {hash(it["q"]) for it in read(Path(a.db))}
+    for path in a.exclude:
+        for line in Path(path).read_text(errors="replace").splitlines():
+            if line.strip():
+                try:
+                    train_q.add(hash(json.loads(line)["q"]))
+                except (json.JSONDecodeError, KeyError):
+                    continue
     items = [it for it in stream(a.n * 3, seed=a.seed) if hash(it["q"]) not in train_q][: a.n]
     stats = defaultdict(lambda: [0, 0])
     for it in items:

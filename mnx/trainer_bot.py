@@ -122,6 +122,7 @@ class Item:
     last_loss: float = 1.0
     last_score: float = 0.0
     times_seen: int = 0
+    failures: int = 0
 
     @property
     def priority(self) -> float:
@@ -131,15 +132,33 @@ class Item:
 
 
 class PrioritizedReplayBuffer:
-    def __init__(self, capacity: int = 20000, seed: int = 0):
+    """Mistakes come back, but not forever.
+
+    ``retire_after`` is a change to the original design, made because of what
+    this model does on level 1: prioritized replay keeps resurfacing questions
+    the model fails, and exact multi-digit arithmetic is something a 10M model
+    cannot learn, so the whole budget drains into impossible items. A question
+    that has been failed ``retire_after`` times is retired, and the budget goes
+    to questions that are still moving.
+    """
+
+    def __init__(self, capacity: int = 20000, seed: int = 0, retire_after: int = 8):
         self.capacity = capacity
+        self.retire_after = retire_after
         self.items: Dict[str, Item] = {}
+        self.retired: set = set()
         self.rng = random.Random(seed)
 
     def __len__(self) -> int:
         return len(self.items)
 
     def add(self, item: Item) -> None:
+        if item.q in self.retired:
+            return
+        if self.retire_after and item.failures >= self.retire_after:
+            self.retired.add(item.q)
+            self.items.pop(item.q, None)
+            return
         self.items.setdefault(item.q, item)
         if len(self.items) > self.capacity:  # drop the least useful
             worst = min(self.items.values(), key=lambda i: i.priority)
@@ -161,12 +180,13 @@ class PrioritizedReplayBuffer:
 
     def to_json(self) -> list:
         return [{"q": i.q, "a": i.a, "kind": i.kind, "last_loss": i.last_loss,
-                 "last_score": i.last_score, "times_seen": i.times_seen} for i in self.items.values()]
+                 "last_score": i.last_score, "times_seen": i.times_seen, "failures": i.failures}
+                for i in self.items.values()]
 
     def load_json(self, rows: list) -> None:
         for r in rows:
             self.items[r["q"]] = Item(r["q"], r["a"], r["kind"], r.get("last_loss", 1.0),
-                                      r.get("last_score", 0.0), r.get("times_seen", 0))
+                                      r.get("last_score", 0.0), r.get("times_seen", 0), r.get("failures", 0))
 
 
 # -------------------------------------------------------------- generator hub
@@ -238,6 +258,7 @@ class BotConfig:
     save_interval: int = 50
     seed: int = 0
     level: int = 1
+    retire_after: int = 8
     data_path: Optional[Path] = None
     verify: bool = True
     history: List[float] = field(default_factory=list)
@@ -260,7 +281,7 @@ class ContinuousQATrainerBot:
         self.model, self.tok, _ = load_checkpoint(source)
         self.model.train()
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=cfg.lr, weight_decay=0.01, betas=(0.9, 0.95))
-        self.buffer = PrioritizedReplayBuffer(seed=cfg.seed)
+        self.buffer = PrioritizedReplayBuffer(seed=cfg.seed, retire_after=cfg.retire_after)
         self.hub = QAGeneratorHub(seed=cfg.seed + 1, data_path=cfg.data_path)
         self.step = 0
         self.level = cfg.level
@@ -279,6 +300,7 @@ class ContinuousQATrainerBot:
         if not (resumed and p.exists()):
             return
         state = json.loads(p.read_text())
+        self.buffer.retired = set(state.get("retired", []))
         self.step = state.get("step", 0)
         self.level = state.get("level", self.level)
         self.rolling = state.get("rolling", [])[-50:]
@@ -296,7 +318,8 @@ class ContinuousQATrainerBot:
             self.tok.save(tok_path)
         tmp = ck / "bot_state.json.tmp"
         tmp.write_text(json.dumps({"step": self.step, "level": self.level, "rolling": self.rolling[-50:],
-                                   "replay": self.buffer.to_json(), "saved_at": time.time()}))
+                                   "replay": self.buffer.to_json(), "retired": sorted(self.buffer.retired),
+                                   "saved_at": time.time()}))
         os.replace(tmp, self._state_path())
 
     def _on_signal(self, *_args) -> None:
@@ -374,6 +397,8 @@ class ContinuousQATrainerBot:
             it.times_seen += 1
             it.last_score = score
             it.last_loss = loss
+            if score < 0.2:
+                it.failures += 1
             self.buffer.add(it)
         self.step += 1
         self.rolling = (self.rolling + [after])[-50:]
@@ -383,7 +408,8 @@ class ContinuousQATrainerBot:
         row = {"step": self.step, "level": self.level, "loss": round(loss, 4),
                "score_before": round(before, 4), "score_after": round(after, 4),
                "rolling": round(rolling, 4), "epochs": epochs, "replay": len(self.buffer),
-               "kinds": sorted({i.kind for i in batch}), "time": round(time.time(), 1)}
+               "kinds": sorted({i.kind for i in batch}), "retired": len(self.buffer.retired),
+               "time": round(time.time(), 1)}
         with (self.dir / "training_metrics.jsonl").open("a") as f:
             f.write(json.dumps(row) + "\n")
         with (self.dir / "qa_history.jsonl").open("a") as f:
@@ -465,6 +491,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sleep-ms", type=int, default=50)
     p.add_argument("--save-interval", type=int, default=50)
     p.add_argument("--level", type=int, default=1, choices=sorted(LEVELS))
+    p.add_argument("--retire-after", type=int, default=8,
+                   help="retire a question after this many failures so the budget goes to what is still moving (0 = never)")
     p.add_argument("--data-path", default=None, help="hot folder or file of extra Q&A (.jsonl/.json/.txt)")
     p.add_argument("--no-verify", action="store_true", help="skip the post-update re-quiz (about a third faster)")
     p.add_argument("--seed", type=int, default=0)
@@ -480,7 +508,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     cfg = BotConfig(ckpt=a.ckpt, workdir=Path(a.workdir), steps=a.steps, batch_size=a.batch_size,
                     replay_ratio=a.replay_ratio, active_epochs=a.active_epochs, pass_mark=a.pass_mark,
                     lr=a.lr, cpu_threads=a.cpu_threads, sleep_ms=a.sleep_ms, save_interval=a.save_interval,
-                    level=a.level, data_path=Path(a.data_path) if a.data_path else None,
+                    level=a.level, retire_after=a.retire_after,
+                    data_path=Path(a.data_path) if a.data_path else None,
                     verify=not a.no_verify, seed=a.seed)
     return ContinuousQATrainerBot(cfg).run()
 
