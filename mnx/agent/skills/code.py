@@ -217,6 +217,35 @@ def _probes(examples: List[Tuple[tuple, object]]) -> List[tuple]:
     return [o for o in out if o not in seen]
 
 
+#: examples written in a docstring: ">>> f(2)" then "4", or "f(2) ==> 4"
+_DOCTEST = re.compile(r"^\s*>>>\s*(?P<call>.+)$")
+
+
+def docstring_tests(text: str, name: str) -> List[str]:
+    """Turn the examples in a function's docstring into assert lines."""
+    out: List[str] = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = _DOCTEST.match(line)
+        if m and name + "(" in m.group("call"):
+            want = lines[i + 1].strip() if i + 1 < len(lines) else ""
+            if want and not want.startswith(">>>"):
+                out.append(f"assert {m.group('call').strip()} == {want}")
+            continue
+        m = re.match(rf"^\W*({re.escape(name)}\(.*?\))\s*(?:==>|=>|->|➞|should return|returns|output:)\s*(.+?)[.\s]*$",
+                     line.strip(), re.I)
+        if m:
+            out.append(f"assert {m.group(1)} == {m.group(2)}")
+    good = []
+    for a in out:
+        try:
+            compile(a, "<doc>", "exec")
+        except SyntaxError:
+            continue
+        good.append(a)
+    return good
+
+
 #: operations in synthesised code → words that describe them
 _OP_WORDS = [
     (r"\bsum\(", "sum total add"), (r"\bmax\(", "max maximum largest biggest greatest highest"),
@@ -303,6 +332,8 @@ class CodeSkill(Skill):
             return self._check(code)
         header = re.search(r"^\s*def\s+(\w+)\s*\(([^)]*)\)", q, re.M)
         tests = [l.strip() for l in q.splitlines() if l.strip().startswith("assert ")]
+        if header and not tests:
+            tests = docstring_tests(q, header.group(1))  # ">>> f(2)" / "4" in the docstring are tests too
         if header and tests:
             return self._solve_with_tests(q, header.group(1), header.group(2), tests)
         if not code and (_CODE_NOUN.search(low) or _CODE_VERB.search(low)):

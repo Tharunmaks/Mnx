@@ -109,3 +109,13 @@ def test_bugs_found_by_the_database_stay_fixed():
     assert m.answer("19 * 216 = ?").text == "4104"
     assert m.answer("gcd of 413 and 497").text == "7"
     assert m.answer("least common multiple of 60 and 395").text == "4740"
+
+
+def test_coder_reads_examples_from_a_docstring():
+    from mnx.agent.skills.code import CodeSkill, docstring_tests
+
+    q = ('def triple(x):\n    """Return x multiplied by three.\n\n    >>> triple(2)\n    6\n'
+         '    >>> triple(5)\n    15\n    >>> triple(0)\n    0\n    """\n')
+    assert docstring_tests(q, "triple") == ["assert triple(2) == 6", "assert triple(5) == 15", "assert triple(0) == 0"]
+    ans = CodeSkill().answer(q)  # no assert lines: the examples in the docstring are the tests
+    assert ans is not None and ans.verified and "def triple(x)" in ans.text

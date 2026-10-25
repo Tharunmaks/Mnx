@@ -56,6 +56,8 @@ def main() -> int:
     p.add_argument("--ckpt", default=None)
     p.add_argument("--verbose", action="store_true")
     p.add_argument("--out", default=None, help="write per-problem results as JSONL")
+    p.add_argument("--raw-prompt", action="store_true",
+                   help="hand MNX1 only the prompt, as a user would paste it, and let it find the docstring examples")
     a = p.parse_args()
     items = [json.loads(l) for l in gzip.open(a.data, "rt")]
     agent = MNXAgent(learn=False, ckpt=a.ckpt)
@@ -64,7 +66,7 @@ def main() -> int:
     for it in items:
         name = it["entry_point"]
         asserts = doc_asserts(it["prompt"], name)
-        question = it["prompt"].strip("\n") + "\n" + "\n".join(asserts)
+        question = it["prompt"].strip("\n") + ("" if a.raw_prompt else "\n" + "\n".join(asserts))
         ans = agent.ask(question)
         code = None if ans.skill == "abstain" or ans.failed else extract_code(ans.text)
         if not code:

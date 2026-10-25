@@ -191,6 +191,8 @@ The coder never ships code it hasn't run.
   that "decimal to binary" doesn't match `binary_to_decimal`), renames the
   function to the name you asked for, and runs the recipe's own tests in an
   isolated subprocess (`python -I`, time limit) before answering.
+- **Solve from a pasted function.** Give a `def` header with examples in its
+  docstring (`>>> f(2)` then `6`, or `f(2) ==> 6`) and they become the tests.
 - **Solve from tests.** Give a `def` header and some `assert` lines. It tries
   recipes, then program search over the DSL, then the neural proposer, and
   ships the first candidate that passes every assert. When several programs
@@ -408,7 +410,11 @@ memorisation of the tuning half, and it moved the untouched half only from
 0 to 2. `code_holdout2.jsonl` stopped being a holdout for the same reason:
 some of the new recipes (`average`, `clamp`, `is_sorted`) answer its tasks
 directly, which is why it jumped from 15% to 45%. **The honest headline for
-coding is 2 of 82 on problems 82–163.** The recipes are still worth having:
+coding is 2 of 82 on problems 82–163.** Two further attempts moved it by
+nothing: giving program search five times the budget solved one extra
+problem in fifteen, and teaching the coder to read docstring examples let it
+work from a pasted function alone (41 of 164 with no asserts supplied,
+against 42 when they are) without changing the unseen score. The recipes are still worth having:
 each is tested, and they make MNX1 useful on everyday requests. They just
 don't make it a better programmer.
 
