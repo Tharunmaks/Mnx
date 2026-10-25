@@ -378,7 +378,7 @@ out on HumanEval problems 0–81 only:
 That took HumanEval from 15 solved / 26 wrong to 12 solved / 4 wrong, and
 `code_holdout2` from 10/4 to 3/1. Fewer answers, far fewer wrong ones, in
 line with "right or silent". With more asserts the search usually pins the
-program down (the sample session's `mystery` puzzle needs 6).
+program down (the sample session's `mystery` puzzle uses 9).
 
 The router's 5-fold cross-validated accuracy on its training data is 83%. A
 routing mistake costs time but not correctness, because every skill decides

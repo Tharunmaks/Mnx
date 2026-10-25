@@ -86,12 +86,15 @@ assert fib(90) == 2880067194370816120
 > assert mystery(3, 0) == 9
 > assert mystery(5, 2) == 29
 > assert mystery(-1, 2) == 5
+> assert mystery(-3, -4) == 25
+> assert mystery(7, 1) == 50
+> assert mystery(4, 6) == 52
 
 ```python
 def mystery(a, b):
     return ((a * a) + (b * b))
 ```
-Passes all 6 of your assert(s).
+Passes all 9 of your assert(s).
 
 *coder / code · verified · confidence 0.95*
 
