@@ -84,6 +84,23 @@ learnable at 10M parameters, so the budget drains into impossible items and
 the rolling score sits flat. `--retire-after` (default 8) drops a question
 after that many failures.
 
+**The update has to be gentle.** Three regimes, each measured on the same 200
+unseen questions, against an untrained score of **54%**:
+
+| Regime | Steps | Unseen Q&A |
+|---|---:|---:|
+| batch 4, 3 passes per batch, lr 1e-4, replay filtered to the level | 1,480 | **6%** |
+| batch 4, 3 passes per batch, lr 1e-4, replay across all kinds | 6,735 | **4%** |
+| batch 8, 1 pass per batch, lr 1e-5, replay across all kinds | 1,500 | **54%** |
+
+Four examples at a time with three gradient passes each at 1e-4 overwrites the
+model faster than replay can protect it, whichever questions replay picks. The
+third regime is the default now: it holds everything the model could already do
+(code 80/80, syllogisms 14/14 before and after) and nudges arithmetic 3/63 to
+4/63 and dates 1/17 to 2/17, while gcd/lcm slips 3/11 to 1/11. Net: unchanged
+at 1,500 steps. Safe, not yet useful — it needs far more steps, and arithmetic
+may need a model with more than 10M parameters before it moves at all.
+
 ## What it does and does not improve
 
 It improves what it measures: answering the generated Q&A. It does **not**

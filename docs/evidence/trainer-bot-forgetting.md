@@ -33,3 +33,24 @@ total         11/200     6%  (unseen questions, 3001403 in training db)
 Training one level while replaying only that level cost the model everything
 else it knew. This is why replay now ignores the curriculum level; see
 [../trainer-bot.md](../trainer-bot.md).
+
+## Third regime: batch 8, one pass per batch, lr 1e-5, 1,500 steps
+
+```
+arithmetic     4/63      6%
+code          80/80    100%
+dates          2/17     12%
+factorise      0/1       0%
+gcd_lcm        1/11      9%
+linear         0/1       0%
+percent        0/1       0%
+primality      6/6     100%
+syllogism     14/14    100%
+system2        0/6       0%
+total        107/200    54%  (unseen questions, 3008665 in training db)
+```
+
+Per kind against the untrained checkpoint on the same questions: arithmetic
+3/63 -> 4/63, dates 1/17 -> 2/17, gcd_lcm 3/11 -> 1/11, and code 80/80,
+syllogisms 14/14, primality 6/6 all unchanged. Total 107/200 both ways. This is
+the regime the defaults use: it does not damage the model.

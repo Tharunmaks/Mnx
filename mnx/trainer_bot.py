@@ -254,11 +254,11 @@ class BotConfig:
     ckpt: str = "runs/cpu_code"
     workdir: Path = Path("runs/bot")
     steps: int = 0  # 0 = until stopped
-    batch_size: int = 4
+    batch_size: int = 8
     replay_ratio: float = 0.5
-    active_epochs: int = 3
+    active_epochs: int = 1
     pass_mark: float = 0.65
-    lr: float = 1e-4
+    lr: float = 1e-5
     max_answer_tokens: int = 48
     cpu_threads: int = 0
     sleep_ms: int = 50
@@ -497,11 +497,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ckpt", default="runs/cpu_code", help="checkpoint to start from (ignored once the workdir has one)")
     p.add_argument("--workdir", default="runs/bot")
     p.add_argument("--steps", type=int, default=0, help="0 runs until stopped (SIGINT saves and exits)")
-    p.add_argument("--batch-size", type=int, default=4)
+    p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--replay-ratio", type=float, default=0.5)
-    p.add_argument("--active-epochs", type=int, default=3)
+    p.add_argument("--active-epochs", type=int, default=1,
+                   help="gradient passes over a batch the model failed; above 1 this model forgets (see docs)")
     p.add_argument("--pass-mark", type=float, default=0.65)
-    p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--lr", type=float, default=1e-5,
+                   help="1e-4 with several passes per batch destroyed this model; 1e-5 holds it (see docs)")
     p.add_argument("--cpu-threads", type=int, default=0)
     p.add_argument("--sleep-ms", type=int, default=50)
     p.add_argument("--save-interval", type=int, default=50)
