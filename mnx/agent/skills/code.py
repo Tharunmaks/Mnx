@@ -216,6 +216,37 @@ def _probes(examples: List[Tuple[tuple, object]]) -> List[tuple]:
     return [o for o in out if o not in seen]
 
 
+def _call_args(name: str, tests: Sequence[str]) -> List[tuple]:
+    """Literal argument tuples of every ``name(...)`` call in the asserts."""
+    out = []
+    for t in tests:
+        try:
+            tree = ast.parse(t.strip())
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name:
+                try:
+                    out.append(tuple(ast.literal_eval(a) for a in node.args))
+                except ValueError:
+                    continue
+    return out
+
+
+def _behaviour(code: str, name: str, probes: Sequence[tuple]) -> str:
+    """What a candidate returns on the probe inputs (errors included), as one comparable string."""
+    import subprocess
+    import sys
+
+    script = (code + "\nres = []\nfor a in " + repr(list(probes)) + ":\n    try:\n        res.append(repr(" + name +
+              "(*a)))\n    except Exception as e:\n        res.append(type(e).__name__)\nprint(res)\n")
+    try:
+        proc = subprocess.run([sys.executable, "-I", "-c", script], capture_output=True, text=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        return "timeout"
+    return proc.stdout.strip() or proc.stderr.strip()[-80:]
+
+
 _CODE_VERB = re.compile(r"\b(write|create|make|implement|build|give me|generate|show me|how do i|how to)\b", re.I)
 _CODE_NOUN = re.compile(r"\b(code|function|program|script|class|python|algorithm|method|decorator|snippet)\b", re.I)
 
@@ -333,6 +364,12 @@ class CodeSkill(Skill):
                 code = f"def {name}({', '.join(arg_names)}):\n    return {expr}\n"
                 ok, err = run_tests(code, tests, timeout=10)
                 trace.append(f"synthesised from {len(examples)} examples: {'passed' if ok else 'failed ' + err}")
+                if ok and ambiguous and self.proposers:
+                    # the asserts don't pin the program down; a model that read the docstring breaks the tie
+                    neural = self._propose(q, tests, trace)
+                    if neural:
+                        return self._ship(neural, tests, trace, "neural proposal (it reads the docstring) that passed your asserts",
+                                          learn_from=q)
                 if ok:
                     note = ("\nOther programs also fit these asserts and behave differently on new inputs, "
                             "so add a few more asserts if this isn't what you meant.") if ambiguous else ""
@@ -341,15 +378,43 @@ class CodeSkill(Skill):
             else:
                 trace.append("program search found nothing within its limits")
         # 3. other proposers (e.g. the neural model)
-        prompt = "\n".join(l for l in q.splitlines() if not l.strip().startswith("assert ")).rstrip() + "\n"
-        for propose in self.proposers:
-            for i, code in enumerate(propose(prompt, tests)):
-                ok, err = run_tests(code, tests, timeout=10)
-                trace.append(f"proposal {i + 1}: {'passed' if ok else 'failed'}")
-                if ok:
-                    return self._ship(code, tests, trace, "neural proposal that passed your asserts", learn_from=q)
+        code = self._propose(q, tests, trace)
+        if code:
+            return self._ship(code, tests, trace, "neural proposal that passed your asserts", learn_from=q)
         return Answer("Nothing I tried passes all of your asserts, so I won't hand you untested code. "
                       "Adding more examples or a simpler spec usually helps.", self.name, 0.35, False, trace, failed=True)
+
+    def _propose(self, q: str, tests: List[str], trace: List[str]) -> Optional[str]:
+        """Sample proposals, keep those that pass, and return one only if most of them agree.
+
+        A small model can pass your asserts by accident (``return n == 4``), so the passing
+        samples are run on fresh probe inputs and grouped by behaviour (AlphaCode-style
+        clustering). The largest group must hold at least two samples and half of the passes.
+        """
+        prompt = "\n".join(l for l in q.splitlines() if not l.strip().startswith("assert ")).rstrip() + "\n"
+        passing: List[str] = []
+        for propose in self.proposers:
+            for code in propose(prompt, tests):
+                if code not in passing and run_tests(code, tests, timeout=10)[0]:
+                    passing.append(code)
+        if not passing:
+            trace.append("no neural proposal passed")
+            return None
+        m = re.search(r"def\s+(\w+)\s*\(", prompt)
+        probes = _probes([(args, None) for args in _call_args(m.group(1), tests)]) if m else []
+        if not probes:
+            trace.append(f"{len(passing)} neural proposal(s) passed, but there are no probe inputs to check them")
+            return passing[0] if len(passing) >= 2 else None
+        groups: dict = {}
+        for code in passing:
+            groups.setdefault(_behaviour(code, m.group(1), probes), []).append(code)
+        best = max(groups.values(), key=len)
+        trace.append(f"{len(passing)} neural proposals passed; the largest group that behaves the same on "
+                     f"{len(probes)} probe inputs has {len(best)}")
+        if len(best) >= 2 and len(best) * 2 >= len(passing):
+            return best[0]
+        trace.append("the passing proposals disagree on new inputs, so none is returned")
+        return None
 
     def _ship(self, code: str, tests: List[str], trace: List[str], how: str, learn_from: str, note: str = "") -> Answer:
         trace.append(how)

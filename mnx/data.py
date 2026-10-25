@@ -219,3 +219,85 @@ def iter_batches(dataset: CodeDataset, batch_size: int, shuffle: bool = True, se
         xs = torch.stack([x for x, _ in items])
         ys = torch.stack([y for _, y in items])
         yield xs, ys
+
+
+# --------------------------------------------------------------- streaming
+def iter_qa_folder(folder: str | Path) -> Iterator[str]:
+    """``Q: ... / A: ...`` documents from gzipped JSONL shards (see ``mnx.agent.qa_stream``)."""
+    import gzip
+    import json
+
+    for shard in sorted(Path(folder).glob("*.jsonl.gz")):
+        with gzip.open(shard, "rt", encoding="utf-8") as f:
+            for line in f:
+                item = json.loads(line)
+                yield f"Q: {item['q']}\nA: {item['a']}\n"
+
+
+def mixed_stream(qa_folder: str | Path, extra_docs: Sequence[str] = (), extra_rate: float = 0.0,
+                 seed: int = 0) -> Iterator[str]:
+    """The Q&A stream, with a document from ``extra_docs`` (cycled) mixed in at ``extra_rate``."""
+    rng = random.Random(seed)
+    extra = list(extra_docs)
+    j = 0
+    for doc in iter_qa_folder(qa_folder):
+        yield doc
+        if extra and rng.random() < extra_rate:
+            yield extra[j % len(extra)]
+            j += 1
+
+
+class StreamDataset:
+    """Training windows cut from an endless document stream, each token used once.
+
+    Unlike :class:`CodeDataset` the corpus is never held in memory: documents
+    are read, shuffled in a buffer, tokenised and packed as training needs
+    them, so a database of millions of examples trains on a laptop.
+    """
+
+    def __init__(self, docs: Iterator[str], tok: BPETokenizer, seq_len: int, buffer_docs: int = 20000, seed: int = 0):
+        self.docs = docs
+        self.tok = tok
+        self.seq_len = seq_len
+        self.buffer_docs = buffer_docs
+        self.rng = random.Random(seed)
+        self.buf: List[int] = []
+        self.pos = 0
+        self.docs_seen = 0
+        self.tokens_seen = 0
+        self.epochs = 0
+        self.exhausted = False
+
+    @property
+    def num_tokens(self) -> int:
+        return 1 << 62  # endless: never triggers a reshuffle
+
+    def _refill(self) -> None:
+        chunk = []
+        for doc in self.docs:
+            chunk.append(doc)
+            if len(chunk) >= self.buffer_docs:
+                break
+        if not chunk:
+            self.exhausted = True
+            raise RuntimeError("document stream exhausted: generate a bigger database or train for fewer steps")
+        self.rng.shuffle(chunk)
+        self.docs_seen += len(chunk)
+        stream: List[int] = []
+        for d in chunk:
+            stream.append(self.tok.bos_id)
+            stream.extend(self.tok.encode(d, allow_special=False))
+            stream.append(self.tok.eos_id)
+        self.buf = self.buf[self.pos:] + stream
+        self.pos = 0
+
+    def random_batch(self, batch_size: int, generator: Optional[torch.Generator] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        need = batch_size * self.seq_len + 1
+        while len(self.buf) - self.pos < need:
+            self._refill()
+        window = torch.tensor(self.buf[self.pos:self.pos + need], dtype=torch.long)
+        self.pos += batch_size * self.seq_len
+        self.tokens_seen += batch_size * self.seq_len
+        xs = window[:-1].view(batch_size, self.seq_len)
+        ys = window[1:].view(batch_size, self.seq_len)
+        return xs, ys

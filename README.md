@@ -38,8 +38,11 @@ I don't know. None of my skills could produce an answer I trust, ...
 ```
 
 The repository also contains **MNX 2.0 Max Coder**, a from-scratch PyTorch
-transformer for code (documented in [docs/coder.md](docs/coder.md)). The agent
-can use it as an optional proposer whose samples are checked by tests.
+transformer (documented in [docs/coder.md](docs/coder.md)). It can be trained
+on a CPU from the **expert stream**, a database of 3 million verified
+questions and answers that MNX1's agents generate, and exported to phones
+with ExecuTorch ([docs/mobile.md](docs/mobile.md)). The agent uses it as an
+optional proposer whose samples are checked by tests.
 
 ---
 
@@ -65,6 +68,14 @@ can be computed or checked**, and be more trustworthy everywhere else:
 
 The aim, then, is a small system that is **always right or silent** on what it
 covers, and easy to extend.
+
+**Which model does it beat?** None, in a measured head-to-head comparison:
+other models can't be downloaded in the environment where MNX was built, so
+no other model has been run on MNX's test sets. The table above describes
+task types, not benchmark results. `scripts/compare_models.py` runs any
+local model through [Ollama](https://ollama.com) on the same test sets with
+the same scoring, so you can measure it yourself, for example against
+`qwen2.5:0.5b`.
 
 ## Research: what makes small models punch above their weight
 
@@ -249,21 +260,63 @@ Things to try:
 | knowledge | `who discovered penicillin`, `what is the time complexity of binary search` |
 | code | `implement dijkstra`, `write a function that converts roman numerals to integers`, `run this: print(2**10)`, `check this code: ...` |
 
-### Optional: the neural proposer
+### Training the neural model on the expert stream
 
-With PyTorch installed and a checkpoint trained as in
-[docs/coder.md](docs/coder.md), the agent can propose code with the
-transformer and keep only a sample that passes your tests:
+The agents generate training data they can vouch for, and the transformer
+learns from it on a CPU:
 
 ```bash
-pip install torch && python -m mnx.train --config tiny --data data/sample --out runs/tiny --steps 300
-python -m mnx.agent --ckpt runs/tiny $'def add(a, b):\n    """Return the sum of a and b."""\nassert add(2, 3) == 5\nassert add(-1, 1) == 0'
+pip install torch
+python -m mnx.agent.qa_stream --n 3000000 --out runs/qa          # 3M distinct verified Q&A pairs, ~95 MB gzipped
+python -m mnx.agent.qa_stream --check runs/qa                     # replay a sample through MNX1's agents
+python -m mnx.agent.expert_stream --out runs/expert_stream.txt    # verified code: recipes, generated tasks, stdlib
+python -m mnx.train --config cpu --stream runs/qa --data runs/expert_stream.txt --doc-sep '\n<|doc|>\n' \
+    --out runs/cpu --steps 6500 --batch-size 16 --lr 2e-3 --warmup 150 --fim-rate 0 --threads 4
+python -m mnx.agent --ckpt runs/cpu                               # the coder now samples from it
 ```
 
-That example passes, but only because `add` is in the tiny model's 51-file
-training set. The bundled model is a toy, so expect "None of 16 samples
-passed" for anything new. The mechanism is the point here:
-a better-trained model plugs straight in.
+- **The database** covers arithmetic, powers, percentages, gcd/lcm,
+  primality, factorisation, linear and quadratic equations, 2×2 systems,
+  units, dates, sequences, syllogisms and small coding tasks with tests.
+  Every answer is computed exactly, never written by hand, and every question
+  is distinct. Replaying 2,000 random pairs through MNX1, which computes its
+  answers separately, gave the same answer on all 1,826 it answered. The
+  replay also found two real MNX1 bugs ("19 * 216 = ?" wasn't parsed, and
+  "gcd of 413 and 497" read the numbers as 413,497); both are fixed.
+- **Streaming training** reads, shuffles and tokenizes the database as it
+  goes, so 3 million pairs never sit in memory. `--resume` continues where
+  the last run stopped, which is how you train on all 3M over several runs.
+- **Test-conditioned prompts.** Each training function has its asserts as
+  comments above it, and the coder prompts the model the same way.
+- **Voting.** The coder samples 16 programs, keeps the ones that pass your
+  asserts, runs them on new probe inputs, and returns one only if most of
+  them behave the same. A program that passed by luck is not shipped.
+
+What one run on a 4-core CPU achieved (1 hour 48 minutes, 10.4M parameters,
+26.6M tokens, about 500k of the 3M pairs, then 25 minutes on code only):
+
+| Measure | Result |
+|---|---|
+| Validation loss | 8.2 → 0.85 (0.55 on code after the code fine-tune) |
+| 600 unseen database questions, exact answer | 314 (52%): coding tasks 244/244, syllogisms 36/36, primality 17/17; arithmetic 6/152, dates 1/67 |
+| `code_holdout2.jsonl` tasks, model alone, 16 samples | 3 of 20 solved |
+| MNX1 with the model on both coding holdouts | 10/20 and 11/15, the same as without it, and no new wrong answers |
+
+So the model learned the formats and the patterns it can memorise, but not
+arithmetic (a 10M model can't learn to multiply from examples; that's what
+the math agent is for), and it doesn't yet add to MNX1's coding score. The
+first measurement scored 0 of 20 because of a prompt bug: a prompt that ended
+in a newline split a token the model had always seen whole. That bug is
+fixed. A bigger model, the full 3M pairs and a GPU are the obvious next
+steps.
+
+### On a phone
+
+Train on a PC, then `python -m mnx.export_mobile --ckpt runs/cpu --out mobile/ --check`
+writes a 15 MB int8 ExecuTorch program for Android and iOS CPUs (XNNPACK).
+The check reruns it with the ExecuTorch runtime and confirms it picks the
+same next token as PyTorch. The agents themselves are pure Python and run in
+Termux. See [docs/mobile.md](docs/mobile.md).
 
 ## Evaluation
 
@@ -271,6 +324,7 @@ a better-trained model plugs straight in.
 python -m mnx.agent.evaluate                                     # tuning set
 python -m mnx.agent.evaluate --benchmark data/eval/holdout.jsonl # held-out set
 python -m mnx.agent.evaluate --benchmark data/eval/code_holdout.jsonl # held-out coding tasks
+python -m mnx.agent.evaluate --benchmark data/eval/code_holdout2.jsonl --ckpt runs/cpu  # optional neural proposer
 ```
 
 "Wrong" means the agent gave an answer and it was incorrect. That's the
@@ -281,6 +335,7 @@ number that matters for trust. "Abstain" means it said it didn't know.
 | `benchmark.jsonl` (written while building, used for tuning) | 83 | 83 (100%) | 0 | 0 |
 | `holdout.jsonl` (written afterwards; first run, no tuning) | 45 | 40 (89%) | 1 | 4 |
 | `code_holdout.jsonl` (15 coding tasks with hidden tests) | 15 | 11 (73%) | 0 | 4 |
+| `code_holdout2.jsonl` (20 def + assert tasks, more hidden tests; first run) | 20 | 10 (50%) | 4 | 6 |
 
 The coding holdout scored 10/15 with 2 wrong on its first run: "decimal to
 binary" was answered with a `binary_to_decimal` recipe and "merge two
@@ -289,6 +344,14 @@ in general (a direction check and a higher match threshold), not by adding
 recipes for the holdout tasks. The 4 it still declines are reverse_words,
 last_item on mixed-type lists, shout (needs a `'!'` constant) and
 merge_dicts. Learning is off during evaluation.
+
+`code_holdout2.jsonl` was committed before the expert stream existed. Its
+4 wrong answers come from program search fitting the 1 or 2 asserts shown
+with the wrong program: `max_of_three` returned `max(a, b)`, `drop_negatives`
+returned `sorted(xs)[1:]`, `average` returned `max(2, min(xs))`, and
+`sum_squares` returned a running-sum expression. Each passes the asserts it
+was given and fails the hidden ones. They are left unfixed here. Give more
+asserts and the search pins the program down.
 
 The router's 5-fold cross-validated accuracy on its training data is 83%. A
 routing mistake costs time but not correctness, because every skill decides
@@ -309,8 +372,8 @@ Held-out misses, left unfixed so the numbers stay honest:
 Both sets were written by the same author as the system and cover only what
 it was designed for, so **these numbers are not comparable to public LLM
 benchmarks**. They show the system does what it claims within its scope:
-zero hallucinated answers on the 15 out-of-scope questions, and one wrong
-answer in 143.
+zero hallucinated answers on the 15 out-of-scope questions, and 5 wrong
+answers in 163 (4 of them from too few asserts, above).
 
 ## Limits
 
@@ -355,6 +418,8 @@ routing examples to `data/router/intents.tsv`. Register the skill in
 mnx/agent/
   agent.py        MNX1 / MNXAgent: shortcuts → route → specialist agents → rank → answer or abstain
   learning.py     transcript, feedback, corrections, self-training, replay
+  qa_stream.py    the 3M verified Q&A database: generate, read, cross-check with MNX1
+  expert_stream.py verified code corpus (recipes, generated tasks, stdlib)
   __main__.py     CLI (python -m mnx.agent)
   base.py         Answer / Skill types, number formatting
   expr.py         from-scratch CAS core: tokenizer, parser, exact evaluator, polynomials, root finding
@@ -365,10 +430,13 @@ mnx/agent/
 data/code/        78 verified code recipes (description, code, tests)
 data/knowledge/   bundled knowledge base (markdown, one fact per sentence)
 data/router/      router training examples
-data/eval/        benchmark.jsonl (tuning), holdout.jsonl and code_holdout.jsonl (held out)
-scripts/          demo_session.py: writes a sample session of questions and answers
+data/eval/        benchmark.jsonl (tuning); holdout.jsonl, code_holdout.jsonl, code_holdout2.jsonl (held out)
+scripts/          demo_session.py (sample session), eval_qa.py and eval_neural.py (model on unseen data),
+                  compare_models.py (score a local Ollama model on the same test sets)
 docs/sample-session.md  the output of that script
-mnx/*.py          MNX 2.0 Max Coder transformer: tokenizer, model, data, train, generate
+mnx/*.py          MNX 2.0 Max Coder transformer: tokenizer, model, data (incl. streaming), train, generate
+mnx/export_mobile.py  int8 ExecuTorch export for phones
+docs/mobile.md    running MNX1 and the model on a phone
 docs/coder.md     transformer documentation
 tests/            pytest suite (agent tests need only the standard library)
 ```

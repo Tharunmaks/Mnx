@@ -77,8 +77,12 @@ def torch_sampler(ckpt: str, temperature: float = 0.8, max_new_tokens: int = 96)
     model, tok, _ = load_checkpoint(ckpt)
 
     def sample(prompt: str, k: int) -> List[str]:
-        return [complete(model, tok, prompt, max_new_tokens=max_new_tokens, temperature=temperature, top_k=40, seed=i)
+        # End the prompt before its last newline: in training "\n" + indent is usually one token, so a prompt
+        # that already ends in "\n" forces an unusual split and the model starts a new function instead.
+        head = prompt[:-1] if prompt.endswith("\n") else prompt
+        outs = [complete(model, tok, head, max_new_tokens=max_new_tokens, temperature=temperature, top_k=40, seed=i)
                 for i in range(k)]
+        return [o[1:] if head is not prompt and o.startswith("\n") else o for o in outs]
 
     return sample
 

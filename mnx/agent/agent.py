@@ -107,8 +107,11 @@ class MNXAgent:
         if ckpt:
             from mnx.agent.skills.neural import assemble, torch_sampler
 
+            from mnx.agent.expert_stream import prompt_for
+
             sampler = torch_sampler(ckpt)
-            proposers.append(lambda prompt, tests: [assemble(prompt, c) for c in sampler(prompt, 16)])
+            # the expert-stream model was trained with the tests as comments above the function
+            proposers.append(lambda prompt, tests: [assemble(prompt, c) for c in sampler(prompt_for(prompt, tests[:4]), 16)])
         skills: List[Skill] = [
             ChatSkill(),
             MemorySkill(self.index, self.memory),

@@ -52,13 +52,14 @@ tokens ─► Embedding ─► [ RMSNorm ─► GQA attention (RoPE, causal SDPA
 
 ### Presets
 
-Defined in `mnx/configs.py`. Only `tiny` is intended to be trained on a CPU;
+Defined in `mnx/configs.py`. Only `tiny` and `cpu` are intended to be trained on a CPU (`cpu` in about two hours on 4 cores, see the README's expert-stream section);
 the others are configuration presets. Parameter counts are exact (tied weights
 counted once), computed with `MNXCoder.num_parameters()`.
 
 | Preset | Name | d_model | Layers | Heads (Q / KV) | d_ff | Context | Vocab | Params | Non-embedding |
 |--------|------|--------:|-------:|---------------:|-----:|--------:|------:|-------:|--------------:|
 | `tiny`  | `mnx-2.0-max-coder-tiny`  | 128  | 4  | 4 / 2  | 448   | 256    | 1 024  | **1.02M**   | 0.89M  |
+| `cpu`   | `mnx-2.0-max-coder-cpu`   | 320  | 8  | 8 / 4  | 896   | 256    | 4 096  | **10.66M**  | 9.34M   |
 | `small` | `mnx-2.0-max-coder-small` | 768  | 12 | 12 / 4 | 2 048  | 4 096  | 32 768 | **100.7M**  | 75.5M  |
 | `base`  | `mnx-2.0-max-coder-base`  | 2048 | 24 | 16 / 8 | 5 632  | 8 192  | 32 768 | **1.20B**   | 1.13B  |
 | `max`   | `mnx-2.0-max-coder-max`   | 4096 | 32 | 32 / 8 | 14 336 | 16 384 | 32 768 | **7.11B**   | 6.98B  |

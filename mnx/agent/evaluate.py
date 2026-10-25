@@ -92,8 +92,10 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--benchmark", default=None)
     p.add_argument("--verbose", action="store_true")
+    p.add_argument("--ckpt", default=None, help="MNXCoder checkpoint to use as the neural proposer")
     args = p.parse_args(argv)
-    stats = run(load_benchmark(args.benchmark), verbose=args.verbose)
+    agent = MNXAgent(today=dt.date(2026, 1, 1), learn=False, ckpt=args.ckpt) if args.ckpt else None
+    stats = run(load_benchmark(args.benchmark), agent, verbose=args.verbose)
     print(report(stats))
     print(f"\nrouter 5-fold cross-validated accuracy: {cross_validate(load_intents(default_intents_path())):.0%}")
     return 0

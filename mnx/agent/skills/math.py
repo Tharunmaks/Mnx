@@ -128,12 +128,12 @@ _WORDS: List[Tuple[str, str]] = [
     (r"\b(?:the )?absolute value of\b", " abs "),
     (r"\bfactorial of\s+(\d+)", r"\1!"),
     (r"\b(\d+)\s+factorial\b", r"\1!"),
-    (r"\b(?:the )?(?:gcd|greatest common divisor|hcf|highest common factor) of\s+(\S+)\s+and\s+(\S+)", r"gcd(\1,\2)"),
-    (r"\b(?:the )?(?:lcm|least common multiple|lowest common multiple) of\s+(\S+)\s+and\s+(\S+)", r"lcm(\1,\2)"),
+    (r"\b(?:the )?(?:gcd|greatest common divisor|hcf|highest common factor) of\s+(\S+)\s+and\s+(\S+)", r"gcd(\1, \2)"),
+    (r"\b(?:the )?(?:lcm|least common multiple|lowest common multiple) of\s+(\S+)\s+and\s+(\S+)", r"lcm(\1, \2)"),
     (r"\b(?:the )?sum of\s+(\S+)\s+and\s+(\S+)", r"(\1)+(\2)"),
     (r"\b(?:the )?product of\s+(\S+)\s+and\s+(\S+)", r"(\1)*(\2)"),
     (r"\b(?:the )?difference (?:between|of)\s+(\S+)\s+and\s+(\S+)", r"(\1)-(\2)"),
-    (r"\b(\d+)\s+choose\s+(\d+)", r"comb(\1,\2)"),
+    (r"\b(\d+)\s+choose\s+(\d+)", r"comb(\1, \2)"),
     (r"\bto the power of\b|\braised to(?: the power of)?\b|\bto the\b", "^"),
     (r"\bsquared\b", "^2"),
     (r"\bcubed\b", "^3"),
@@ -264,6 +264,7 @@ class MathSkill(Skill):
     description = "exact arithmetic, equations, systems, polynomials, primes"
 
     def answer(self, question: str) -> Optional[Answer]:
+        question = re.sub(r"\s*=\s*\?\s*$", "", question.strip())  # "19 * 216 = ?" asks for the value
         low = question.lower().strip()
         try:
             return self._number_theory(low) or self._algebra(question, low)

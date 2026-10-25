@@ -1,6 +1,6 @@
 """Named model presets for the MNX 2.0 Max Coder family.
 
-Only ``tiny`` is meant to be trained on a laptop CPU. The other presets are
+Only ``tiny`` and ``cpu`` are meant to be trained on a CPU. The other presets are
 pure configuration describing progressively larger models; they are provided
 so the same code path scales from a toy demo to a flagship-size architecture.
 """
@@ -21,6 +21,19 @@ PRESETS: Dict[str, MNXConfig] = {
         n_heads=4,
         n_kv_heads=2,
         d_ff=448,
+        max_seq_len=256,
+        dropout=0.0,
+    ),
+    # ~10M parameters: the largest preset that trains in about an hour on a
+    # 4-core CPU. Used for the expert-stream coder (docs/coder.md).
+    "cpu": MNXConfig(
+        name="mnx-2.0-max-coder-cpu",
+        vocab_size=4096,
+        d_model=320,
+        n_layers=8,
+        n_heads=8,
+        n_kv_heads=4,
+        d_ff=896,
         max_seq_len=256,
         dropout=0.0,
     ),
