@@ -347,6 +347,33 @@ checkpoints atomically, so a run that is killed resumes where it stopped.
 `--status` prints the rolling score by question type. See
 [docs/trainer-bot.md](docs/trainer-bot.md).
 
+Be warned by what it measured: on this 10M checkpoint the trainer bot's
+aggressive regimes **destroy** the model rather than improve it — 54% down to 6%,
+and down to 4% with the replay bug fixed — and its gentle regime preserves the
+model and gains nothing. The evidence is in
+[docs/evidence/trainer-bot-forgetting.md](docs/evidence/trainer-bot-forgetting.md).
+
+### One digit per token
+
+The reason the arithmetic would not come is the tokenizer: a third of its merge
+table is runs of digits, so "1234 plus 5678" reaches the model as a couple of
+opaque symbols with no column alignment, and carrying is close to unlearnable in
+that representation.
+
+```bash
+python scripts/sft_digits.py --ckpt runs/cpu --out runs/digit --steps 9000
+python scripts/eval_qa.py --ckpt runs/digit --n 200 --seed 777 \
+       --exclude runs/digit/qa_history.jsonl
+```
+
+Splitting digit runs into single tokens — same vocabulary, same merges,
+byte-exact decoding — dropping the quizzing, and keeping a quarter of the mixture
+as rehearsal took the unseen Q&A score from **109/200 to 131/200 (55% to 66%)**
+on the identical item list in 2h40m on four CPU threads. Arithmetic went from
+3/62 to 26/62; code, syllogisms and primality all stayed at 100%. See
+[docs/sft-digits.md](docs/sft-digits.md), and
+[docs/evidence/arena/](docs/evidence/arena/) for the three write-ups it came from.
+
 ### On a phone
 
 Train on a PC, then `python -m mnx.export_mobile --ckpt runs/cpu --out mobile/ --check`
@@ -540,8 +567,10 @@ docs/sample-session.md  the output of that script
 mnx/*.py          MNX 2.0 Max Coder transformer: tokenizer, model, data (incl. streaming), train, generate
 mnx/export_mobile.py  int8 ExecuTorch export for phones
 mnx/trainer_bot.py    24/7 active-learning CPU trainer (quiz, grade, replay, curriculum)
+scripts/sft_digits.py digit-aligned fine-tuning: the recipe that actually worked
 docs/mobile.md    running MNX1 and the model on a phone
 docs/trainer-bot.md  the 24/7 CPU Q&A trainer bot
+docs/sft-digits.md   one digit per token: 109/200 -> 131/200
 docs/registry.md  the agent registry and how MNX1 picks from it
 docs/local-model.md  the opt-in local code model proposer (Termux or Ollama)
 docs/coder.md     transformer documentation

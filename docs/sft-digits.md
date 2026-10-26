@@ -97,3 +97,54 @@ The baseline to beat was re-measured twice on the day of the run and came out
 identical both times: **107/200**, with code 80/80, syllogism 14/14, primality
 6/6, gcd_lcm 3/11, arithmetic 3/63, dates 1/17, system2 0/6, and zero for
 factorise, linear and percent.
+
+## What it came out at
+
+Run once, on the protocol, first-run reported.
+
+```
+python scripts/eval_qa.py --ckpt runs/digit --n 200 --seed 777 \
+       --exclude runs/digit/qa_history.jsonl
+```
+
+**131/200 (66%)**, against the untrained checkpoint's 107/200 (54%).
+
+The exclusion did move the item list, as the recipe warned it would: 1,176,499
+trained questions were excluded, and the per-kind counts came out code 82,
+arithmetic 62, dates 16, syllogism 14, gcd_lcm 12, primality 6, system2 5,
+percent 2, factorise 1 — about eight items of drift against the baseline row, two
+of them extra code items the model happens to get right. So the headline number
+is not a like-for-like comparison on its own, and the falsifier list says to
+report both. The untrained checkpoint was therefore re-scored under the identical
+`--exclude`, on the identical 200 items:
+
+| kind | untrained | after 9,000 steps |
+|---|---:|---:|
+| arithmetic | 3/62 (5%) | **26/62 (42%)** |
+| code | 82/82 (100%) | 82/82 (100%) |
+| syllogism | 14/14 (100%) | 14/14 (100%) |
+| primality | 6/6 (100%) | 6/6 (100%) |
+| gcd and lcm | 3/12 (25%) | 3/12 (25%) |
+| dates | 1/16 (6%) | 0/16 (0%) |
+| factorise, percent, system2 | 0/8 | 0/8 |
+| **total** | **109/200 (55%)** | **131/200 (66%)** |
+
+**+22 points on the identical item list**, and every point of it is arithmetic.
+Nothing that was already at 100% moved: the rehearsal share did the job it was
+there for. Dates lost its single point, which is the cost of the kill switch
+being pulled at step 3,087 — and the right call, since dates had earned nothing
+by then and the budget it gave up went to the block that went from 5% to 42%.
+
+Three dev checkpoints along the way, on a different seed (4242, n=150), so the
+protocol seed stayed untouched until the end:
+
+| | untrained | step 3,000 | step 6,000 |
+|---|---:|---:|---:|
+| arithmetic | 1/51 (2%) | 12/51 (24%) | 16/51 (31%) |
+| code | 53/53 | 53/53 | 53/53 |
+| total | 72/150 (48%) | 83/150 (55%) | 86/150 (57%) |
+
+Of the five falsifiers, none fired against the recipe. The dates kill switch is
+the one gate that tripped, and it was a reallocation rule rather than a
+falsifier. The run cost 2h40m of wall time on four CPU threads, 1.18 million
+questions, 9,000 steps at batch 16 × 256.
