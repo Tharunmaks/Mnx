@@ -5,26 +5,26 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mnx"
 version = "2.0.0"
-description = "MNX 2.0 Max Coder: a from-scratch decoder-only transformer language model for source code."
+description = "MNX: a small from-scratch AI assistant (verified solvers, retrieval, program search) plus the MNX 2.0 Max Coder transformer."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "MNX Authors" }]
-keywords = ["llm", "transformer", "code-generation", "pytorch", "bpe"]
+keywords = ["neuro-symbolic", "program-synthesis", "retrieval", "transformer", "code-generation", "pytorch", "bpe"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = [
-    "torch>=2.2,<3.0",
-    "numpy>=1.24,<3.0",
-]
+# The agent (mnx.agent) needs only the standard library; the transformer needs torch.
+dependencies = []
 
 [project.optional-dependencies]
+coder = ["torch>=2.2,<3.0", "numpy>=1.24,<3.0"]
 dev = ["pytest>=8.0,<9.0"]
 
 [project.scripts]
+mnx-agent = "mnx.agent.__main__:main"
 mnx-train = "mnx.train:main"
 mnx-generate = "mnx.generate:main"
 mnx-tokenizer = "mnx.tokenizer:main"

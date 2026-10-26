@@ -1,0 +1,83 @@
+{"category": "math", "question": "What is 37 * 43?", "expect": ["1591"]}
+{"category": "math", "question": "calculate 18% of 350", "expect": ["63"]}
+{"category": "math", "question": "what is 2^80", "expect": ["1208925819614629174706176"]}
+{"category": "math", "question": "what's 7/8 - 1/3", "expect": ["13/24"]}
+{"category": "math", "question": "Solve 4x - 7 = 21", "expect": ["x = 7"]}
+{"category": "math", "question": "solve x^2 + x - 12 = 0", "expect": ["x = -4 or x = 3"]}
+{"category": "math", "question": "solve 2x^2 - 8 = 0", "expect": ["x = -2 or x = 2"]}
+{"category": "math", "question": "solve x^3 - 7x + 6 = 0", "expect": ["x = -3 or x = 1 or x = 2"]}
+{"category": "math", "question": "solve 3a + 2b = 16, a - b = 2", "expect": ["a = 4, b = 2"]}
+{"category": "math", "question": "solve x + y + z = 6, x - y = 1, y + z = 4", "expect": ["x = 2, y = 1, z = 3"]}
+{"category": "math", "question": "is 7919 prime?", "expect": ["Yes"]}
+{"category": "math", "question": "is 1001 prime", "expect": ["No", "7 \u00d7 11 \u00d7 13"]}
+{"category": "math", "question": "prime factors of 2310", "expect": ["2 \u00d7 3 \u00d7 5 \u00d7 7 \u00d7 11"]}
+{"category": "math", "question": "factor x^2 - 9", "expect": ["(x + 3)(x - 3)", "(x - 3)(x + 3)"]}
+{"category": "math", "question": "expand (2x - 1)^2", "expect": ["4x^2 - 4x + 1"]}
+{"category": "math", "question": "differentiate 5x^4 - 3x", "expect": ["20x^3 - 3"]}
+{"category": "math", "question": "what is the square root of 1764", "expect": ["42"]}
+{"category": "math", "question": "what is 15 factorial", "expect": ["1307674368000"]}
+{"category": "math", "question": "20 choose 10", "expect": ["184756"]}
+{"category": "math", "question": "what is 123456789 times 987654321", "expect": ["121932631112635269"]}
+{"category": "units", "question": "convert 10 miles to km", "expect": ["16.0934"]}
+{"category": "units", "question": "what is 98.6 F in C", "expect": ["37"]}
+{"category": "units", "question": "how many inches are in a foot", "expect": ["12"]}
+{"category": "units", "question": "convert 3.5 kg to grams", "expect": ["3500"]}
+{"category": "units", "question": "how many minutes in a week", "expect": ["10080"]}
+{"category": "units", "question": "2 gallons in liters", "expect": ["7.57082"]}
+{"category": "units", "question": "convert 1 TB to GB", "expect": ["1000"]}
+{"category": "units", "question": "what is 0 kelvin in fahrenheit", "expect": ["-459.67"]}
+{"category": "dates", "question": "What day of the week was 2000-01-01?", "expect": ["Saturday"]}
+{"category": "dates", "question": "what weekday was November 9, 1989", "expect": ["Thursday"]}
+{"category": "dates", "question": "how many days between 2020-03-01 and 2020-12-31", "expect": ["305"]}
+{"category": "dates", "question": "what date is 1000 days after 2000-01-01", "expect": ["September 27, 2002"]}
+{"category": "dates", "question": "is 2028 a leap year", "expect": ["Yes"]}
+{"category": "dates", "question": "was 2023 a leap year?", "expect": ["No"]}
+{"category": "logic", "question": "All dolphins are mammals. All mammals breathe air. Flipper is a dolphin. Does Flipper breathe air?", "expect": ["Yes"]}
+{"category": "logic", "question": "No birds are mammals. All sparrows are birds. Jack is a sparrow. Is Jack a mammal?", "expect": ["No"]}
+{"category": "logic", "question": "All engineers are logical. Priya is an engineer. Is Priya logical?", "expect": ["Yes"]}
+{"category": "logic", "question": "If something is a fish then it can swim. Bubbles cannot swim. Is Bubbles a fish?", "expect": ["No"]}
+{"category": "logic", "question": "All roses are flowers. Rosie is a flower. Is Rosie a rose?", "expect": ["Cannot be determined"]}
+{"category": "logic", "question": "All squares are rhombuses. All rhombuses are parallelograms. Are all squares parallelograms?", "expect": ["Yes"]}
+{"category": "logic", "question": "All A are B. No B are C. Are all A C?", "expect": ["No"]}
+{"category": "sequence", "question": "what comes next: 3, 6, 12, 24", "expect": ["48"]}
+{"category": "sequence", "question": "next number: 1, 4, 9, 16, 25, 36", "expect": ["49"]}
+{"category": "sequence", "question": "2, 5, 8, 11, 14, ?", "expect": ["17"]}
+{"category": "sequence", "question": "continue the sequence 1, 1, 2, 3, 5, 8, 13", "expect": ["21"]}
+{"category": "sequence", "question": "what is next 1, 3, 6, 10, 15", "expect": ["21"]}
+{"category": "sequence", "question": "next term: 2, 3, 5, 7, 11, 13", "expect": ["17"]}
+{"category": "sequence", "question": "100, 50, 25, next?", "expect": ["25/2", "12.5"]}
+{"category": "sequence", "question": "what comes next 1, 8, 27, 64, 125", "expect": ["216"]}
+{"category": "synth", "question": "f(1) = 3, f(2) = 6, f(5) = 15, f(7) = ?", "expect": ["f(7) = 21"]}
+{"category": "synth", "question": "[3, 1, 2] -> [3, 2, 1], [5, 9] -> [9, 5], [4, 6, 1] -> ?", "expect": ["[6, 4, 1]"]}
+{"category": "synth", "question": "'Hello' -> 'olleH', 'abc' -> 'cba', 'xyz' -> ?", "expect": ["'zyx'"]}
+{"category": "synth", "question": "[1, 2, 3] -> 3, [7, 7] -> 2, [] -> 0, [4, 4, 4, 4] -> ?", "expect": ["= 4"]}
+{"category": "synth", "question": "f(2, 5) = 10, f(3, 4) = 12, f(6, 7) = ?", "expect": ["= 42"]}
+{"category": "synth", "question": "'machine learning' -> 'ML', 'neural network' -> 'NN', 'deep learning' -> ?", "expect": ["'DL'"]}
+{"category": "synth", "question": "[1, 2, 3, 4, 5, 6] -> [1, 3, 5], [7, 8, 9] -> [7, 9], [10, 11, 13] -> ?", "expect": ["[11, 13]"]}
+{"category": "synth", "question": "f(10) = 1, f(25) = 7, f(99) = 18, f(42) = ?", "expect": ["= 6"]}
+{"category": "knowledge", "question": "What's the capital city of Australia?", "expect": ["Canberra"]}
+{"category": "knowledge", "question": "who wrote Romeo and Juliet", "expect": ["Shakespeare"]}
+{"category": "knowledge", "question": "Which planet is the largest?", "expect": ["Jupiter"]}
+{"category": "knowledge", "question": "what is the chemical formula of water", "expect": ["H2O"]}
+{"category": "knowledge", "question": "who painted the Mona Lisa?", "expect": ["Leonardo da Vinci"]}
+{"category": "knowledge", "question": "when did Yuri Gagarin go to space", "expect": ["1961"]}
+{"category": "knowledge", "question": "how many chambers does the human heart have", "expect": ["four"]}
+{"category": "knowledge", "question": "what is the symbol for iron", "expect": ["Fe"]}
+{"category": "knowledge", "question": "who created Linux", "expect": ["Linus Torvalds"]}
+{"category": "knowledge", "question": "what is the time complexity of binary search", "expect": ["O(log n)"]}
+{"category": "knowledge", "question": "which is the largest ocean", "expect": ["Pacific"]}
+{"category": "knowledge", "question": "what is the capital of Canada", "expect": ["Ottawa"]}
+{"category": "knowledge", "question": "who proposed natural selection", "expect": ["Darwin"]}
+{"category": "knowledge", "question": "when did India gain independence", "expect": ["1947"]}
+{"category": "knowledge", "question": "what is the boiling point of water", "expect": ["100 \u00b0C"]}
+{"category": "knowledge", "question": "who introduced the transformer architecture", "expect": ["Vaswani", "Attention Is All You Need"]}
+{"category": "abstain", "question": "Write a poem about the ocean", "expect": null}
+{"category": "abstain", "question": "Who will win the next World Cup?", "expect": null}
+{"category": "abstain", "question": "What is the capital of Wakanda?", "expect": null}
+{"category": "abstain", "question": "Summarise the plot of War and Peace", "expect": null}
+{"category": "abstain", "question": "What's the stock price of Apple today?", "expect": null}
+{"category": "abstain", "question": "Should I quit my job?", "expect": null}
+{"category": "abstain", "question": "Translate 'good morning' into Japanese", "expect": null}
+{"category": "abstain", "question": "Who is the current prime minister of the UK?", "expect": null}
+{"category": "abstain", "question": "What did I eat for breakfast?", "expect": null}
+{"category": "abstain", "question": "Explain quantum entanglement like I'm five", "expect": null}

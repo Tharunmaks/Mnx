@@ -1,0 +1,15 @@
+{"category": "code", "question": "write a python function that returns the factorial of a number", "expect": null, "tests": ["assert factorial(6) == 720", "assert factorial(0) == 1"]}
+{"category": "code", "question": "give me code to check if a number is prime", "expect": null, "tests": ["assert is_prime(97)", "assert not is_prime(91)"]}
+{"category": "code", "question": "write a function that reverses the words in a sentence", "expect": null, "tests": ["assert reverse_words('hello big world') == 'world big hello'"]}
+{"category": "code", "question": "write a function to find the greatest common divisor of two numbers", "expect": null, "tests": ["assert gcd(84, 36) == 12"]}
+{"category": "code", "question": "implement binary search in python", "expect": null, "tests": ["assert binary_search([2, 4, 6, 8], 6) == 2", "assert binary_search([2, 4], 5) == -1"]}
+{"category": "code", "question": "write a function that counts the vowels in a string", "expect": null, "tests": ["assert count_vowels('Programming') == 3"]}
+{"category": "code", "question": "write code that converts a decimal number to binary", "expect": null, "tests": ["assert decimal_to_binary(5) == '101'"]}
+{"category": "code", "question": "write a function to check if two strings are anagrams", "expect": null, "tests": ["assert is_anagram('dusty', 'study')", "assert not is_anagram('a', 'b')"]}
+{"category": "code", "question": "create a function that removes duplicate items from a list", "expect": null, "tests": ["assert remove_duplicates([1, 1, 2, 3, 2]) == [1, 2, 3]"]}
+{"category": "code", "question": "write a function that computes the median of a list", "expect": null, "tests": ["assert median([5, 1, 3]) == 3"]}
+{"category": "code", "question": "def triple(x):\nassert triple(1) == 3\nassert triple(4) == 12\nassert triple(-2) == -6", "expect": null, "tests": ["assert triple(10) == 30"]}
+{"category": "code", "question": "def last_item(xs):\nassert last_item([1, 2, 3]) == 3\nassert last_item(['a']) == 'a'\nassert last_item([4, 5]) == 5", "expect": null, "tests": ["assert last_item([9, 8, 7]) == 7"]}
+{"category": "code", "question": "def shout(s):\nassert shout('hi') == 'HI!'\nassert shout('ok') == 'OK!'", "expect": null, "tests": ["assert shout('hey') == 'HEY!'"]}
+{"category": "code", "question": "def count_pos(xs):\nassert count_pos([1, -2, 3]) == 2\nassert count_pos([-1]) == 0\nassert count_pos([5, 5, 5]) == 3", "expect": null, "tests": ["assert count_pos([0, 2, -3, 4]) == 2"]}
+{"category": "code", "question": "write a function that merges two dictionaries", "expect": null, "tests": ["assert merge_dicts({'a': 1}, {'b': 2}) == {'a': 1, 'b': 2}"]}

@@ -1,0 +1,29 @@
+{
+  "total": 14329,
+  "verified": 13613,
+  "reference": 716,
+  "families": {
+    "recipe": 164,
+    "math": 26,
+    "stats": 115,
+    "unit": 548,
+    "date": 846,
+    "base": 70,
+    "cipher": 25,
+    "number": 4824,
+    "digits": 27,
+    "list": 2307,
+    "bits": 1768,
+    "text": 1344,
+    "roman": 2,
+    "geometry": 44,
+    "matrix": 10,
+    "validate": 6,
+    "set": 6,
+    "sequence": 13,
+    "round": 55,
+    "percent": 297,
+    "window": 1116,
+    "stdlib": 716
+  }
+}

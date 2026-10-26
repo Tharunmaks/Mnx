@@ -1,4 +1,7 @@
-"""MNX 2.0 Max Coder: a from-scratch decoder-only transformer for source code.
+"""MNX: a small from-scratch AI assistant plus the MNX 2.0 Max Coder transformer.
+
+``mnx.agent`` is the assistant (standard library only); the top-level
+modules below are the PyTorch transformer.
 
 Submodules are imported lazily so that ``python -m mnx.<module>`` does not
 trigger double-import warnings.

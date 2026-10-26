@@ -23,7 +23,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import torch
 
 from mnx.configs import PRESETS, get_config
-from mnx.data import CodeDataset, load_corpus, split_documents, tokenize_documents
+from mnx.data import CodeDataset, StreamDataset, load_corpus, mixed_stream, split_documents, tokenize_documents
 from mnx.model import MNXCoder, MNXConfig
 from mnx.tokenizer import BPETokenizer, iter_source_files
 
@@ -61,6 +61,9 @@ class TrainArgs:
     device: str = "cpu"
     threads: Optional[int] = None
     resume: bool = False
+    doc_sep: Optional[str] = None
+    stream: Optional[str] = None
+    extra_rate: float = 0.25
     overrides: Dict[str, object] = field(default_factory=dict)
 
 
@@ -150,11 +153,37 @@ def prepare_tokenizer(args: TrainArgs, out_dir: Path, target_vocab: int) -> BPET
         return tok
     if args.resume and out_path.exists():
         return BPETokenizer.load(out_path)
-    files = iter_source_files(Path(args.data))
-    print(f"training tokenizer (vocab_size={target_vocab}) on {len(files)} files ...")
-    tok = BPETokenizer.train_from_files(files, vocab_size=target_vocab)
+    if args.stream:
+        sample = [d for _, d in zip(range(20000), _stream_docs(args))][::5]
+        print(f"training tokenizer (vocab_size={target_vocab}) on {len(sample)} streamed documents ...")
+        tok = BPETokenizer()
+        tok.train(sample, vocab_size=target_vocab)
+    elif args.doc_sep:
+        # one big corpus file: train the tokenizer on a sample of its documents
+        docs = load_corpus(args.data, doc_separator=args.doc_sep)
+        sample = docs[:: max(1, len(docs) // 4000)]
+        print(f"training tokenizer (vocab_size={target_vocab}) on {len(sample)} of {len(docs)} documents ...")
+        tok = BPETokenizer()
+        tok.train(sample, vocab_size=target_vocab)
+    else:
+        files = iter_source_files(Path(args.data))
+        print(f"training tokenizer (vocab_size={target_vocab}) on {len(files)} files ...")
+        tok = BPETokenizer.train_from_files(files, vocab_size=target_vocab)
     tok.save(out_path)
     return tok
+
+
+STREAM_STATE = "stream_state.json"
+VAL_DOCS = 3000
+
+
+def _stream_docs(args: TrainArgs, skip: int = 0):
+    """Q&A stream from ``--stream`` with the ``--data`` corpus mixed in; the first VAL_DOCS are validation."""
+    extra = load_corpus(args.data, doc_separator=args.doc_sep) if args.data else []
+    it = mixed_stream(args.stream, extra, args.extra_rate, seed=args.seed)
+    for i, doc in enumerate(it):
+        if i >= skip:
+            yield doc
 
 
 def train(args: TrainArgs) -> Dict[str, List[float]]:
@@ -177,19 +206,29 @@ def train(args: TrainArgs) -> Dict[str, List[float]]:
         # matches the actual tokenizer size.
         cfg = cfg.replace(vocab_size=tok.vocab_size)
 
-    docs = load_corpus(args.data)
-    train_docs, val_docs = split_documents(docs, args.val_fraction, seed=args.seed)
     seq_len = cfg.max_seq_len
-    train_ds = CodeDataset(tokenize_documents(train_docs, tok), tok, seq_len, fim_rate=args.fim_rate, seed=args.seed)
-    val_ds = (
-        CodeDataset(tokenize_documents(val_docs, tok), tok, seq_len, fim_rate=0.0, seed=args.seed)
-        if val_docs
-        else train_ds
-    )
-    print(
-        f"corpus: {len(docs)} docs ({len(train_docs)} train / {len(val_docs)} val), "
-        f"{train_ds.num_tokens} train tokens, seq_len={seq_len}, vocab={tok.vocab_size}"
-    )
+    if args.stream:
+        state_path = out_dir / STREAM_STATE
+        skip = json.loads(state_path.read_text())["docs_seen"] if args.resume and state_path.exists() else 0
+        val_docs = [d for _, d in zip(range(VAL_DOCS), _stream_docs(args))]
+        val_ds = CodeDataset(tokenize_documents(val_docs, tok), tok, seq_len, fim_rate=0.0, seed=args.seed)
+        train_ds = StreamDataset(_stream_docs(args, skip=VAL_DOCS + skip), tok, seq_len, seed=args.seed)
+        train_ds.docs_seen = skip
+        print(f"streaming from {args.stream} (+ {args.data} at rate {args.extra_rate}), "
+              f"{len(val_docs)} val docs, resuming after {skip} docs, seq_len={seq_len}, vocab={tok.vocab_size}")
+    else:
+        docs = load_corpus(args.data, doc_separator=args.doc_sep)
+        train_docs, val_docs = split_documents(docs, args.val_fraction, seed=args.seed)
+        train_ds = CodeDataset(tokenize_documents(train_docs, tok), tok, seq_len, fim_rate=args.fim_rate, seed=args.seed)
+        val_ds = (
+            CodeDataset(tokenize_documents(val_docs, tok), tok, seq_len, fim_rate=0.0, seed=args.seed)
+            if val_docs
+            else train_ds
+        )
+        print(
+            f"corpus: {len(docs)} docs ({len(train_docs)} train / {len(val_docs)} val), "
+            f"{train_ds.num_tokens} train tokens, seq_len={seq_len}, vocab={tok.vocab_size}"
+        )
 
     model = MNXCoder(cfg).to(device)
     print(f"model {cfg.name}: {MNXCoder.format_params(model.num_parameters())} parameters")
@@ -254,6 +293,8 @@ def train(args: TrainArgs) -> Dict[str, List[float]]:
             if val_loss is not None:
                 msg += f" | val {val_loss:.4f}"
             msg += f" | {elapsed:6.1f}s"
+            if args.stream:
+                msg += f" | {train_ds.tokens_seen / 1e6:.1f}M tokens"
             print(msg, flush=True)
             writer.writerow([step + 1, f"{lr:.6e}", f"{loss_acc:.6f}", "" if val_loss is None else f"{val_loss:.6f}", f"{elapsed:.1f}"])
             log_file.flush()
@@ -263,6 +304,9 @@ def train(args: TrainArgs) -> Dict[str, List[float]]:
 
         if args.save_interval > 0 and ((step + 1) % args.save_interval == 0 or is_last):
             save_checkpoint(out_dir, model, optimizer, step + 1, args, best_val)
+            if args.stream:
+                (out_dir / STREAM_STATE).write_text(json.dumps(
+                    {"docs_seen": train_ds.docs_seen, "tokens_seen": train_ds.tokens_seen, "step": step + 1}))
 
     log_file.close()
     print(f"done. checkpoint: {ckpt_path}  best val loss: {best_val:.4f}")
@@ -297,6 +341,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> TrainArgs:
     p.add_argument("--device", default=d.device)
     p.add_argument("--threads", type=int, default=None)
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--stream", default=None, help="folder of Q&A shards to stream (mnx.agent.qa_stream); --data is mixed in")
+    p.add_argument("--extra-rate", type=float, default=d.extra_rate, help="with --stream: --data documents per Q&A document")
+    p.add_argument("--doc-sep", default=None, help="split a single --data file into documents on this string")
     p.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE", help="override config fields, e.g. n_layers=2")
     ns = p.parse_args(argv)
 
@@ -312,6 +359,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> TrainArgs:
         grad_clip=ns.grad_clip, eval_interval=ns.eval_interval, eval_iters=ns.eval_iters,
         log_interval=ns.log_interval, save_interval=ns.save_interval, val_fraction=ns.val_fraction,
         fim_rate=ns.fim_rate, seed=ns.seed, device=ns.device, threads=ns.threads, resume=ns.resume,
+        stream=ns.stream, extra_rate=ns.extra_rate,
+        doc_sep=ns.doc_sep.encode().decode("unicode_escape") if ns.doc_sep else None,
         overrides=overrides,
     )
 

@@ -33,3 +33,7 @@ checkpoints/
 .idea/
 .DS_Store
 *.swp
+
+# Mobile exports
+mobile/
+.arena/
