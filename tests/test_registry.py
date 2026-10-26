@@ -92,3 +92,67 @@ def test_the_skill_says_nothing_when_it_cannot_be_sure():
     skill = RegistrySkill()
     assert skill.answer("hello how are you") is None
     assert skill.answer("what is love") is None
+
+
+# --------------------------------------------------------- the newer families
+def test_every_agent_in_the_newer_families_passes_its_own_tests():
+    import itertools
+
+    from mnx.agent.registry import (coprime_agents, extra_stat_agents, geometry_agents,
+                                    matrix_agents, nth_value_agents, percent_agents, roman_agents,
+                                    rounding_agents, sequence_number_agents, set_agents,
+                                    text_agents, validation_agents, window_agents)
+
+    makers = (roman_agents(), geometry_agents(), matrix_agents(), validation_agents(),
+              set_agents(), extra_stat_agents(), sequence_number_agents(), text_agents(6),
+              coprime_agents(6), rounding_agents(), percent_agents(), nth_value_agents(6),
+              window_agents(6))
+    for maker in makers:
+        for agent in itertools.islice(maker, 60):
+            ok, why = check(agent)
+            assert ok, f"{agent.id}: {why}"
+
+
+def test_no_agent_takes_a_packed_tuple():
+    """An agent that wants two lists must say so, or the question cannot be read."""
+    from mnx.agent.registry import geometry_agents, set_agents
+
+    for agent in list(set_agents()) + list(geometry_agents()):
+        assert "= pair" not in agent.code and "= dims" not in agent.code, agent.id
+
+
+def test_a_whole_matrix_is_read_as_one_argument():
+    assert arguments_in("transpose [[1,2],[3,4]]", 1) == [[[1, 2], [3, 4]]]
+    assert arguments_in("jaccard of [1,2] and [2,3]", 2) == [[1, 2], [2, 3]]
+
+
+def test_data_that_only_looks_like_a_number_stays_a_string():
+    assert arguments_in("is 192.168.0.1 valid", 1) == ["192.168.0.1"]
+    assert arguments_in("is a@b.com valid", 1) == ["a@b.com"]
+    assert arguments_in("round 3.14159", 1) == [3.14159]  # a number is still a number
+
+
+def test_the_parameter_is_dropped_wherever_it_sits_in_the_name():
+    # percent_25_of bakes 25 in the middle of its name, not at the end
+    assert arguments_in("25 percent of 80", 1, parameter="25") == [80]
+
+
+@pytest.mark.parametrize("question,expected", [
+    ("prime factors of 360", "[2, 2, 2, 3, 3, 5]"),      # not is_coprime_with_360
+    ("25 percent of 80", "20.0"),                        # the parameter is not the argument
+    ("gcd of 12 and 18", "6"),                           # two agents, each on its own argument
+    ("to roman numeral 1994", "'MCMXCIV'"),              # from_roman_numeral raises and is skipped
+    ("3rd largest of [5,1,9,7,3]", "5"),                 # nth_largest_3, not top_3
+    ("transpose [[1,2],[3,4]]", "[[1, 3], [2, 4]]"),
+    ("determinant of [[1,2],[3,4]]", "-2"),
+    ("moving average 3 of [1,2,3,4,5]", "[2.0, 3.0, 4.0]"),
+    ("is 192.168.0.1 a valid ipv4 address", "True"),
+    ("90th percentile of [1,2,3,4,5,6,7,8,9,10]", "10"),
+    ("9th percentile of [1,2,3,4,5,6,7,8,9,10]", "1"),
+    ("is 28 a perfect number", "True"),
+    ("area of a rectangle 3 by 4", "12"),
+])
+def test_the_cases_that_each_picking_rule_was_written_for(question, expected):
+    ans = RegistrySkill().answer(question)
+    assert ans is not None, question
+    assert ans.text.splitlines()[0] == expected, question

@@ -565,7 +565,631 @@ def families(scale: int = 1) -> Iterator[Agent]:
     yield from list_agents(50 * scale)
     yield from bit_agents(63 * scale)
     yield from string_agents(80 * scale)
+    yield from roman_agents()
+    yield from geometry_agents()
+    yield from matrix_agents()
+    yield from validation_agents()
+    yield from set_agents()
+    yield from extra_stat_agents()
+    yield from text_agents(30 * scale)
+    yield from sequence_number_agents()
+    yield from coprime_agents(80 * scale)
+    yield from rounding_agents()
+    yield from percent_agents()
+    yield from nth_value_agents(40 * scale)
+    yield from window_agents(40 * scale)
     yield from stdlib_agents()
+
+
+# ------------------------------------------------- more families (2026-10-26)
+def coprime_agents(hi: int = 80) -> Iterator[Agent]:
+    from math import gcd as _gcd
+
+    for k in range(2, hi + 1):
+        yield _mk("number", f"gcd_with_{k}",
+                  f"The greatest common divisor of a whole number and {k}.",
+                  f"def gcd_with_{k}(n):\n"
+                  f'    """The largest number that divides both n and {k}."""\n'
+                  f"    from math import gcd\n"
+                  f"    return gcd(abs(n), {k})\n",
+                  [f"assert gcd_with_{k}({k * 3}) == {_gcd(k * 3, k)}",
+                   f"assert gcd_with_{k}(0) == {k}",
+                   f"assert gcd_with_{k}(1) == 1"],
+                  ["gcd", "common", "divisor", "factor", str(k)])
+        yield _mk("number", f"lcm_with_{k}",
+                  f"The lowest common multiple of a whole number and {k}.",
+                  f"def lcm_with_{k}(n):\n"
+                  f'    """The smallest number that both n and {k} divide."""\n'
+                  f"    from math import gcd\n"
+                  f"    if n == 0:\n        return 0\n"
+                  f"    return abs(n) * {k} // gcd(abs(n), {k})\n",
+                  [f"assert lcm_with_{k}(6) == {6 * k // _gcd(6, k)}",
+                   f"assert lcm_with_{k}(0) == 0"],
+                  ["lcm", "lowest", "common", "multiple", str(k)])
+        yield _mk("number", f"is_coprime_with_{k}",
+                  f"True when a whole number shares no factor above 1 with {k}.",
+                  f"def is_coprime_with_{k}(n):\n"
+                  f'    """True when n and {k} are coprime."""\n'
+                  f"    from math import gcd\n"
+                  f"    return gcd(abs(n), {k}) == 1\n",
+                  [f"assert is_coprime_with_{k}(1) is True",
+                   f"assert is_coprime_with_{k}({k}) is {_gcd(k, k) == 1}"],
+                  ["coprime", "relatively", "prime", "gcd", str(k)])
+
+
+#: the round numbers people actually round to
+_NEAREST = (2, 3, 4, 5, 10, 20, 25, 50, 100, 250, 500, 1000, 5000, 10000)
+
+
+def rounding_agents() -> Iterator[Agent]:
+    for d in range(13):
+        yield _mk("round", f"round_to_{d}_places",
+                  f"Round a number to {d} decimal places.",
+                  f"def round_to_{d}_places(x):\n"
+                  f'    """Round to {d} decimal places, half to even as Python does."""\n'
+                  f"    return round(x, {d})\n",
+                  [f"assert round_to_{d}_places(1.0) == 1.0",
+                   f"assert round_to_{d}_places({1 / 3}) == {round(1 / 3, d)}"],
+                  ["round", "decimal", "places", "precision", str(d)])
+    for k in _NEAREST:
+        for op, doc, body, fn in (
+            ("round", "Round to the nearest multiple of {k}.", "return round(x / {k}) * {k}",
+             lambda x, k: round(x / k) * k),
+            ("floor", "Round down to a multiple of {k}.", "return (x // {k}) * {k}",
+             lambda x, k: (x // k) * k),
+            ("ceil", "Round up to a multiple of {k}.", "return -((-x) // {k}) * {k}",
+             lambda x, k: -((-x) // k) * k),
+        ):
+            name = f"{op}_to_nearest_{k}" if op == "round" else f"{op}_to_multiple_of_{k}"
+            probe = k * 3 + 1
+            yield _mk("round", name, doc.format(k=k) + f" Works on whole numbers.",
+                      f"def {name}(x):\n"
+                      f'    """{doc.format(k=k)}"""\n'
+                      f"    {body.format(k=k)}\n",
+                      [f"assert {name}({probe}) == {fn(probe, k)}",
+                       f"assert {name}({k * 2}) == {fn(k * 2, k)}"],
+                      [op, "round", "nearest", "multiple", str(k)])
+
+
+def percent_agents() -> Iterator[Agent]:
+    for p in range(1, 100):
+        yield _mk("percent", f"percent_{p}_of",
+                  f"{p} percent of a number.",
+                  f"def percent_{p}_of(x):\n"
+                  f'    """{p}% of x."""\n'
+                  f"    return x * {p} / 100\n",
+                  [f"assert percent_{p}_of(200) == {200 * p / 100}",
+                   f"assert percent_{p}_of(0) == 0"],
+                  ["percent", "percentage", "of", str(p)])
+        yield _mk("percent", f"discount_{p}_percent",
+                  f"A price after a {p} percent discount.",
+                  f"def discount_{p}_percent(price):\n"
+                  f'    """Take {p}% off a price."""\n'
+                  f"    return price * (100 - {p}) / 100\n",
+                  [f"assert discount_{p}_percent(100) == {100 * (100 - p) / 100}",
+                   f"assert discount_{p}_percent(0) == 0"],
+                  ["discount", "sale", "off", "price", "percent", str(p)])
+        yield _mk("percent", f"markup_{p}_percent",
+                  f"A price after a {p} percent increase.",
+                  f"def markup_{p}_percent(price):\n"
+                  f'    """Add {p}% to a price."""\n'
+                  f"    return price * (100 + {p}) / 100\n",
+                  [f"assert markup_{p}_percent(100) == {100 * (100 + p) / 100}",
+                   f"assert markup_{p}_percent(0) == 0"],
+                  ["markup", "increase", "tax", "vat", "tip", "percent", str(p)])
+
+
+GEOMETRY_AGENTS: List[Tuple[str, str, str, str, List[str], List[str]]] = [
+    ("circle_area", "The area of a circle from its radius.", "r",
+     "    import math\n    return math.pi * r * r",
+     ["assert abs(circle_area(1) - 3.141592653589793) < 1e-12", "assert circle_area(0) == 0"],
+     ["circle", "area", "radius", "geometry"]),
+    ("circle_circumference", "The circumference of a circle from its radius.", "r",
+     "    import math\n    return 2 * math.pi * r",
+     ["assert abs(circle_circumference(1) - 6.283185307179586) < 1e-12"],
+     ["circle", "circumference", "perimeter", "radius", "geometry"]),
+    ("square_area", "The area of a square from its side.", "side",
+     "    return side * side", ["assert square_area(3) == 9", "assert square_area(0) == 0"],
+     ["square", "area", "side", "geometry"]),
+    ("square_perimeter", "The perimeter of a square from its side.", "side",
+     "    return 4 * side", ["assert square_perimeter(3) == 12"],
+     ["square", "perimeter", "side", "geometry"]),
+    ("cube_volume", "The volume of a cube from its side.", "side",
+     "    return side ** 3", ["assert cube_volume(3) == 27"],
+     ["cube", "volume", "side", "geometry"]),
+    ("cube_surface_area", "The surface area of a cube from its side.", "side",
+     "    return 6 * side * side", ["assert cube_surface_area(2) == 24"],
+     ["cube", "surface", "area", "geometry"]),
+    ("sphere_volume", "The volume of a sphere from its radius.", "r",
+     "    import math\n    return 4 / 3 * math.pi * r ** 3",
+     ["assert abs(sphere_volume(1) - 4.188790204786391) < 1e-12"],
+     ["sphere", "ball", "volume", "radius", "geometry"]),
+    ("sphere_surface_area", "The surface area of a sphere from its radius.", "r",
+     "    import math\n    return 4 * math.pi * r * r",
+     ["assert abs(sphere_surface_area(1) - 12.566370614359172) < 1e-12"],
+     ["sphere", "surface", "area", "radius", "geometry"]),
+    ("hypotenuse_of", "The hypotenuse of a right triangle from its two legs.", "a, b",
+     "    return (a * a + b * b) ** 0.5",
+     ["assert hypotenuse_of(3, 4) == 5.0"],
+     ["hypotenuse", "pythagoras", "triangle", "geometry"]),
+    ("rectangle_area", "The area of a rectangle from its width and height.", "w, h",
+     "    return w * h", ["assert rectangle_area(3, 4) == 12"],
+     ["rectangle", "area", "width", "height", "geometry"]),
+    ("rectangle_perimeter", "The perimeter of a rectangle from its width and height.", "w, h",
+     "    return 2 * (w + h)", ["assert rectangle_perimeter(3, 4) == 14"],
+     ["rectangle", "perimeter", "width", "height", "geometry"]),
+    ("triangle_area_heron", "The area of a triangle from its three sides.", "a, b, c",
+     "    s = (a + b + c) / 2\n    return (s * (s - a) * (s - b) * (s - c)) ** 0.5",
+     ["assert triangle_area_heron(3, 4, 5) == 6.0"],
+     ["triangle", "area", "heron", "sides", "geometry"]),
+    ("trapezoid_area", "The area of a trapezoid from its two bases and its height.", "a, b, h",
+     "    return (a + b) / 2 * h", ["assert trapezoid_area(3, 5, 4) == 16.0"],
+     ["trapezoid", "trapezium", "area", "geometry"]),
+    ("cylinder_volume", "The volume of a cylinder from its radius and height.", "r, h",
+     "    import math\n    return math.pi * r * r * h",
+     ["assert abs(cylinder_volume(1, 1) - 3.141592653589793) < 1e-12"],
+     ["cylinder", "volume", "radius", "height", "geometry"]),
+    ("cone_volume", "The volume of a cone from its radius and height.", "r, h",
+     "    import math\n    return math.pi * r * r * h / 3",
+     ["assert abs(cone_volume(1, 3) - 3.141592653589793) < 1e-12"],
+     ["cone", "volume", "radius", "height", "geometry"]),
+    ("distance_between_points", "The straight-line distance between two points on a plane.", "x1, y1, x2, y2",
+     "    return ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5",
+     ["assert distance_between_points(0, 0, 3, 4) == 5.0"],
+     ["distance", "points", "euclidean", "geometry"]),
+]
+
+
+def geometry_agents() -> Iterator[Agent]:
+    import math as _math
+
+    for name, desc, arg, body, tests, tags in GEOMETRY_AGENTS:
+        yield _mk("geometry", name, desc, f"def {name}({arg}):\n    \"\"\"{desc}\"\"\"\n{body}\n", tests, tags)
+    for n in range(3, 31):
+        area = n * 1.0 ** 2 / (4 * _math.tan(_math.pi / n))
+        yield _mk("geometry", f"regular_{n}gon_area",
+                  f"The area of a regular polygon with {n} equal sides, from the side length.",
+                  f"def regular_{n}gon_area(side):\n"
+                  f'    """The area of a regular {n}-sided polygon with this side length."""\n'
+                  f"    import math\n"
+                  f"    return {n} * side ** 2 / (4 * math.tan(math.pi / {n}))\n",
+                  [f"assert abs(regular_{n}gon_area(1) - {area!r}) < 1e-9",
+                   f"assert regular_{n}gon_area(0) == 0"],
+                  ["polygon", "regular", "area", f"{n}gon", "geometry", str(n)])
+
+
+def nth_value_agents(hi: int = 40) -> Iterator[Agent]:
+    for k in range(1, hi + 1):
+        yield _mk("list", f"nth_largest_{k}",
+                  f"The {k}th largest number in a list.",
+                  f"def nth_largest_{k}(xs):\n"
+                  f'    """The {k}th largest value, counting repeats."""\n'
+                  f"    s = sorted(xs, reverse=True)\n"
+                  f"    if len(s) < {k}:\n        raise ValueError('fewer than {k} values')\n"
+                  f"    return s[{k - 1}]\n",
+                  [f"assert nth_largest_{k}(list(range(1, {hi + 5}))) == {hi + 5 - k}"],
+                  ["largest", "biggest", "max", "nth", "rank", str(k)])
+        yield _mk("list", f"nth_smallest_{k}",
+                  f"The {k}th smallest number in a list.",
+                  f"def nth_smallest_{k}(xs):\n"
+                  f'    """The {k}th smallest value, counting repeats."""\n'
+                  f"    s = sorted(xs)\n"
+                  f"    if len(s) < {k}:\n        raise ValueError('fewer than {k} values')\n"
+                  f"    return s[{k - 1}]\n",
+                  [f"assert nth_smallest_{k}(list(range(1, {hi + 5}))) == {k}"],
+                  ["smallest", "least", "min", "nth", "rank", str(k)])
+
+
+def window_agents(hi: int = 40) -> Iterator[Agent]:
+    for k in range(2, hi + 1):
+        data = list(range(1, hi + 6))
+        for op, doc, expr, fn in (
+            ("moving_average", "The mean of every run of {k} values in a row.",
+             "sum(xs[i:i + {k}]) / {k}", lambda w: sum(w) / len(w)),
+            ("rolling_sum", "The total of every run of {k} values in a row.",
+             "sum(xs[i:i + {k}])", sum),
+            ("rolling_max", "The largest of every run of {k} values in a row.",
+             "max(xs[i:i + {k}])", max),
+            ("rolling_min", "The smallest of every run of {k} values in a row.",
+             "min(xs[i:i + {k}])", min),
+        ):
+            name = f"{op}_{k}"
+            want = [fn(data[i:i + k]) for i in range(len(data) - k + 1)]
+            yield _mk("window", name, doc.format(k=k) + " Returns one value per window.",
+                      f"def {name}(xs):\n"
+                      f'    """{doc.format(k=k)}"""\n'
+                      f"    return [{expr.format(k=k)} for i in range(len(xs) - {k} + 1)]\n",
+                      [f"assert {name}({data!r}) == {want!r}",
+                       f"assert {name}([1]) == []"],
+                      [op.replace("_", " "), "window", "rolling", "moving", str(k)])
+
+
+TEXT_AGENTS: List[Tuple[str, str, str, List[str], List[str]]] = [
+    ("to_snake_case", "Rewrite a phrase as snake_case.",
+     "    import re\n    s = re.sub(r'([a-z0-9])([A-Z])', r'\\1 \\2', s)\n"
+     "    return '_'.join(w.lower() for w in re.split(r'[^A-Za-z0-9]+', s) if w)",
+     ["assert to_snake_case('Hello World') == 'hello_world'",
+      "assert to_snake_case('camelCaseName') == 'camel_case_name'"],
+     ["snake", "case", "underscore", "text"]),
+    ("to_kebab_case", "Rewrite a phrase as kebab-case.",
+     "    import re\n    s = re.sub(r'([a-z0-9])([A-Z])', r'\\1 \\2', s)\n"
+     "    return '-'.join(w.lower() for w in re.split(r'[^A-Za-z0-9]+', s) if w)",
+     ["assert to_kebab_case('Hello World') == 'hello-world'"],
+     ["kebab", "case", "dash", "slug", "text"]),
+    ("to_camel_case", "Rewrite a phrase as camelCase.",
+     "    import re\n    parts = [w for w in re.split(r'[^A-Za-z0-9]+', s) if w]\n"
+     "    if not parts:\n        return ''\n"
+     "    return parts[0].lower() + ''.join(p[:1].upper() + p[1:].lower() for p in parts[1:])",
+     ["assert to_camel_case('hello world') == 'helloWorld'", "assert to_camel_case('') == ''"],
+     ["camel", "case", "text"]),
+    ("to_pascal_case", "Rewrite a phrase as PascalCase.",
+     "    import re\n    parts = [w for w in re.split(r'[^A-Za-z0-9]+', s) if w]\n"
+     "    return ''.join(p[:1].upper() + p[1:].lower() for p in parts)",
+     ["assert to_pascal_case('hello world') == 'HelloWorld'"],
+     ["pascal", "case", "text"]),
+    ("to_title_case", "Capitalise the first letter of every word.",
+     "    return ' '.join(w[:1].upper() + w[1:] for w in s.split(' '))",
+     ["assert to_title_case('hello world') == 'Hello World'"],
+     ["title", "case", "capitalise", "text"]),
+    ("slugify_text", "Turn a title into a URL slug.",
+     "    import re\n    return re.sub(r'[^a-z0-9]+', '-', s.lower()).strip('-')",
+     ["assert slugify_text('Hello, World!') == 'hello-world'"],
+     ["slug", "url", "link", "text"]),
+    ("reverse_words", "Reverse the order of the words in a sentence.",
+     "    return ' '.join(reversed(s.split()))",
+     ["assert reverse_words('a b c') == 'c b a'", "assert reverse_words('') == ''"],
+     ["reverse", "words", "order", "text"]),
+    ("count_words", "How many words a piece of text has.",
+     "    return len(s.split())",
+     ["assert count_words('a b  c') == 3", "assert count_words('') == 0"],
+     ["count", "words", "length", "text"]),
+    ("count_vowels", "How many vowels a piece of text has.",
+     "    return sum(1 for c in s.lower() if c in 'aeiou')",
+     ["assert count_vowels('Hello') == 2", "assert count_vowels('xyz') == 0"],
+     ["count", "vowels", "letters", "text"]),
+    ("initials_of", "The initials of a name.",
+     "    return ''.join(w[0].upper() for w in s.split() if w)",
+     ["assert initials_of('ada lovelace') == 'AL'", "assert initials_of('') == ''"],
+     ["initials", "name", "abbreviate", "text"]),
+    ("is_palindrome_text", "True when a phrase reads the same backwards, ignoring case and punctuation.",
+     "    t = ''.join(c for c in s.lower() if c.isalnum())\n    return t == t[::-1]",
+     ["assert is_palindrome_text('A man, a plan, a canal: Panama') is True",
+      "assert is_palindrome_text('hello') is False"],
+     ["palindrome", "reverse", "same", "text"]),
+    ("longest_word", "The longest word in a piece of text; the first one when several tie.",
+     "    words = s.split()\n    if not words:\n        raise ValueError('no words')\n"
+     "    return max(words, key=len)",
+     ["assert longest_word('a bb ccc') == 'ccc'"],
+     ["longest", "word", "max", "text"]),
+    ("squeeze_spaces", "Collapse runs of whitespace into single spaces and trim the ends.",
+     "    return ' '.join(s.split())",
+     ["assert squeeze_spaces('  a   b ') == 'a b'"],
+     ["whitespace", "spaces", "trim", "clean", "text"]),
+    ("character_counts", "How many times each character appears, as a dict.",
+     "    out = {}\n    for c in s:\n        out[c] = out.get(c, 0) + 1\n    return out",
+     ["assert character_counts('aab') == {'a': 2, 'b': 1}", "assert character_counts('') == {}"],
+     ["count", "characters", "frequency", "histogram", "text"]),
+]
+
+
+def text_agents(hi: int = 30) -> Iterator[Agent]:
+    for name, desc, body, tests, tags in TEXT_AGENTS:
+        yield _mk("text", name, desc, f"def {name}(s):\n    \"\"\"{desc}\"\"\"\n{body}\n", tests, tags)
+    for k in range(1, hi + 1):
+        words = " ".join(f"w{i}" for i in range(1, hi + 3))
+        yield _mk("text", f"first_{k}_words",
+                  f"The first {k} words of a piece of text.",
+                  f"def first_{k}_words(s):\n"
+                  f'    """The first {k} words, joined with single spaces."""\n'
+                  f"    return ' '.join(s.split()[:{k}])\n",
+                  [f"assert first_{k}_words({words!r}) == {' '.join(words.split()[:k])!r}",
+                   f"assert first_{k}_words('') == ''"],
+                  ["first", "words", "head", "excerpt", "text", str(k)])
+
+
+MATRIX_AGENTS: List[Tuple[str, str, str, List[str], List[str]]] = [
+    ("transpose_matrix", "Swap the rows and columns of a matrix given as a list of rows.",
+     "    return [list(c) for c in zip(*m)]",
+     ["assert transpose_matrix([[1, 2], [3, 4]]) == [[1, 3], [2, 4]]",
+      "assert transpose_matrix([]) == []"],
+     ["transpose", "matrix", "rows", "columns"]),
+    ("matrix_row_sums", "The total of each row of a matrix.",
+     "    return [sum(r) for r in m]", ["assert matrix_row_sums([[1, 2], [3, 4]]) == [3, 7]"],
+     ["row", "sum", "matrix", "total"]),
+    ("matrix_column_sums", "The total of each column of a matrix.",
+     "    return [sum(c) for c in zip(*m)]", ["assert matrix_column_sums([[1, 2], [3, 4]]) == [4, 6]"],
+     ["column", "sum", "matrix", "total"]),
+    ("matrix_trace", "The sum of the diagonal of a square matrix.",
+     "    return sum(m[i][i] for i in range(len(m)))",
+     ["assert matrix_trace([[1, 2], [3, 4]]) == 5"],
+     ["trace", "diagonal", "matrix"]),
+    ("flatten_matrix", "One flat list from a list of rows.",
+     "    return [v for r in m for v in r]",
+     ["assert flatten_matrix([[1, 2], [3]]) == [1, 2, 3]"],
+     ["flatten", "matrix", "list", "concatenate"]),
+    ("determinant_2x2", "The determinant of a 2 by 2 matrix.",
+     "    (a, b), (c, d) = m\n    return a * d - b * c",
+     ["assert determinant_2x2([[1, 2], [3, 4]]) == -2"],
+     ["determinant", "matrix", "2x2"]),
+    ("determinant_3x3", "The determinant of a 3 by 3 matrix.",
+     "    (a, b, c), (d, e, f), (g, h, i) = m\n"
+     "    return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)",
+     ["assert determinant_3x3([[6, 1, 1], [4, -2, 5], [2, 8, 7]]) == -306"],
+     ["determinant", "matrix", "3x3"]),
+    ("matrix_shape", "The (rows, columns) of a matrix.",
+     "    return (len(m), len(m[0]) if m else 0)",
+     ["assert matrix_shape([[1, 2], [3, 4]]) == (2, 2)", "assert matrix_shape([]) == (0, 0)"],
+     ["shape", "size", "dimensions", "matrix"]),
+    ("matrix_diagonal", "The diagonal of a square matrix as a list.",
+     "    return [m[i][i] for i in range(len(m))]",
+     ["assert matrix_diagonal([[1, 2], [3, 4]]) == [1, 4]"],
+     ["diagonal", "matrix"]),
+    ("rotate_matrix_clockwise", "Turn a matrix a quarter turn clockwise.",
+     "    return [list(r) for r in zip(*m[::-1])]",
+     ["assert rotate_matrix_clockwise([[1, 2], [3, 4]]) == [[3, 1], [4, 2]]"],
+     ["rotate", "turn", "clockwise", "matrix"]),
+]
+
+
+def matrix_agents() -> Iterator[Agent]:
+    for name, desc, body, tests, tags in MATRIX_AGENTS:
+        yield _mk("matrix", name, desc, f"def {name}(m):\n    \"\"\"{desc}\"\"\"\n{body}\n", tests, tags)
+
+
+VALIDATION_AGENTS: List[Tuple[str, str, str, List[str], List[str]]] = [
+    ("is_valid_luhn", "True when a card-style number passes the Luhn check.",
+     "    ds = [int(c) for c in str(s) if c.isdigit()]\n    if not ds:\n        return False\n"
+     "    total = 0\n"
+     "    for i, d in enumerate(reversed(ds)):\n"
+     "        if i % 2:\n            d *= 2\n            if d > 9:\n                d -= 9\n"
+     "        total += d\n    return total % 10 == 0",
+     ["assert is_valid_luhn('4539578763621486') is True",
+      "assert is_valid_luhn('4539578763621487') is False"],
+     ["luhn", "card", "checksum", "validate"]),
+    ("is_valid_isbn10", "True when a 10-character ISBN has a correct check digit.",
+     "    t = str(s).replace('-', '').replace(' ', '').upper()\n"
+     "    if len(t) != 10:\n        return False\n    total = 0\n"
+     "    for i, c in enumerate(t):\n"
+     "        v = 10 if c == 'X' and i == 9 else (int(c) if c.isdigit() else None)\n"
+     "        if v is None:\n            return False\n        total += (10 - i) * v\n"
+     "    return total % 11 == 0",
+     ["assert is_valid_isbn10('0306406152') is True", "assert is_valid_isbn10('0306406153') is False"],
+     ["isbn", "book", "checksum", "validate"]),
+    ("is_valid_ipv4", "True when a string is a dotted-quad IPv4 address.",
+     "    parts = str(s).split('.')\n    if len(parts) != 4:\n        return False\n"
+     "    for p in parts:\n"
+     "        if not p.isdigit() or (len(p) > 1 and p[0] == '0') or int(p) > 255:\n            return False\n"
+     "    return True",
+     ["assert is_valid_ipv4('192.168.0.1') is True", "assert is_valid_ipv4('256.0.0.1') is False"],
+     ["ip", "ipv4", "address", "network", "validate"]),
+    ("is_valid_hex_colour", "True when a string is a #rgb or #rrggbb colour.",
+     "    t = str(s)\n    if not t.startswith('#') or len(t) not in (4, 7):\n        return False\n"
+     "    return all(c in '0123456789abcdefABCDEF' for c in t[1:])",
+     ["assert is_valid_hex_colour('#1a2B3c') is True", "assert is_valid_hex_colour('1a2b3c') is False"],
+     ["hex", "colour", "color", "css", "validate"]),
+    ("looks_like_email", "True when a string has the shape of an email address.",
+     "    import re\n    return bool(re.fullmatch(r'[^@\\s]+@[^@\\s.]+(\\.[^@\\s.]+)+', str(s)))",
+     ["assert looks_like_email('a@b.com') is True", "assert looks_like_email('a@b') is False"],
+     ["email", "address", "validate"]),
+    ("digits_only", "Just the digits of a string, in order.",
+     "    return ''.join(c for c in str(s) if c.isdigit())",
+     ["assert digits_only('a1-b2') == '12'", "assert digits_only('') == ''"],
+     ["digits", "strip", "clean", "validate"]),
+]
+
+
+def validation_agents() -> Iterator[Agent]:
+    for name, desc, body, tests, tags in VALIDATION_AGENTS:
+        yield _mk("validate", name, desc, f"def {name}(s):\n    \"\"\"{desc}\"\"\"\n{body}\n", tests, tags)
+
+
+SEQUENCE_AGENTS: List[Tuple[str, str, str, List[str], List[str]]] = [
+    ("nth_lucas", "The nth Lucas number, counting from 0.",
+     "    a, b = 2, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a",
+     ["assert nth_lucas(0) == 2", "assert nth_lucas(10) == 123"],
+     ["lucas", "sequence", "series"]),
+    ("nth_triangular", "The nth triangular number, counting from 1.",
+     "    return n * (n + 1) // 2", ["assert nth_triangular(1) == 1", "assert nth_triangular(10) == 55"],
+     ["triangular", "sequence", "series"]),
+    ("nth_pentagonal", "The nth pentagonal number, counting from 1.",
+     "    return n * (3 * n - 1) // 2", ["assert nth_pentagonal(1) == 1", "assert nth_pentagonal(5) == 35"],
+     ["pentagonal", "sequence", "series"]),
+    ("nth_hexagonal", "The nth hexagonal number, counting from 1.",
+     "    return n * (2 * n - 1)", ["assert nth_hexagonal(1) == 1", "assert nth_hexagonal(5) == 45"],
+     ["hexagonal", "sequence", "series"]),
+    ("nth_catalan", "The nth Catalan number, counting from 0.",
+     "    num = den = 1\n    for i in range(n):\n        num *= 2 * n - i\n        den *= i + 1\n"
+     "    return num // den // (n + 1)",
+     ["assert nth_catalan(0) == 1", "assert nth_catalan(5) == 42"],
+     ["catalan", "sequence", "combinatorics"]),
+    ("nth_tribonacci", "The nth tribonacci number, counting from 0 with 0, 0, 1.",
+     "    a, b, c = 0, 0, 1\n    for _ in range(n):\n        a, b, c = b, c, a + b + c\n    return a",
+     ["assert nth_tribonacci(0) == 0", "assert nth_tribonacci(10) == 81"],
+     ["tribonacci", "sequence", "series"]),
+    ("nth_prime", "The nth prime number, counting from 1.",
+     "    if n < 1:\n        raise ValueError('n starts at 1')\n"
+     "    found, c = 0, 1\n"
+     "    while found < n:\n        c += 1\n        d = 2\n        ok = True\n"
+     "        while d * d <= c:\n"
+     "            if c % d == 0:\n                ok = False\n                break\n            d += 1\n"
+     "        if ok:\n            found += 1\n    return c",
+     ["assert nth_prime(1) == 2", "assert nth_prime(10) == 29"],
+     ["prime", "nth", "sequence"]),
+    ("next_prime_after", "The smallest prime larger than a number.",
+     "    c = n + 1\n"
+     "    while True:\n        if c > 1:\n            d, ok = 2, True\n"
+     "            while d * d <= c:\n"
+     "                if c % d == 0:\n                    ok = False\n                    break\n"
+     "                d += 1\n            if ok:\n                return c\n        c += 1",
+     ["assert next_prime_after(10) == 11", "assert next_prime_after(13) == 17"],
+     ["prime", "next", "after", "sequence"]),
+    ("primorial_of", "The product of the first n primes.",
+     "    out, found, c = 1, 0, 1\n"
+     "    while found < n:\n        c += 1\n        d, ok = 2, True\n"
+     "        while d * d <= c:\n"
+     "            if c % d == 0:\n                ok = False\n                break\n            d += 1\n"
+     "        if ok:\n            out *= c\n            found += 1\n    return out",
+     ["assert primorial_of(0) == 1", "assert primorial_of(5) == 2310"],
+     ["primorial", "prime", "product"]),
+    ("double_factorial_of", "The product of every other number down from n.",
+     "    out = 1\n    while n > 1:\n        out *= n\n        n -= 2\n    return out",
+     ["assert double_factorial_of(0) == 1", "assert double_factorial_of(7) == 105"],
+     ["double", "factorial", "product"]),
+    ("collatz_steps", "How many steps the Collatz sequence takes from n down to 1.",
+     "    if n < 1:\n        raise ValueError('n starts at 1')\n    steps = 0\n"
+     "    while n != 1:\n        n = n // 2 if n % 2 == 0 else 3 * n + 1\n        steps += 1\n"
+     "    return steps",
+     ["assert collatz_steps(1) == 0", "assert collatz_steps(27) == 111"],
+     ["collatz", "hailstone", "steps", "sequence"]),
+    ("first_n_primes", "The first n prime numbers, in order.",
+     "    out, c = [], 1\n"
+     "    while len(out) < n:\n        c += 1\n"
+     "        if all(c % d for d in range(2, int(c ** 0.5) + 1)):\n            out.append(c)\n"
+     "    return out",
+     ["assert first_n_primes(0) == []", "assert first_n_primes(5) == [2, 3, 5, 7, 11]"],
+     ["prime", "primes", "first", "list"]),
+    ("is_perfect_number", "True when a number equals the sum of its proper divisors.",
+     "    if n < 2:\n        return False\n"
+     "    return sum(d for d in range(1, n) if n % d == 0) == n",
+     ["assert is_perfect_number(28) is True", "assert is_perfect_number(27) is False"],
+     ["perfect", "divisors", "number"]),
+]
+
+
+def sequence_number_agents(hi: int = 60) -> Iterator[Agent]:
+    """The named integer sequences. Deliberately not parameterised by n.
+
+    A ``first_360_primes()`` family looked like free agents and was a trap: it
+    takes no argument, so any question with 360 in it made one of them look
+    runnable, and "prime factors of 360" started answering with a list of the
+    first 360 primes. One agent that takes n is worth more than 400 that bake
+    it in.
+    """
+    for name, desc, body, tests, tags in SEQUENCE_AGENTS:
+        yield _mk("sequence", name, desc, f"def {name}(n):\n    \"\"\"{desc}\"\"\"\n{body}\n", tests, tags)
+
+
+SET_AGENTS: List[Tuple[str, str, str, List[str], List[str]]] = [
+    ("common_items", "The values in both lists, sorted.",
+     "    return sorted(set(a) & set(b))",
+     ["assert common_items([1, 2, 3], [2, 3, 4]) == [2, 3]"],
+     ["common", "intersection", "both", "shared", "set"]),
+    ("combined_items", "Every value from both lists, without repeats, sorted.",
+     "    return sorted(set(a) | set(b))",
+     ["assert combined_items([1, 2], [2, 3]) == [1, 2, 3]"],
+     ["union", "combine", "merge", "set"]),
+    ("only_in_first", "The values in the first list and not the second, sorted.",
+     "    return sorted(set(a) - set(b))",
+     ["assert only_in_first([1, 2, 3], [2]) == [1, 3]"],
+     ["difference", "only", "missing", "set"]),
+    ("in_one_but_not_both", "The values in exactly one of two lists, sorted.",
+     "    return sorted(set(a) ^ set(b))",
+     ["assert in_one_but_not_both([1, 2], [2, 3]) == [1, 3]"],
+     ["symmetric", "difference", "exclusive", "set"]),
+    ("jaccard_similarity", "How much two lists overlap, from 0 to 1.",
+     "    sa, sb = set(a), set(b)\n    u = sa | sb\n"
+     "    return len(sa & sb) / len(u) if u else 1.0",
+     ["assert jaccard_similarity([1, 2], [2, 3]) == 1 / 3",
+      "assert jaccard_similarity([], []) == 1.0"],
+     ["jaccard", "similarity", "overlap", "set"]),
+    ("is_subset_of", "True when every value of the first list is in the second.",
+     "    return set(a) <= set(b)",
+     ["assert is_subset_of([1], [1, 2]) is True", "assert is_subset_of([3], [1, 2]) is False"],
+     ["subset", "contains", "inside", "set"]),
+]
+
+
+def set_agents() -> Iterator[Agent]:
+    for name, desc, body, tests, tags in SET_AGENTS:
+        yield _mk("set", name, desc, f"def {name}(a, b):\n    \"\"\"{desc}\"\"\"\n{body}\n", tests, tags)
+
+
+EXTRA_STAT_AGENTS: List[Tuple[str, str, str, List[str], List[str]]] = [
+    ("geometric_mean_of", "The geometric mean of a list of positive numbers.",
+     "    if not xs:\n        raise ValueError('no data')\n    p = 1.0\n"
+     "    for x in xs:\n        p *= x\n    return p ** (1 / len(xs))",
+     ["assert abs(geometric_mean_of([1, 4]) - 2.0) < 1e-12"],
+     ["geometric", "mean", "average", "statistics"]),
+    ("harmonic_mean_of", "The harmonic mean of a list of positive numbers.",
+     "    if not xs:\n        raise ValueError('no data')\n    return len(xs) / sum(1 / x for x in xs)",
+     ["assert harmonic_mean_of([1, 1]) == 1.0", "assert abs(harmonic_mean_of([1, 2]) - 4 / 3) < 1e-12"],
+     ["harmonic", "mean", "average", "statistics"]),
+    ("mean_absolute_deviation", "The mean distance of the values from their mean.",
+     "    if not xs:\n        raise ValueError('no data')\n    m = sum(xs) / len(xs)\n"
+     "    return sum(abs(x - m) for x in xs) / len(xs)",
+     ["assert mean_absolute_deviation([1, 3]) == 1.0", "assert mean_absolute_deviation([2, 2]) == 0.0"],
+     ["deviation", "absolute", "spread", "statistics"]),
+    ("interquartile_range", "The spread between the first and third quartile.",
+     "    if not xs:\n        raise ValueError('no data')\n    s = sorted(xs)\n    n = len(s)\n"
+     "    def q(p):\n        i = p * (n - 1)\n        lo = int(i)\n        hi = min(n - 1, lo + 1)\n"
+     "        return s[lo] + (s[hi] - s[lo]) * (i - lo)\n    return q(0.75) - q(0.25)",
+     ["assert interquartile_range([1, 2, 3, 4, 5]) == 2.0"],
+     ["iqr", "quartile", "spread", "statistics"]),
+    ("sample_stdev_of", "The sample standard deviation of a list of numbers.",
+     "    if len(xs) < 2:\n        raise ValueError('need two values')\n    m = sum(xs) / len(xs)\n"
+     "    return (sum((x - m) ** 2 for x in xs) / (len(xs) - 1)) ** 0.5",
+     ["assert sample_stdev_of([1, 3]) == 2 ** 0.5"],
+     ["sample", "standard", "deviation", "statistics"]),
+    ("coefficient_of_variation", "The standard deviation as a fraction of the mean.",
+     "    if not xs:\n        raise ValueError('no data')\n    m = sum(xs) / len(xs)\n"
+     "    if m == 0:\n        raise ValueError('mean is zero')\n"
+     "    return (sum((x - m) ** 2 for x in xs) / len(xs)) ** 0.5 / m",
+     ["assert coefficient_of_variation([2, 2]) == 0.0"],
+     ["variation", "relative", "spread", "statistics"]),
+    ("cumulative_sums", "A running total of a list of numbers.",
+     "    out, t = [], 0\n    for x in xs:\n        t += x\n        out.append(t)\n    return out",
+     ["assert cumulative_sums([1, 2, 3]) == [1, 3, 6]", "assert cumulative_sums([]) == []"],
+     ["cumulative", "running", "total", "sum", "statistics"]),
+    ("normalise_to_unit", "Scale a list so the smallest value is 0 and the largest is 1.",
+     "    if not xs:\n        return []\n    lo, hi = min(xs), max(xs)\n"
+     "    if hi == lo:\n        return [0.0 for _ in xs]\n    return [(x - lo) / (hi - lo) for x in xs]",
+     ["assert normalise_to_unit([1, 2, 3]) == [0.0, 0.5, 1.0]",
+      "assert normalise_to_unit([2, 2]) == [0.0, 0.0]"],
+     ["normalise", "normalize", "scale", "rescale", "statistics"]),
+    ("sum_of_squares_of", "The sum of the squares of a list of numbers.",
+     "    return sum(x * x for x in xs)",
+     ["assert sum_of_squares_of([1, 2, 3]) == 14", "assert sum_of_squares_of([]) == 0"],
+     ["sum", "squares", "statistics"]),
+    ("count_distinct", "How many different values a list has.",
+     "    return len(set(xs))",
+     ["assert count_distinct([1, 1, 2]) == 2", "assert count_distinct([]) == 0"],
+     ["distinct", "unique", "count", "statistics"]),
+]
+
+
+def extra_stat_agents() -> Iterator[Agent]:
+    for name, desc, body, tests, tags in EXTRA_STAT_AGENTS:
+        yield _mk("stats", name, desc, f"def {name}(xs):\n    \"\"\"{desc}\"\"\"\n{body}\n", tests, tags)
+
+
+ROMAN = [(1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"),
+         (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")]
+
+
+def roman_agents() -> Iterator[Agent]:
+    yield _mk("roman", "to_roman_numeral", "Write a number from 1 to 3999 as a Roman numeral.",
+              "def to_roman_numeral(n):\n"
+              '    """A Roman numeral for 1..3999."""\n'
+              "    if not 1 <= n <= 3999:\n        raise ValueError('out of range')\n"
+              f"    table = {ROMAN!r}\n"
+              "    out = []\n"
+              "    for value, sign in table:\n"
+              "        while n >= value:\n            out.append(sign)\n            n -= value\n"
+              "    return ''.join(out)\n",
+              ["assert to_roman_numeral(1994) == 'MCMXCIV'", "assert to_roman_numeral(4) == 'IV'"],
+              ["roman", "numeral", "number", "convert"])
+    yield _mk("roman", "from_roman_numeral", "Read a Roman numeral as a number.",
+              "def from_roman_numeral(s):\n"
+              '    """The number a Roman numeral stands for."""\n'
+              "    values = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}\n"
+              "    total, prev = 0, 0\n"
+              "    for c in reversed(str(s).upper()):\n"
+              "        v = values[c]\n"
+              "        total += -v if v < prev else v\n"
+              "        prev = max(prev, v)\n"
+              "    return total\n",
+              ["assert from_roman_numeral('MCMXCIV') == 1994", "assert from_roman_numeral('iv') == 4"],
+              ["roman", "numeral", "parse", "convert"])
 
 
 # -------------------------------------------------------------------- store

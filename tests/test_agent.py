@@ -322,9 +322,12 @@ def test_code_agent_declines_instead_of_guessing():
 
 def test_code_agent_solves_from_asserts_and_learns(tmp_path):
     skill = CodeSkill(learned_dir=tmp_path)
-    q = "def mystery(a, b):\nassert mystery(2, 3) == 13\nassert mystery(1, 1) == 2\nassert mystery(0, 4) == 16\nassert mystery(3, 0) == 9"
-    guess = skill.answer(q)  # programs that fit 4 asserts still disagree elsewhere: a labelled guess, not an answer
+    # two asserts are below the bar for shipping a single surviving program, so
+    # this is a labelled guess however far the search happens to get on this machine
+    thin = "def mystery(a, b):\nassert mystery(2, 3) == 13\nassert mystery(1, 1) == 2"
+    guess = skill.answer(thin)
     assert guess.failed and not guess.verified and "best guess" in guess.text and "def mystery(a, b)" in guess.text
+    q = thin + "\nassert mystery(0, 4) == 16\nassert mystery(3, 0) == 9"
     # enough varied asserts that the answer doesn't depend on how far the 4-second search gets on this machine
     more = "\nassert mystery(5, 2) == 29\nassert mystery(-1, 2) == 5\nassert mystery(-3, -4) == 25\nassert mystery(7, 1) == 50\nassert mystery(4, 6) == 52"
     ans = skill.answer(q + more)
