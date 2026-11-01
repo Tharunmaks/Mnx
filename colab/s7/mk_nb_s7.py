@@ -6,10 +6,10 @@ MD = """# Mnx 1 (306M) - session 7 on free Colab T4: fresh questions + unseen-qu
 
 What it does, in order:
 1. Starts from the session 6 best (`runs/s6/export_ckpt_best`, read only).
-2. Generates ~600k **fresh** verified Q&A pairs (new seed), dropping any question already in your training data, and adds them to the mix at 25%.
-3. Scores the session 6 model on 300 questions it has **never trained on** (and never will: they are excluded from the fresh data too).
+2. Generates ~600k **fresh** verified Q&A pairs (new seed) and ~400k problems from your **Ai-room** exact generators (88 subjects, answers computed by code), dropping any question already in your training data. Mix: Ai-room 20%, fresh Q&A 15%, everything old 65%.
+3. Scores the session 6 model on 300 usual-style questions and 300 Ai-room questions it has **never trained on** (and never will).
 4. Trains, with early stop after 4 evals without a better held-out loss (same trainer as s6).
-5. Scores the new best on the same 300 questions. The result is kept (`runs/s7/export_ckpt_best`) **only if it answers more of them right**. `runs/s7/VERDICT.txt` says which.
+5. Scores the new best on the same questions. The result is kept (`runs/s7/export_ckpt_best`) **only if it answers more of the 600 right and loses no more than 9 of the usual-style 300**. `runs/s7/VERDICT.txt` says which.
 
 No paid GPU, no compute units. Writes only to `runs/s7` and `data_s7`. Notebook source: github.com/Tharunmaks/Mnx/tree/claude/project-thread-7qmqag/colab/s7"""
 
@@ -30,6 +30,9 @@ for f in ('train_s6.py', 'mnx1_custom_s6.py', 'mnx1_small.py', 'colab_t4_s6.json
 # session-7 helpers come from GitHub (public repo Tharunmaks/Mnx), pinned to one commit and sha256-checked
 import urllib.request, hashlib
 C7 = '/content/code_s7'; os.makedirs(C7, exist_ok=True)
+AIROOM_COMMIT = 'e5c7ca349af7dee9cb6e3d53a8e82aa90796d48b'; AIROOM = '/content/ai-room'
+if not os.path.isdir(AIROOM + '/ai_room'):
+    subprocess.run(['git', 'clone', '-q', 'https://github.com/Tharunmaks/ai-room', AIROOM], check=True); subprocess.run(['git', '-C', AIROOM, 'checkout', '-q', AIROOM_COMMIT], check=True)
 for f, h in S7_FILES.items():
     urllib.request.urlretrieve('https://raw.githubusercontent.com/Tharunmaks/Mnx/%s/colab/s7/%s' % (S7_COMMIT, f), C7 + '/' + f)
     assert hashlib.sha256(open(C7 + '/' + f, 'rb').read()).hexdigest() == h, 'download corrupted: ' + f
@@ -67,25 +70,26 @@ t = time.time(); join_parts(D + '/data', DATA); join_parts(D + '/data_s3', DATA,
 print('data ready in %.0fs' % (time.time() - t))"""
 
 C4 = r"""# fresh questions + the unseen eval set. Built once (~15-25 min on Colab CPU), then cached in Drive data_s7/
-NEED = ('fresh_qa.train.bin', 'fresh_qa.val.bin', 'eval_unseen.jsonl', 'format.json')
+NEED = ('fresh_qa.train.bin', 'fresh_qa.val.bin', 'eval_unseen.jsonl', 'format.json', 'airoom.train.bin', 'airoom.val.bin', 'eval_airoom.jsonl')
 if all(os.path.exists(DATA7 + '/' + f) for f in NEED):
     for f in NEED: shutil.copyfile(DATA7 + '/' + f, '/content/data7/' + f)
     print('fresh data from Drive cache')
 else:
-    subprocess.run([sys.executable, '-u', CODE + '/s7_tools.py', 'fresh', '--code', CODE, '--data', DATA, '--out', '/content/data7', '--n', '600000', '--eval-n', '300'], check=True)
+    subprocess.run([sys.executable, '-u', CODE + '/s7_tools.py', 'fresh', '--code', CODE, '--data', DATA, '--out', '/content/data7', '--n', '600000', '--eval-n', '300', '--airoom', AIROOM, '--airoom-n', '400000'], check=True)
     for f in NEED: shutil.copyfile('/content/data7/' + f, DATA7 + '/' + f + '.tmp'); os.replace(DATA7 + '/' + f + '.tmp', DATA7 + '/' + f)
-for f in ('fresh_qa.train.bin', 'fresh_qa.val.bin'): shutil.copyfile('/content/data7/' + f, DATA + '/' + f)
+for f in ('fresh_qa.train.bin', 'fresh_qa.val.bin', 'airoom.train.bin', 'airoom.val.bin'): shutil.copyfile('/content/data7/' + f, DATA + '/' + f)
 print({f: os.path.getsize('/content/data7/' + f) for f in NEED})"""
 
 C5 = r"""# session 7 config = s6 config + fresh_qa at 25% of the mix (other sources scaled to 75%)
 cfg = json.load(open(C6 + '/colab_t4_s6.json'))
-for s in cfg['data']['sources']: s['weight'] = round(s['weight'] * 0.75, 4)
-cfg['data']['sources'].insert(0, {'name': 'fresh_qa', 'train': 'fresh_qa.train.bin', 'weight': 0.25})
-cfg['extra_val'] = {**cfg.get('extra_val', {}), 'fresh_qa': 'fresh_qa.val.bin'}
+for s in cfg['data']['sources']: s['weight'] = round(s['weight'] * 0.65, 4)
+cfg['data']['sources'].insert(0, {'name': 'fresh_qa', 'train': 'fresh_qa.train.bin', 'weight': 0.15})
+cfg['data']['sources'].insert(0, {'name': 'airoom', 'train': 'airoom.train.bin', 'weight': 0.20})
+cfg['extra_val'] = {**cfg.get('extra_val', {}), 'fresh_qa': 'fresh_qa.val.bin', 'airoom': 'airoom.val.bin'}
 LIMIT = 11 * 3600 + 15 * 60 - 25 * 60   # Colab free ~12h per VM; leave ~25 min for the after-score
 cfg.update(run_dir=RD, device='cuda', amp=AMP, adapter=CODE + '/trainer/adapters/mnx1_custom_s6.py',
            stop_after_sec=int(LIMIT - (time.time() - T_NB0)), ckpt_every_sec=600, eval_at_start=True, early_stop_patience=4,
-           _note='s7: start from s6 best; + fresh_qa 0.25 (new seed 7007, no question shared with training data or the unseen eval set)')
+           _note='s7: start from s6 best; + airoom 0.20 + fresh_qa 0.15 (new seeds, no question shared with training data or the unseen eval sets)')
 cfg['data']['root'] = DATA
 json.dump(cfg, open('/content/cfg.json', 'w'), indent=1)
 print('lr', cfg['lr'], 'dropout', cfg['model_cfg'].get('dropout'), 'max_steps', cfg['max_steps'], 'stop_after_sec', cfg['stop_after_sec'])
@@ -99,15 +103,18 @@ def cp(a, b):
 def ck_state(path):
     try: ck = _t.load(path, map_location='cpu', weights_only=False, mmap=True); st = dict(ck['state']); del ck; return st
     except Exception as e: print('   cannot read', path, repr(e)[:200]); return None
-SCORE = [sys.executable, '-u', CODE + '/s7_tools.py', 'score', '--code', CODE, '--items', '/content/data7/eval_unseen.jsonl', '--fmt', '/content/data7/format.json']
-if not os.path.exists(RUN_DRIVE + '/score_before.json') or not os.path.exists(RUN_DRIVE + '/ckpt_latest.pt'):
+SCORE = [sys.executable, '-u', CODE + '/s7_tools.py', 'score', '--code', CODE, '--fmt', '/content/data7/format.json', '--airoom', AIROOM]
+ITEMS = {'qa': '/content/data7/eval_unseen.jsonl', 'ar': '/content/data7/eval_airoom.jsonl'}
+if not os.path.exists(RUN_DRIVE + '/score_before_ar.json') or not os.path.exists(RUN_DRIVE + '/ckpt_latest.pt'):
     join_parts(START_DIR, '/content/ckpt')
     print('[START] s6 best', {k: v for k, v in (ck_state('/content/ckpt/ckpt_best.pt') or {}).items() if k != 'from_state'})
-if not os.path.exists(RUN_DRIVE + '/score_before.json'):
-    print('=== BEFORE: s6 best on 300 unseen questions ===')
-    subprocess.run(SCORE + ['--ckpt', '/content/ckpt/ckpt_best.pt', '--out', '/content/score_before.json'], check=True)
-    cp('/content/score_before.json', RUN_DRIVE + '/score_before.json')
-BEFORE = json.load(open(RUN_DRIVE + '/score_before.json')); print('BEFORE', BEFORE['total'], '/', BEFORE['n'], BEFORE['by_kind'])
+for tag in ('qa', 'ar'):
+    if not os.path.exists(RUN_DRIVE + '/score_before_%s.json' % tag):
+        print('=== BEFORE (%s): s6 best on unseen questions ===' % tag)
+        subprocess.run(SCORE + ['--items', ITEMS[tag], '--ckpt', '/content/ckpt/ckpt_best.pt', '--out', '/content/score_before_%s.json' % tag], check=True)
+        cp('/content/score_before_%s.json' % tag, RUN_DRIVE + '/score_before_%s.json' % tag)
+BEFORE = {t: json.load(open(RUN_DRIVE + '/score_before_%s.json' % t)) for t in ('qa', 'ar')}
+for t, b in BEFORE.items(): print('BEFORE', t, b['total'], '/', b['n'], dict(b['by_kind']))
 st = ck_state(RUN_DRIVE + '/ckpt_latest.pt') if os.path.exists(RUN_DRIVE + '/ckpt_latest.pt') else None
 if st:
     cp(RUN_DRIVE + '/ckpt_latest.pt', RD + '/ckpt_latest.pt')
@@ -155,14 +162,20 @@ best = RD + '/ckpt_best.pt'
 if not os.path.exists(best): cp(RUN_DRIVE + '/ckpt_best.pt', best)
 assert os.path.exists(best), 'no s7 ckpt_best.pt yet'
 bst = ck_state(best); print('s7 best: step', bst.get('best_step'), 'held-out', bst.get('best'))
-subprocess.run(SCORE + ['--ckpt', best, '--out', '/content/score_after.json'], check=True)
-cp('/content/score_after.json', RUN_DRIVE + '/score_after.json')
-A, B = json.load(open('/content/score_after.json')), BEFORE
-lines = ['session 7 verdict ' + time.strftime('%F %T'),
-         'unseen questions right: before (s6 best) %d/%d  ->  after (s7 best, step %s) %d/%d' % (B['total'], B['n'], bst.get('best_step'), A['total'], A['n'])]
-for k in sorted(set(A['by_kind']) | set(B['by_kind'])):
-    b, a = B['by_kind'].get(k, [0, 0]), A['by_kind'].get(k, [0, 0]); lines.append('  %-11s %3d/%-3d -> %3d/%-3d' % (k, b[1], b[0], a[1], a[0]))
-if A['total'] > B['total']:
+AFTER = {}
+for tag in ('qa', 'ar'):
+    subprocess.run(SCORE + ['--items', ITEMS[tag], '--ckpt', best, '--out', '/content/score_after_%s.json' % tag], check=True)
+    cp('/content/score_after_%s.json' % tag, RUN_DRIVE + '/score_after_%s.json' % tag); AFTER[tag] = json.load(open('/content/score_after_%s.json' % tag))
+lines = ['session 7 verdict ' + time.strftime('%F %T'), 's7 best = step %s, held-out loss %s' % (bst.get('best_step'), bst.get('best'))]
+for tag, name in (('qa', 'usual-style questions'), ('ar', 'Ai-room questions')):
+    B, A = BEFORE[tag], AFTER[tag]
+    lines.append('%s: s6 best %d/%d  ->  s7 best %d/%d' % (name, B['total'], B['n'], A['total'], A['n']))
+    for k in sorted(set(A['by_kind']) | set(B['by_kind'])):
+        b_, a_ = B['by_kind'].get(k, [0, 0]), A['by_kind'].get(k, [0, 0]); lines.append('  %-12s %3d/%-3d -> %3d/%-3d' % (k, b_[1], b_[0], a_[1], a_[0]))
+tb, ta = sum(BEFORE[t]['total'] for t in BEFORE), sum(AFTER[t]['total'] for t in AFTER)
+lines.append('combined: %d -> %d' % (tb, ta))
+KEEP = ta > tb and AFTER['qa']['total'] >= BEFORE['qa']['total'] - 9
+if KEEP:
     lines.append('KEEP: s7 is better. Model-only copy in runs/s7/export_ckpt_best (use this one from now on).')
     ck = _t.load(best, map_location='cpu', weights_only=False, mmap=True); out = '/content/_export.pt'
     _t.save({'model': ck['model'], 'state': ck['state'], 'config': ck['config']}, out); del ck
@@ -175,7 +188,7 @@ if A['total'] > B['total']:
     h = subprocess.run(['sha256sum', out], capture_output=True, text=True).stdout.split()[0]
     open(ed + '/SHA256SUMS', 'w').write('%s  ckpt_best.pt\n' % h); open(ed + '/NPARTS', 'w').write(str(k + 1)); os.remove(out)
 else:
-    lines.append('DO NOT USE s7: it is not better on unseen questions. Keep using runs/s6/export_ckpt_best.')
+    lines.append('DO NOT USE s7: not better overall, or it lost more than 9 usual-style answers. Keep using runs/s6/export_ckpt_best.')
 open(RUN_DRIVE + '/VERDICT.txt', 'w').write('\n'.join(lines) + '\n'); print('\n'.join(lines))"""
 
 import hashlib, sys

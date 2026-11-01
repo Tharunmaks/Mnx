@@ -88,6 +88,44 @@ def doc_format(tok, data):
     raise SystemExit("no Q:/A: doc found at the start of qa_stream.train.bin")
 
 
+# ---- Ai-room (github.com/Tharunmaks/ai-room): exact problem families, answers computed by code ----
+AIROOM_EVAL_SEED, AIROOM_TRAIN_SEED = 515151, 616161
+
+
+def airoom_gen(path, seed, n, avoid=frozenset()):
+    sys.path.insert(0, path)
+    import random
+    from ai_room.teacher import generators as G
+    from ai_room.teacher import teacher as _reg  # noqa: F401  registers every family
+    subs = sorted({x for f in G.FAMILIES.values() for x in f.subjects})
+    pools = [(x, g, f) for x in subs for g in range(1, 13) for f in G.families_for(x, g)]
+    rng, seen, made, tries = random.Random(seed), set(), 0, 0
+    while made < n and tries < n * 30:
+        tries += 1
+        x, g, f = rng.choice(pools)
+        try: q = G.generate(f, x, g, rng)
+        except Exception: continue
+        if q["type"] == "code": continue  # code stays with qa_gen (graded by running tests)
+        text = q["question"] + ("\n" + "\n".join(q["options"]) if q.get("options") else "")
+        h = h8(text)
+        if h in seen or h in avoid: continue
+        seen.add(h); made += 1
+        yield {"q": text, "a": q["answer"], "why": (q.get("explanation") or "").strip(), "kind": "ar_" + q["type"],
+               "type": q["type"], "tol": q.get("tol"), "exact": q.get("exact"), "src": "airoom", "fam": f.id}
+
+
+def airoom_doc(it):
+    why = (" " + it["why"].replace("\n", " ")) if it.get("why") else ""
+    return f"Q: {it['q']}\nA: {it['a']}\n" + (f"Why:{why}\n" if why else "")
+
+
+def airoom_ok(it, ans, path):
+    sys.path.insert(0, path)
+    from ai_room.grading import grade_question
+    q = {"type": it["type"], "answer": it["a"], "tol": it.get("tol"), "exact": it.get("exact")}
+    return grade_question(q, ans)[0] >= 1.0
+
+
 def cmd_fresh(a):
     import qa_gen
     tok = find_tokenizer(a.code); os.makedirs(a.out, exist_ok=True)
@@ -111,6 +149,19 @@ def cmd_fresh(a):
         text = f"Q: {it['q']}\nA: {it['a']}" + ("\n" if nl else "")  # same as qa_stream.as_document when nl
         ids.extend(([tok.bos_id] if bos else []) + tok.encode(text, allow_special=False) + [tok.eos_id]); n += 1
         if n % 100000 == 0: print(f"  {n} fresh docs, {len(ids)} tokens ({time.time() - t0:.0f}s)", flush=True)
+    if a.airoom:
+        aev = list(airoom_gen(a.airoom, AIROOM_EVAL_SEED, a.eval_n))
+        aevh = {h8(it["q"]) for it in aev}
+        with open(os.path.join(a.out, "eval_airoom.jsonl"), "w") as f:
+            for it in aev: f.write(json.dumps(it) + "\n")
+        print("ai-room unseen eval items:", len(aev), dict(sorted(_count(aev).items())), flush=True)
+        aids, an = [], 0
+        for it in airoom_gen(a.airoom, AIROOM_TRAIN_SEED, a.airoom_n, avoid=aevh):
+            aids.extend(([tok.bos_id] if bos else []) + tok.encode(airoom_doc(it), allow_special=False) + [tok.eos_id]); an += 1
+        aarr = np.array(aids, dtype=np.uint16); acut = int(len(aarr) * 0.98)
+        acut += int(np.where(aarr[acut:] == tok.eos_id)[0][0]) + 1
+        aarr[:acut].tofile(os.path.join(a.out, "airoom.train.bin")); aarr[acut:].tofile(os.path.join(a.out, "airoom.val.bin"))
+        print(f"ai-room docs {an}, tokens {len(aarr)}", flush=True)
     arr = np.array(ids, dtype=np.uint16); cut = int(len(arr) * 0.98)
     cut += int(np.where(arr[cut:] == tok.eos_id)[0][0]) + 1
     arr[:cut].tofile(os.path.join(a.out, "fresh_qa.train.bin")); arr[cut:].tofile(os.path.join(a.out, "fresh_qa.val.bin"))
@@ -155,7 +206,9 @@ def cmd_score(a):
             out = m.generate(x, 200 if it["kind"] == "code" else 40, temperature=0.0, eos_id=tok.eos_id)[0, len(ids):].tolist()
             if tok.eos_id in out: out = out[: out.index(tok.eos_id)]
             ans = tok.decode(out, skip_special=True)
-            if it["kind"] == "code":
+            if it.get("src") == "airoom":
+                ok = airoom_ok(it, ans.strip().split("\n")[0].strip(), a.airoom)
+            elif it["kind"] == "code":
                 tests = [l for l in it["q"].splitlines() if l.startswith("assert ")]
                 body = ans.strip()
                 if "\nQ:" in body: body = body[: body.index("\nQ:")]
@@ -176,6 +229,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest="cmd", required=True)
     f = sub.add_parser("fresh"); f.add_argument("--code", required=True); f.add_argument("--data", required=True)
     f.add_argument("--out", required=True); f.add_argument("--n", type=int, default=600000); f.add_argument("--eval-n", type=int, default=300)
+    f.add_argument("--airoom", default=""); f.add_argument("--airoom-n", type=int, default=400000)
     s = sub.add_parser("score"); s.add_argument("--code", required=True); s.add_argument("--ckpt", required=True)
-    s.add_argument("--items", required=True); s.add_argument("--out", required=True); s.add_argument("--n", type=int, default=0); s.add_argument("--fmt", default="")
+    s.add_argument("--items", required=True); s.add_argument("--out", required=True); s.add_argument("--n", type=int, default=0); s.add_argument("--fmt", default=""); s.add_argument("--airoom", default="")
     a = ap.parse_args(); {"fresh": cmd_fresh, "score": cmd_score}[a.cmd](a)
