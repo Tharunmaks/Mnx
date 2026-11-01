@@ -93,10 +93,12 @@ for s in cfg['data']['sources']: s['weight'] = round(s['weight'] * 0.65, 4)
 cfg['data']['sources'].insert(0, {'name': 'fresh_qa', 'train': 'fresh_qa.train.bin', 'weight': 0.15})
 cfg['data']['sources'].insert(0, {'name': 'airoom', 'train': 'airoom.train.bin', 'weight': 0.20})
 cfg['extra_val'] = {**cfg.get('extra_val', {}), 'fresh_qa': 'fresh_qa.val.bin', 'airoom': 'airoom.val.bin'}
-AFTER_RESERVE = 75 * 60   # after-scores (600 items) + export + Kaggle saving the output
+SNAP_EVERY = 250
+AFTER_RESERVE = 110 * 60   # score every snapshot (~10 min each, up to 7) + export + Kaggle saving the output
 cfg.update(run_dir=RD, device='cuda', amp=AMP, adapter=CODE + '/trainer/adapters/mnx1_custom_s6.py',
-           stop_after_sec=int(left() - AFTER_RESERVE), ckpt_every_sec=600, eval_at_start=True, early_stop_patience=4,
-           _note='s7 (Kaggle T4): start from s6 best; + airoom 0.20 + fresh_qa 0.15 (new seeds, no question shared with training data or the unseen eval sets)')
+           stop_after_sec=int(left() - AFTER_RESERVE), ckpt_every_sec=600, eval_at_start=True, early_stop_patience=0,   # session 7 rerun: never stop on old-data held-out loss; judge by the unseen-question score instead
+           
+           _note='s7 rerun (Kaggle T4, no early stop, snapshots every 250 steps all scored): start from s6 best; + airoom 0.20 + fresh_qa 0.15 (new seeds, no question shared with training data or the unseen eval sets)')
 cfg['data']['root'] = DATA
 json.dump(cfg, open(RD + '/cfg.json', 'w'), indent=1)
 stamp('lr %s max_steps %s stop_after_sec %s mix %s' % (cfg['lr'], cfg['max_steps'], cfg['stop_after_sec'], [(s['name'], s['weight']) for s in cfg['data']['sources']]))
@@ -111,39 +113,66 @@ st = {'step': 0, 'tokens': 0, 'best': float('inf'), 'noimp': 0, 'from': START_FR
 torch.save({'model': m.state_dict(), 'opt': osd, 'scaler': None, 'state': st, 'config': cfg}, RD + '/ckpt_latest.pt'); del ck, m, osd
 os.remove(CK + '/ckpt_best.pt')
 
-# ---- 6. train
+# ---- 6. train, with a watcher that keeps a model-only snapshot of every 250-step checkpoint.
+# Nothing is deleted before it has been scored: snapshots and ckpt_latest stay in the kernel output.
+import threading
+SNAPS = RD + '/snaps'; os.makedirs(SNAPS, exist_ok=True)
+_stop_w = False
+def snap_once():
+    p = RD + '/ckpt_latest.pt'
+    if not os.path.exists(p): return
+    try:
+        c = torch.load(p, map_location='cpu', weights_only=False, mmap=True); step = int(c['state']['step'])
+        out = SNAPS + '/step_%04d.pt' % step
+        if step > 0 and not os.path.exists(out) and (step % SNAP_EVERY == 0 or _stop_w):
+            torch.save({'model': c['model'], 'state': dict(c['state']), 'config': c['config']}, out + '.tmp'); os.replace(out + '.tmp', out)
+            stamp('snapshot step %d' % step)
+        del c
+    except Exception as e: print('snap error', repr(e)[:200], flush=True)
+def watch():
+    last = None
+    while not _stop_w:
+        p = RD + '/ckpt_latest.pt'
+        m = os.path.getmtime(p) if os.path.exists(p) else None
+        if m and m != last: last = m; snap_once()
+        time.sleep(20)
+threading.Thread(target=watch, daemon=True).start()
 os.environ.setdefault('OMP_NUM_THREADS', '2')
 r = subprocess.run([sys.executable, '-u', CODE + '/trainer/train_s6.py', '--config', RD + '/cfg.json'])
 stamp('train exit %d' % r.returncode)
+_stop_w = True; time.sleep(1); snap_once()   # the final checkpoint too
 
-# ---- 7. AFTER + verdict
-best = RD + '/ckpt_best.pt'; assert os.path.exists(best), 'no s7 ckpt_best.pt'
-bst = dict(torch.load(best, map_location='cpu', weights_only=False, mmap=True)['state'])
-AFTER = {}
-for tag in ('qa', 'ar'):
-    sh(*SCORE, '--items', ITEMS[tag], '--ckpt', best, '--out', RD + '/score_after_%s.json' % tag)
-    AFTER[tag] = json.load(open(RD + '/score_after_%s.json' % tag))
-lines = ['session 7 verdict (Kaggle T4, started from the %s best) ' % START_FROM + time.strftime('%F %T'), 's7 best = step %s, held-out loss %s' % (bst.get('best_step'), bst.get('best'))]
-for tag, name in (('qa', 'usual-style questions'), ('ar', 'Ai-room questions')):
-    B, A = BEFORE[tag], AFTER[tag]
-    lines.append('%s: start (%s best) %d/%d  ->  s7 best %d/%d' % (name, START_FROM, B['total'], B['n'], A['total'], A['n']))
-    for k in sorted(set(A['by_kind']) | set(B['by_kind'])):
-        b_, a_ = B['by_kind'].get(k, [0, 0]), A['by_kind'].get(k, [0, 0]); lines.append('  %-12s %3d/%-3d -> %3d/%-3d' % (k, b_[1], b_[0], a_[1], a_[0]))
-tb, ta = sum(BEFORE[t]['total'] for t in BEFORE), sum(AFTER[t]['total'] for t in AFTER)
-lines.append('combined: %d -> %d' % (tb, ta))
-KEEP = ta > tb and AFTER['qa']['total'] >= BEFORE['qa']['total'] - 9
+# ---- 7. score EVERY snapshot on the same 600 unseen questions, keep the best one
+RES = {}
+for f in sorted(glob.glob(SNAPS + '/step_*.pt')):
+    step = int(os.path.basename(f)[5:9]); R = {}
+    for tag in ('qa', 'ar'):
+        o = RD + '/score_step%04d_%s.json' % (step, tag)
+        if not os.path.exists(o): sh(*SCORE, '--items', ITEMS[tag], '--ckpt', f, '--out', o)
+        R[tag] = json.load(open(o))
+    RES[step] = R; stamp('step %d: usual %d/%d  ai-room %d/%d' % (step, R['qa']['total'], R['qa']['n'], R['ar']['total'], R['ar']['n']))
+tb = sum(BEFORE[t]['total'] for t in BEFORE)
+ok = {s_: R for s_, R in RES.items() if R['qa']['total'] >= BEFORE['qa']['total'] - 9}
+bestst = max(ok, key=lambda s_: sum(ok[s_][t]['total'] for t in ok[s_])) if ok else None
+lines = ['session 7 rerun verdict (Kaggle T4, started from the %s best, no early stop) ' % START_FROM + time.strftime('%F %T')]
+lines.append('step 0 (= s6 best): usual %d/%d  ai-room %d/%d  combined %d' % (BEFORE['qa']['total'], BEFORE['qa']['n'], BEFORE['ar']['total'], BEFORE['ar']['n'], tb))
+for s_, R in sorted(RES.items()):
+    lines.append('step %4d: usual %3d/%d  ai-room %3d/%d  combined %d' % (s_, R['qa']['total'], R['qa']['n'], R['ar']['total'], R['ar']['n'], sum(R[t]['total'] for t in R)))
+KEEP = bestst is not None and sum(ok[bestst][t]['total'] for t in ok[bestst]) > tb
 if KEEP:
-    lines.append('KEEP: s7 is better. Model-only copy in runs/s7/export_ckpt_best.pt (use this one from now on).')
-    ck = torch.load(best, map_location='cpu', weights_only=False, mmap=True)
-    torch.save({'model': ck['model'], 'state': ck['state'], 'config': ck['config']}, RD + '/export_ckpt_best.pt'); del ck
+    A, B = RES[bestst], BEFORE
+    lines.append('KEEP step %d. Model-only copy: runs/s7/export_ckpt_best.pt (use this one from now on).' % bestst)
+    for tag, name in (('qa', 'usual-style questions'), ('ar', 'Ai-room questions')):
+        lines.append('%s: s6 %d/%d -> step %d %d/%d' % (name, B[tag]['total'], B[tag]['n'], bestst, A[tag]['total'], A[tag]['n']))
+        for k in sorted(set(A[tag]['by_kind']) | set(B[tag]['by_kind'])):
+            b_, a_ = B[tag]['by_kind'].get(k, [0, 0]), A[tag]['by_kind'].get(k, [0, 0]); lines.append('  %-12s %3d/%-3d -> %3d/%-3d' % (k, b_[1], b_[0], a_[1], a_[0]))
+    shutil.copyfile(SNAPS + '/step_%04d.pt' % bestst, RD + '/export_ckpt_best.pt')
     lines.append('export sha256 ' + subprocess.run(['sha256sum', RD + '/export_ckpt_best.pt'], capture_output=True, text=True).stdout.split()[0])
 else:
-    lines.append('DO NOT USE s7: not better overall, or it lost more than 9 usual-style answers. Keep using the ' + START_FROM + ' best.')
+    lines.append('DO NOT USE: no snapshot beat step 0 (s6) on the 600 unseen questions while keeping within 9 of the usual-style 168. Keep using the %s best.' % START_FROM)
 open(RD + '/VERDICT.txt', 'w').write('\n'.join(lines) + '\n'); print('\n'.join(lines), flush=True)
-# keep the kernel output small enough to save: the full ckpts (with AdamW) are only needed to resume
-if os.path.exists(RD + '/ckpt_latest.pt'): os.remove(RD + '/ckpt_latest.pt')
-if KEEP: os.remove(best)
+# the checkpoints stay (snapshots are model-only, ckpt_latest allows resuming); only the regenerable training bins go
 for f in ('fresh_qa.train.bin', 'airoom.train.bin'):
     if os.path.exists(D7 + '/' + f): os.remove(D7 + '/' + f)
-subprocess.run('ls -la %s %s; tail -3 %s/log.jsonl' % (RD, D7, RD), shell=True)
+subprocess.run('ls -la %s %s %s; tail -3 %s/log.jsonl; du -sh %s' % (RD, SNAPS, D7, RD, W), shell=True)
 stamp('done')
