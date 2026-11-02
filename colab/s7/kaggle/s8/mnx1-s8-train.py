@@ -104,6 +104,7 @@ NEW_LAYERS = 36
 ck = grow_mnx.grow(ck, NEW_LAYERS); cfg['model_cfg']['n_layers'] = NEW_LAYERS; ck['config'] = {**ck['config'], 'model_cfg': cfg['model_cfg']}
 cfg['max_steps'] = 1200   # 36 layers is ~1.5x slower per step; keeps the cosine schedule inside the Kaggle limit
 stamp('grown to %d layers, %.0fM params' % (NEW_LAYERS, sum(v.numel() for v in ck['model'].values()) / 1e6))
+json.dump(cfg, open(RD + '/cfg.json', 'w'), indent=1)   # the trainer reads the 36-layer config and max_steps from this file
 stamp('[START] ' + START_FROM + ' best ' + str({k: fs.get(k) for k in ('step', 'tokens', 'best', 'best_step')}))
 m = ad.build_model({**cfg['model_cfg'], 'grad_ckpt': True}); m.load_state_dict(ck['model'])
 osd = ad.configure_optimizer(m, cfg).state_dict()
