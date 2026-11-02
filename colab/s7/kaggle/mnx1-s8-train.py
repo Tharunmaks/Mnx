@@ -9,8 +9,8 @@
 import os, glob, json, shutil, subprocess, sys, time, hashlib, urllib.request
 T0 = time.time()
 KAGGLE_LIMIT = 12 * 3600
-S7_COMMIT = 'S7COMMIT'
-S7_FILES = {'s7_tools.py': '39f837ba5f8909c543586594e682112e55c7e9ebbf13732028561ef3aefa76d6', 'qa_gen.py': '36baa86989c93f37a55c23b18d1a3b64d880607db99d0ba603f76524546d7f80', 's8_tools.py': 'S8HASH', 'grow_mnx.py': 'GROWHASH'}
+S7_COMMIT = '17a615e153d75da28b078bdcccb72c3ae259607d'
+S7_FILES = {'s7_tools.py': '39f837ba5f8909c543586594e682112e55c7e9ebbf13732028561ef3aefa76d6', 'qa_gen.py': '36baa86989c93f37a55c23b18d1a3b64d880607db99d0ba603f76524546d7f80', 's8_tools.py': 'cc1c3e9f7104a1958683a225d6598b0700bd4c2f8f415042f482d3d5ed5cd604', 'grow_mnx.py': 'a3c58b37dfaff79b3dbf721bd6cf56aba0cb0fd7a168e7daab3fbcb42666e900'}
 AIROOM_COMMIT = 'e5c7ca349af7dee9cb6e3d53a8e82aa90796d48b'
 START_FROM = 's7'   # 's6' = s6 best from Drive (preferred), 's5' = s5 best step 100 already in the mnx1-s6-data Kaggle dataset
 S6_EXPORT_FOLDER = '1xQDkAmsyhkCcugJtgx8YMjWXO51lxmf8'   # Drive Mnx1-100m-colab/runs/s6/export_ckpt_best (link-shared, view only)

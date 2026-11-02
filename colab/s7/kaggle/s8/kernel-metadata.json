@@ -1,0 +1,25 @@
+{
+ "id": "tharun77mnx/mnx1-s8-train",
+ "title": "mnx1-s8-train",
+ "code_file": "mnx1-s8-train.py",
+ "language": "python",
+ "kernel_type": "script",
+ "is_private": true,
+ "enable_gpu": true,
+ "enable_tpu": false,
+ "enable_internet": true,
+ "keywords": [
+  "gpu"
+ ],
+ "dataset_sources": [
+  "tharun77mnx/mnx1-s5-code",
+  "tharun77mnx/mnx1-s5-data",
+  "tharun77mnx/mnx1-s6-data"
+ ],
+ "kernel_sources": [
+  "tharun77mnx/mnx1-s7-train"
+ ],
+ "competition_sources": [],
+ "model_sources": [],
+ "machine_shape": "NvidiaTeslaT4"
+}
