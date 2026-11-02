@@ -32,6 +32,9 @@ s6d = os.path.dirname(glob.glob('/kaggle/input/**/train_s6.py', recursive=True)[
 shutil.copytree(src_code, CODE, dirs_exist_ok=True)
 for f in ('mnx1_custom_s6.py', 'mnx1_small.py'): shutil.copyfile(s6d + '/' + f, CODE + '/trainer/adapters/' + f)
 shutil.copyfile(s6d + '/train_s6.py', CODE + '/trainer/train_s6.py')
+# 36 layers + AdamW state does not fit a T4 without activation checkpointing (v1 died with CUDA OOM at step 2): always checkpoint, micro batch 1
+_t = open(CODE + '/trainer/train_s6.py').read(); assert 'for ck in (False,True)' in _t
+open(CODE + '/trainer/train_s6.py', 'w').write(_t.replace('for ck in (False,True)', 'for ck in (True,)'))
 sums6 = dict(l.split()[::-1] for l in open(s6d + '/SHA256SUMS') if l.strip())
 for f in ('train_s6.py', 'mnx1_custom_s6.py', 'mnx1_small.py', 'kaggle_t4_s6.json'):
     assert hashlib.sha256(open(s6d + '/' + f, 'rb').read()).hexdigest() == sums6[f], 'mnx1-s6-data corrupted: ' + f
@@ -102,7 +105,7 @@ ck = torch.load(CK + '/ckpt_best.pt', map_location='cpu', weights_only=False); f
 import grow_mnx   # depth growth 24 -> 36 layers: new blocks have zero output matrices, so the model computes exactly what step 1500 did
 NEW_LAYERS = 36
 ck = grow_mnx.grow(ck, NEW_LAYERS); cfg['model_cfg']['n_layers'] = NEW_LAYERS; ck['config'] = {**ck['config'], 'model_cfg': cfg['model_cfg']}
-cfg['max_steps'] = 1200   # 36 layers is ~1.5x slower per step; keeps the cosine schedule inside the Kaggle limit
+cfg['max_steps'] = 900; cfg['micro_batch_candidates'] = [1]   # 36 layers is ~1.5x slower per step; keeps the cosine schedule inside the Kaggle limit
 stamp('grown to %d layers, %.0fM params' % (NEW_LAYERS, sum(v.numel() for v in ck['model'].values()) / 1e6))
 json.dump(cfg, open(RD + '/cfg.json', 'w'), indent=1)   # the trainer reads the 36-layer config and max_steps from this file
 stamp('[START] ' + START_FROM + ' best ' + str({k: fs.get(k) for k in ('step', 'tokens', 'best', 'best_step')}))
