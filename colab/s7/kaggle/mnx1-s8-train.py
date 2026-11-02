@@ -10,7 +10,7 @@ import os, glob, json, shutil, subprocess, sys, time, hashlib, urllib.request
 T0 = time.time()
 KAGGLE_LIMIT = 12 * 3600
 S7_COMMIT = 'S7COMMIT'
-S7_FILES = {'s7_tools.py': '39f837ba5f8909c543586594e682112e55c7e9ebbf13732028561ef3aefa76d6', 'qa_gen.py': '36baa86989c93f37a55c23b18d1a3b64d880607db99d0ba603f76524546d7f80', 's8_tools.py': 'S8HASH'}
+S7_FILES = {'s7_tools.py': '39f837ba5f8909c543586594e682112e55c7e9ebbf13732028561ef3aefa76d6', 'qa_gen.py': '36baa86989c93f37a55c23b18d1a3b64d880607db99d0ba603f76524546d7f80', 's8_tools.py': 'S8HASH', 'grow_mnx.py': 'GROWHASH'}
 AIROOM_COMMIT = 'e5c7ca349af7dee9cb6e3d53a8e82aa90796d48b'
 START_FROM = 's7'   # 's6' = s6 best from Drive (preferred), 's5' = s5 best step 100 already in the mnx1-s6-data Kaggle dataset
 S6_EXPORT_FOLDER = '1xQDkAmsyhkCcugJtgx8YMjWXO51lxmf8'   # Drive Mnx1-100m-colab/runs/s6/export_ckpt_best (link-shared, view only)
@@ -96,8 +96,14 @@ cfg['data']['root'] = DATA
 json.dump(cfg, open(RD + '/cfg.json', 'w'), indent=1)
 stamp('lr %s max_steps %s stop_after_sec %s mix %s' % (cfg['lr'], cfg['max_steps'], cfg['stop_after_sec'], [(s['name'], s['weight']) for s in cfg['data']['sources']]))
 import importlib.util
+sys.path.insert(0, CODE)
 sp = importlib.util.spec_from_file_location('ad', cfg['adapter']); ad = importlib.util.module_from_spec(sp); sp.loader.exec_module(ad)
 ck = torch.load(CK + '/ckpt_best.pt', map_location='cpu', weights_only=False); fs = ck.get('state') or {}
+import grow_mnx   # depth growth 24 -> 36 layers: new blocks have zero output matrices, so the model computes exactly what step 1500 did
+NEW_LAYERS = 36
+ck = grow_mnx.grow(ck, NEW_LAYERS); cfg['model_cfg']['n_layers'] = NEW_LAYERS; ck['config'] = {**ck['config'], 'model_cfg': cfg['model_cfg']}
+cfg['max_steps'] = 1200   # 36 layers is ~1.5x slower per step; keeps the cosine schedule inside the Kaggle limit
+stamp('grown to %d layers, %.0fM params' % (NEW_LAYERS, sum(v.numel() for v in ck['model'].values()) / 1e6))
 stamp('[START] ' + START_FROM + ' best ' + str({k: fs.get(k) for k in ('step', 'tokens', 'best', 'best_step')}))
 m = ad.build_model({**cfg['model_cfg'], 'grad_ckpt': True}); m.load_state_dict(ck['model'])
 osd = ad.configure_optimizer(m, cfg).state_dict()
