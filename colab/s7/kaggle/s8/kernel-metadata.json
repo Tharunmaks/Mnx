@@ -17,7 +17,8 @@
   "tharun77mnx/mnx1-s6-data"
  ],
  "kernel_sources": [
-  "tharun77mnx/mnx1-s7-train"
+  "tharun77mnx/mnx1-s7-train",
+  "tharun77mnx/mnx1-s8-train"
  ],
  "competition_sources": [],
  "model_sources": [],

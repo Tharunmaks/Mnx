@@ -1,4 +1,5 @@
 # Mnx 1 (306M) session 8 on a free Kaggle T4: reasoning / logical thinking / research.
+# v4 restarts from the step-750 snapshot of v3 (kernel source tharun77mnx/mnx1-s8-train), or the session 7 step-1500 model.
 # Starts from the session 7 step-1500 model (kernel output of tharun77mnx/mnx1-s7-train, sha256-checked).
 #  1. Data, all with answers computed by code (no LLM output, no personal data):
 #     Ai-room logic, discrete maths, probability, research, statistics, number theory, optimisation, data science,
@@ -49,10 +50,17 @@ stamp('code ready: ' + src_code + ' + ' + s6d)
 # ---- 2. start weights: the session 7 step-1500 export (kernel output of mnx1-s7-train)
 S7_SHA = 'b723ce80'
 if not os.path.exists(CK + '/ckpt_best.pt'):
-    cands = [p for p in glob.glob('/kaggle/input/**/export_ckpt_best.pt', recursive=True) if 's7' in p]
-    assert cands, 'session 7 export not found: add tharun77mnx/mnx1-s7-train as a kernel source'
-    h = hashlib.sha256(open(cands[0], 'rb').read()).hexdigest(); assert h.startswith(S7_SHA), 'wrong start model ' + h
-    shutil.copyfile(cands[0], CK + '/ckpt_best.pt'); stamp('start = s7 step 1500 export ' + h[:12])
+    cands = [p for p in glob.glob('/kaggle/input/**/step_0750.pt', recursive=True) if 's8' in p]
+    if cands:   # session 8 v3 snapshot (fp16 model weights, scored 182/35/115 before the disk failure)
+        shutil.copyfile(cands[0], CK + '/ckpt_best.pt'); stamp('start = s8 step 750 snapshot')
+    else:       # fallback: the session 7 step-1500 export (kernel output of mnx1-s7-train)
+        cands = [p for p in glob.glob('/kaggle/input/**/export_ckpt_best.pt', recursive=True) if 's7' in p]
+        assert cands, 'no start model: add tharun77mnx/mnx1-s8-train and mnx1-s7-train as kernel sources'
+        h = hashlib.sha256(open(cands[0], 'rb').read()).hexdigest(); assert h.startswith('b723ce80'), 'wrong start model ' + h
+        shutil.copyfile(cands[0], CK + '/ckpt_best.pt'); stamp('start = s7 step 1500 export ' + h[:12])
+    ck0 = torch.load(CK + '/ckpt_best.pt', map_location='cpu', weights_only=False)
+    ck0['model'] = {k: v.float() for k, v in ck0['model'].items()}   # fp16 snapshot -> fp32 for training
+    torch.save(ck0, CK + '/ckpt_best.pt'); del ck0
 
 # ---- 3. data: every *.bin from the Kaggle datasets, linked into one folder (the fresh step dedupes against all *.train.bin)
 for p in glob.glob('/kaggle/input/**/*.bin', recursive=True):
@@ -89,7 +97,7 @@ cfg['data']['sources'].insert(0, {'name': 'airoom', 'train': 'airoom.train.bin',
 cfg['data']['sources'].insert(0, {'name': 'reason', 'train': 'reason.train.bin', 'weight': 0.40})
 cfg['extra_val'] = {**cfg.get('extra_val', {}), 'fresh_qa': 'fresh_qa.val.bin', 'airoom': 'airoom.val.bin', 'reason': 'reason.val.bin'}
 cfg['lr'] = 4e-5
-SNAP_EVERY = 250
+SNAP_EVERY = 100
 AFTER_RESERVE = 150 * 60   # score every snapshot on 3 sets (~13 min each, up to 7) + export + Kaggle saving the output
 cfg.update(run_dir=RD, device='cuda', amp=AMP, adapter=CODE + '/trainer/adapters/mnx1_custom_s6.py',
            stop_after_sec=int(left() - AFTER_RESERVE), ckpt_every_sec=600, eval_at_start=True, early_stop_patience=0,   # session 7 rerun: never stop on old-data held-out loss; judge by the unseen-question score instead
@@ -105,7 +113,7 @@ ck = torch.load(CK + '/ckpt_best.pt', map_location='cpu', weights_only=False); f
 import grow_mnx   # depth growth 24 -> 36 layers: new blocks have zero output matrices, so the model computes exactly what step 1500 did
 NEW_LAYERS = 36
 ck = grow_mnx.grow(ck, NEW_LAYERS); cfg['model_cfg']['n_layers'] = NEW_LAYERS; ck['config'] = {**ck['config'], 'model_cfg': cfg['model_cfg']}
-cfg['max_steps'] = 900; cfg['micro_batch_candidates'] = [1]   # 36 layers is ~1.5x slower per step; keeps the cosine schedule inside the Kaggle limit
+cfg['max_steps'] = 300; cfg['micro_batch_candidates'] = [1]; cfg['warmup'] = 10; cfg['lr'] = 2e-5   # 36 layers is ~1.5x slower per step; keeps the cosine schedule inside the Kaggle limit
 stamp('grown to %d layers, %.0fM params' % (NEW_LAYERS, sum(v.numel() for v in ck['model'].values()) / 1e6))
 json.dump(cfg, open(RD + '/cfg.json', 'w'), indent=1)   # the trainer reads the 36-layer config and max_steps from this file
 stamp('[START] ' + START_FROM + ' best ' + str({k: fs.get(k) for k in ('step', 'tokens', 'best', 'best_step')}))
@@ -128,7 +136,7 @@ def snap_once():
         c = torch.load(p, map_location='cpu', weights_only=False, mmap=True); step = int(c['state']['step'])
         out = SNAPS + '/step_%04d.pt' % step
         if step > 0 and not os.path.exists(out) and (step % SNAP_EVERY == 0 or _stop_w):
-            torch.save({'model': c['model'], 'state': dict(c['state']), 'config': c['config']}, out + '.tmp'); os.replace(out + '.tmp', out)
+            torch.save({'model': {k: v.half() for k, v in c['model'].items()}, 'state': dict(c['state']), 'config': c['config']}, out + '.tmp'); os.replace(out + '.tmp', out)
             stamp('snapshot step %d' % step)
         del c
     except Exception as e: print('snap error', repr(e)[:200], flush=True)
@@ -168,8 +176,9 @@ if KEEP:
         lines.append('%s: %d/%d -> %d/%d' % (name, B[tag]['total'], B[tag]['n'], A[tag]['total'], A[tag]['n']))
         for k in sorted(set(A[tag]['by_kind']) | set(B[tag]['by_kind'])):
             b_, a_ = B[tag]['by_kind'].get(k, [0, 0]), A[tag]['by_kind'].get(k, [0, 0]); lines.append('  %-16s %3d/%-3d -> %3d/%-3d' % (k, b_[1], b_[0], a_[1], a_[0]))
-    shutil.copyfile(SNAPS + '/step_%04d.pt' % bestst, RD + '/export_ckpt_best.pt')
+    os.replace(SNAPS + '/step_%04d.pt' % bestst, RD + '/export_ckpt_best.pt')   # rename, not copy: the disk filled up last time
     lines.append('export sha256 ' + subprocess.run(['sha256sum', RD + '/export_ckpt_best.pt'], capture_output=True, text=True).stdout.split()[0])
+for f in ('ckpt_latest.pt',): os.path.exists(RD + '/' + f) and os.remove(RD + '/' + f)   # free the disk: the 1.8 GB resume file is not needed after scoring
 else:
     lines.append('DO NOT USE: no snapshot raised the reasoning score while staying within the usual-style/Ai-room limits. Keep using the s7 step 1500 model.')
 open(RD + '/VERDICT.txt', 'w').write('\n'.join(lines) + '\n'); print('\n'.join(lines), flush=True)
