@@ -203,11 +203,18 @@ def cmd_score(a):
         for k, it in enumerate(items):
             ids = ([tok.bos_id] if fmt.get("bos") else []) + tok.encode(f"Q: {it['q']}\nA:", allow_special=False)
             x = torch.tensor([ids], device=dev)
-            out = m.generate(x, 200 if it["kind"] == "code" else 40, temperature=0.0, eos_id=tok.eos_id)[0, len(ids):].tolist()
+            out = m.generate(x, 200 if it["kind"] == "code" else (320 if it.get("src") == "airoom" else 40), temperature=0.0, eos_id=tok.eos_id)[0, len(ids):].tolist()
             if tok.eos_id in out: out = out[: out.index(tok.eos_id)]
             ans = tok.decode(out, skip_special=True)
             if it.get("src") == "airoom":
-                ok = airoom_ok(it, ans.strip().split("\n")[0].strip(), a.airoom)
+                body = ans.strip()
+                if "\nQ:" in body: body = body[: body.index("\nQ:")]
+                if body.startswith("[run]"):   # session 9: the model answered with a program; run it (sandboxed subprocess)
+                    import s9_pal
+                    got = s9_pal.answer_text(body); ans = ans + "\n=> " + got
+                else:
+                    got = body.split("\n")[0].strip()
+                ok = airoom_ok(it, got, a.airoom)
             elif it["kind"] == "code":
                 tests = [l for l in it["q"].splitlines() if l.startswith("assert ")]
                 body = ans.strip()
@@ -216,7 +223,7 @@ def cmd_score(a):
             else:
                 ok = ans.strip().split("\n")[0].strip() == it["a"].strip()
             stats[it["kind"]][0] += 1; stats[it["kind"]][1] += ok
-            rows.append({"kind": it["kind"], "q": it["q"][:200], "want": it["a"][:200], "got": ans[:200], "ok": bool(ok)})
+            rows.append({"kind": it["kind"], "q": it["q"][:200], "want": it["a"][:200], "got": ans[-600:], "ok": bool(ok)})
             if (k + 1) % 50 == 0: print(f"  {k + 1}/{len(items)} scored, {sum(r['ok'] for r in rows)} right ({time.time() - t0:.0f}s)", flush=True)
     tot = sum(v[1] for v in stats.values())
     for kind, (n, c) in sorted(stats.items()): print(f"  {kind:<11} {c:>4}/{n:<4}")
