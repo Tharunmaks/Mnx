@@ -1,6 +1,6 @@
 # Mnx 1 session 9 on a free Kaggle T4: program-aided reasoning for the grown 468M (36-layer) model.
 # Start: session 8 step-750 snapshot (Kaggle dataset tharun77mnx/mnx1-s8-step750, sha256-checked).
-#  1. Data (answers computed by code, no LLM output, no personal data): for 31 Ai-room question types the answer is a short
+#  1. Data (answers computed by code, no LLM output, no personal data): for 43 Ai-room question types the answer is a short
 #     Python program that sets the problem up and prints the result (s9_pal.py; every program verified against the
 #     code-computed answer); other types keep the plain answer. reason_pal 35% + airoom_pal 15% + rehearsal 50%.
 #  2. Scoring runs any [run] ... [/run] program the model writes (sandboxed subprocess) and grades what it prints.
@@ -9,8 +9,8 @@
 import os, glob, json, shutil, subprocess, sys, time, hashlib, urllib.request
 T0 = time.time()
 KAGGLE_LIMIT = 12 * 3600
-S7_COMMIT = '92dd1e6386c878381a973bc3c5902e84a4a84dd6'
-S7_FILES = {'s7_tools.py': '3a99f8a672351773334bca297051ca067b1b813f7477c307e4b5aa2da1e24ae6', 'qa_gen.py': '36baa86989c93f37a55c23b18d1a3b64d880607db99d0ba603f76524546d7f80', 's8_tools.py': 'cc1c3e9f7104a1958683a225d6598b0700bd4c2f8f415042f482d3d5ed5cd604', 'grow_mnx.py': 'a3c58b37dfaff79b3dbf721bd6cf56aba0cb0fd7a168e7daab3fbcb42666e900', 's9_pal.py': '8ef5b876a51bc34af35983ae123bc91020c16d00304becaa38bcdd8fa1dbedd2'}
+S7_COMMIT = 'f2ec327d4adc104f9cc650a0b062aa6284fbe498'
+S7_FILES = {'s7_tools.py': '3a99f8a672351773334bca297051ca067b1b813f7477c307e4b5aa2da1e24ae6', 'qa_gen.py': '36baa86989c93f37a55c23b18d1a3b64d880607db99d0ba603f76524546d7f80', 's8_tools.py': 'cc1c3e9f7104a1958683a225d6598b0700bd4c2f8f415042f482d3d5ed5cd604', 'grow_mnx.py': 'a3c58b37dfaff79b3dbf721bd6cf56aba0cb0fd7a168e7daab3fbcb42666e900', 's9_pal.py': '2a584f217989011a87a44ba4b3f62e57df66d216d1f7d7d6db000b5c9c1af0e1'}
 AIROOM_COMMIT = 'e5c7ca349af7dee9cb6e3d53a8e82aa90796d48b'
 START_FROM = 's8 step 750'   # 's6' = s6 best from Drive (preferred), 's5' = s5 best step 100 already in the mnx1-s6-data Kaggle dataset
 S6_EXPORT_FOLDER = '1xQDkAmsyhkCcugJtgx8YMjWXO51lxmf8'   # Drive Mnx1-100m-colab/runs/s6/export_ckpt_best (link-shared, view only)
