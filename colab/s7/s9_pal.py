@@ -347,6 +347,129 @@ PROGRAMS.update({"logic.computation": p_computation, "nt.divisibility": p_divisi
                  "cs.binary": p_binary})
 
 
+def p_sql(q):
+    m = re.search(r"emp\(name, dept, salary, age\): (.*)\ndept\(dept, budget\): (.*)\nWhat single number does this query return\?\n```sql\n(.*)\n```", q)
+    if not m: return None
+    emp = [tuple(int(x) if x.isdigit() else x for x in r.split(",")) for r in re.findall(r"\(([^)]*)\)", m.group(1))]
+    dept = [tuple(int(x) if x.isdigit() else x for x in r.split(",")) for r in re.findall(r"\(([^)]*)\)", m.group(2))]
+    return ("import sqlite3\ndb = sqlite3.connect(':memory:')\ndb.execute('CREATE TABLE emp(name TEXT, dept TEXT, salary INT, age INT)')\n"
+            f"db.executemany('INSERT INTO emp VALUES (?,?,?,?)', {emp!r})\ndb.execute('CREATE TABLE dept(dept TEXT, budget INT)')\n"
+            f"db.executemany('INSERT INTO dept VALUES (?,?)', {dept!r})\nv = db.execute({m.group(3)!r}).fetchone()[0]\nprint(0 if v is None else v)")
+
+
+def p_knights(q):
+    stem = _stem(q)
+    m = re.search(r"^(\d) islanders, each a knight.*?\. (.*?)\. (How many are knights\?|What is (\w)\?)$", stem)
+    if not m: return None
+    n = int(m.group(1)); names = "ABC"[:n]
+    conds = []
+    for who, said in re.findall(r'(\w) says: "([^"]*)"', m.group(2)):
+        r = re.fullmatch(r"(\w) is a knight", said)
+        if r: e = f"k['{r[1]}']"
+        elif re.fullmatch(r"(\w) is a knave", said): e = f"not k['{said[0]}']"
+        elif re.fullmatch(r"(\w) and I are the same type", said): e = f"k['{said[0]}'] == k['{who}']"
+        elif said == "at least one of us is a knave": e = "not all(k.values())"
+        elif said == "exactly one of us is a knight": e = "sum(k.values()) == 1"
+        else: return None
+        conds.append(f"({e}) == k['{who}']")
+    head = (f"from itertools import product\nfor v in product((True, False), repeat={n}):\n    k = dict(zip('{names}', v))\n"
+            f"    if {' and '.join(conds)}:\n        sol = k\n")
+    if m.group(4):
+        o = dict((t, kk) for kk, t in _opts(q))
+        if set(o) != {"Knight", "Knave"}: return None
+        return head + f"print({o['Knight']!r} if sol['{m.group(4)}'] else {o['Knave']!r})"
+    return head + "print(sum(sol.values()))"
+
+
+def p_mloptim(q):
+    m = re.search(r"Targets (\[[^\]]*\]) and predictions (\[[^\]]*\])\. What is the mean squared error", q)
+    if m: return f"y = {m.group(1)}\np = {m.group(2)}\nprint(f'{{sum((a - b) ** 2 for a, b in zip(y, p)) / len(y):.2f}}')"
+    m = re.search(r"sigmoid .* at z = (-?\d+)\?", q)
+    if m: return f"import math\nprint(f'{{1 / (1 + math.exp(-({m.group(1)}))):.3f}}')"
+    m = re.search(r"L\(w\) = \(w − (\d+)\)² by gradient descent from w = (\d+) with learning rate ([\d.]+)\. What is w after (\d+) step", q)
+    if m: return f"a, w, eta = {m.group(1)}, {m.group(2)}, {m.group(3)}\nfor _ in range({m.group(4)}):\n    w -= eta * 2 * (w - a)\nprint(round(w, 6))"
+
+
+def p_info(q):
+    m = re.search(r"entropy \(bits\) of a source with probabilities (\[[^\]]*\])", q)
+    if m: return f"import math\nps = {m.group(1)}\nprint(-sum(p * math.log2(p) for p in ps))"
+    m = re.search(r"Huffman code is built for symbol probabilities (\[[^\]]*\])", q)
+    if m: return (f"import heapq\nh = {m.group(1)}\nheapq.heapify(h)\nt = 0\nwhile len(h) > 1:\n    a, b = heapq.heappop(h), heapq.heappop(h)\n"
+                  "    t += a + b\n    heapq.heappush(h, a + b)\nprint(t)")
+    m = re.search(r"Hamming distance between (\d+) and (\d+)\?", q)
+    if m: return f"a, b = {m.group(1)!r}, {m.group(2)!r}\nprint(sum(x != y for x, y in zip(a, b)))"
+    m = re.search(r"RSA with p = (\d+), q = (\d+), e = (\d+)\. What is the ciphertext of m = (\d+)\?", q)
+    if m: return f"p, q, e, m = {', '.join(m.groups())}\nprint(pow(m, e, p * q))"
+    m = re.search(r"RSA with p = (\d+), q = (\d+), e = (\d+)\. What is the private exponent d", q)
+    if m: return f"p, q, e = {', '.join(m.groups())}\nphi = (p - 1) * (q - 1)\nprint(min(d for d in range(1, phi) if e * d % phi == 1))"
+
+
+def p_risk(q):
+    m = re.search(r"r_f = (\d+)%, β = ([\d.]+), expected market return (\d+)%", q)
+    if m: return f"rf, b, rm = {m.group(1)}, {m.group(2)}, {m.group(3)}\nprint(rf + b * (rm - rf))"
+    m = re.search(r"holds (\d+)% in an asset returning (\d+)% and the rest in one returning (\d+)%", q)
+    if m: return f"w, r1, r2 = {int(m.group(1)) / 100}, {m.group(2)}, {m.group(3)}\nprint(w * r1 + (1 - w) * r2)"
+    m = re.search(r"A fund returns (\d+)% with volatility (\d+)%; the risk-free rate is (\d+)%", q)
+    if m: return f"r, s, rf = {m.group(1)}, {m.group(2)}, {m.group(3)}\nprint((r - rf) / s)"
+
+
+def p_distributions(q):
+    m = re.search(r"X takes values (-?\d+), (-?\d+), (-?\d+) with probabilities 1/2, 1/3, 1/6\. What is E\[X\]", q)
+    if m: return f"from fractions import Fraction as F\nv = [{', '.join(m.groups())}]\nprint(v[0] * F(1, 2) + v[1] * F(1, 3) + v[2] * F(1, 6))"
+    m = re.search(r"Binomial\(n = (\d+), p = ([\d.]+)\)\. What is P\(X = (\d+)\)", q)
+    if m: return f"from math import comb\nn, p, k = {', '.join(m.groups())}\nprint(f'{{comb(n, k) * p ** k * (1 - p) ** (n - k):.4f}}')"
+    m = re.search(r"Poisson\(λ = (\d+)\)\. What is P\(X = (\d+)\)", q)
+    if m: return f"import math\nlam, k = {m.group(1)}, {m.group(2)}\nprint(f'{{math.exp(-lam) * lam ** k / math.factorial(k):.4f}}')"
+    m = re.search(r"succeeds with probability (\d+)/(\d+)\. What is the expected number of trials", q)
+    if m: return f"from fractions import Fraction as F\nprint(1 / F({m.group(1)}, {m.group(2)}))"
+
+
+def p_conditional(q):
+    m = re.search(r"affects ([\d.]+)% of people\. A test detects it ([\d.]+)% of the time when present and wrongly flags ([\d.]+)% of healthy", q)
+    if m: return (f"prior, sens, fpr = {float(m.group(1)) / 100}, {float(m.group(2)) / 100}, {float(m.group(3)) / 100}\n"
+                  "pos = sens * prior + fpr * (1 - prior)\nprint(f'{sens * prior / pos * 100:.1f}')")
+
+
+def p_markov(q):
+    m = re.search(r"A→B with probability (\d+/\d+|\d+) and B→A with probability (\d+/\d+|\d+)", q)
+    if m: return f"from fractions import Fraction as F\np, q = F('{m.group(1)}'), F('{m.group(2)}')\nprint(q / (p + q))"
+
+
+def p_probbasic(q):
+    m = re.search(r"A bag has (\d+) red and (\d+) blue marbles\. What is the probability of drawing a red one", q)
+    if m: return f"from fractions import Fraction as F\nr, b = {m.group(1)}, {m.group(2)}\nprint(F(r, r + b))"
+    m = re.search(r"A bag has (\d+) red and (\d+) blue marbles\. Two are drawn without replacement\. What is the probability both are red", q)
+    if m: return f"from fractions import Fraction as F\nr, b = {m.group(1)}, {m.group(2)}\nprint(F(r, r + b) * F(r - 1, r + b - 1))"
+    m = re.search(r"Two fair dice are rolled\. What is the probability their sum is (\d+)\?", q)
+    if m: return f"from fractions import Fraction as F\nprint(F(sum(1 for a in range(1, 7) for b in range(1, 7) if a + b == {m.group(1)}), 36))"
+
+
+def p_predict(q):
+    m = re.search(r"What does this Python program print\?\n```python\n(.*?)\n```", q, re.S)
+    if m: return m.group(1)
+
+
+def p_arch(q):
+    m = re.search(r"How many bytes can be addressed with (\d+) address bits", q)
+    if m: return f"print(2 ** {m.group(1)})"
+    m = re.search(r"hit time (\d+) ns, miss rate (\d+)% and miss penalty (\d+) ns", q)
+    if m: return f"h, m, p = {m.group(1)}, {int(m.group(2)) / 100}, {m.group(3)}\nprint(h + m * p)"
+
+
+def p_exponents(q):
+    m = re.search(r"What is (\d+)\^(\d+)\?$", q)
+    if m: return f"print({m.group(1)} ** {m.group(2)})"
+    m = re.search(r"What is the square root of (\d+)\?", q)
+    if m: return f"print(round({m.group(1)} ** 0.5))"
+    m = re.search(r"What is (\d+)\^(\d+) ÷ (\d+)\^(\d+)\?", q)
+    if m: return f"print({m.group(1)} ** {m.group(2)} // {m.group(3)} ** {m.group(4)})"
+
+
+PROGRAMS.update({"cs.sql": p_sql, "logic.knights": p_knights, "ml.optim": p_mloptim, "cs.info": p_info, "fin.risk": p_risk,
+                 "prob.distributions": p_distributions, "prob.conditional": p_conditional, "prob.markov": p_markov,
+                 "prob.basic": p_probbasic, "code.predict": p_predict, "cs.arch": p_arch, "math.exponents": p_exponents})
+
+
 def program(it):
     f = PROGRAMS.get(it.get("fam"))
     if not f: return None
